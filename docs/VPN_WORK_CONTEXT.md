@@ -9982,6 +9982,7 @@ Verification:
 - Google Play AAB does not contain `base/lib/armeabi-v7a`.
 - Local SHA256 hashes match server hashes.
 
+
 ## 2026-06-18 — Morning status audit after overnight work
 
 - Current server time during audit: `2026-06-18 07:31 UTC`.
@@ -10185,3 +10186,64 @@ ORG_GRADLE_PROJECT_graniSplitPerAbi=true /opt/flutter/bin/flutter build apk \
 - `getStatus` через `NativeVpnRuntimeState.isAnyGraniVpnLikelyActive`;
 - guard от ложного `Connect in the app first` при активном VPN;
 - Quick Tile disconnect для native likely-active VLESS/Hysteria2 через `source=quick_tile`, `reason=user`.
+## 2026-06-18 — GitHub, AmneziaWG fork, Windows platform start
+
+Контекст: начинаем полноценную разработку Windows-платформы GrANI. AWS account закрыт, потому для Windows-сборок выбран GitHub + GitHub Actions, а не Windows VPS.
+
+GitHub:
+
+- Основной приватный репозиторий: `https://github.com/railtamaew/grani`.
+- SSH-доступ с сервера `/opt/grani` настроен через ключ `/opt/grani/.ssh/grani_vpn_key`.
+- Remote `/opt/grani`: `git@github.com:railtamaew/grani.git`.
+- Основная ветка: `main`.
+- Старую локальную серверную git-историю не пушили, чтобы не тащить секреты.
+- Push protection GitHub поймал Figma PAT; реальные `figd_...` токены удалены из docs, `docs/figma_auth_data.json` исключен из git.
+- Live `server-config/docker/docker-compose.yml` исключен через `.gitignore`, потому содержит production secrets.
+
+AmneziaWG submodule:
+
+- Создан fork: `https://github.com/railtamaew/amneziawg-android`.
+- Ветка с нашими патчами: `grani-patches`.
+- Commit патчей: `16faa50 Apply GrANI Android AmneziaWG patches`.
+- В основном GrANI submodule теперь указывает на `https://github.com/railtamaew/amneziawg-android.git`, branch `grani-patches`.
+- GrANI commit: `84bc3cf Track GrANI AmneziaWG fork`.
+- Патчи внутри AmneziaWG нужны Android-сборке: package name, Gradle/NDK fixes, 16KB page size, default `h1..h4` для AWG obfuscation, diagnostic config logs.
+
+Windows platform:
+
+- Workflow `.github/workflows/desktop-build.yml` существует и собирает Windows/macOS через Flutter 3.24.x.
+- Windows native channel уже есть: `mobile-app/windows/runner/grani_vpn_channel.cpp`.
+- Channel `com.granivpn.mobile/vpn` поддерживает `connectAmneziaWg`, `disconnectAmneziaWg`, `getStatus`, `getTrafficStats`, `requestPermission`.
+- Windows native code ищет runner так:
+  1. env `GRANI_AWG_QUICK`;
+  2. bundled asset `data/flutter_assets/bin/amneziawg/windows/awg-quick.exe`;
+  3. рядом с exe: `awg-quick.exe`.
+- На 2026-06-18 в `mobile-app/bin/amneziawg/` есть только `README.md`; реального `windows/awg-quick.exe` пока нет.
+- Поэтому текущий Windows build может собрать UI/exe, но реальное подключение вернет `WINDOWS_AWG_RUNNER_MISSING`, пока runner не будет добавлен или задан через `GRANI_AWG_QUICK`.
+
+Сделанная правка Windows path:
+
+- Файл: `mobile-app/lib/services/vpn_service.dart`.
+- Commit: `ed414cf Enable Windows GraniWG connect path`.
+- `_applyGraniWGConfig` теперь вызывает `NativeVpnService.connectAmneziaWg` не только на Android, но и на Windows.
+- `_disconnectGraniWG` теперь вызывает `NativeVpnService.disconnectAmneziaWg` на Android и Windows.
+- Для Windows source label: `desktop_windows_amneziawg`.
+- `flutter analyze lib/services/vpn_service.dart` прошел без errors; остались старые warnings: unused fields/helpers в `vpn_service.dart`.
+
+Следующий шаг:
+
+1. Проверить GitHub Actions `Desktop Build` после commit `ed414cf`.
+2. Если Windows build проходит, скачать `windows-release` artifact.
+3. Решить доставку Windows runner:
+   - временно для теста через env `GRANI_AWG_QUICK`;
+   - затем добавить/bundle `bin/amneziawg/windows/awg-quick.exe` или другой корректный Windows AmneziaWG runner.
+4. После runner-теста запускать exe от администратора на Windows и проверять реальный tunnel up/down.
+
+### 2026-06-18 — Windows runner follow-up
+
+После записи основного Windows-контекста проверены upstream репозитории Amnezia:
+
+- `https://github.com/amnezia-vpn/amneziawg-go` в README говорит, что Windows usage должен идти через `amneziawg-windows`.
+- `https://github.com/amnezia-vpn/amneziawg-windows` в README описывает сборку `x64/tunnel.dll` через `build.cmd`.
+- Вывод: текущий contract в `mobile-app/windows/runner/grani_vpn_channel.cpp` с поиском `awg-quick.exe` полезен как временный MVP/debug runner contract, но не совпадает напрямую с official Amnezia Windows integration.
+- Следующий engineering decision: либо создать совместимый `awg-quick.exe` wrapper вокруг `amneziawg-windows/tunnel.dll`, либо переписать Windows native channel на прямую интеграцию с `tunnel.dll`/service model.
