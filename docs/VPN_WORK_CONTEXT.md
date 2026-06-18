@@ -10305,3 +10305,14 @@ Windows platform:
   - Called WinAPI as `::ReadFile`.
   - Cast DWORD byte counts to `size_t` in comparisons to avoid `/W4 /WX` warning-as-error.
 - macOS still fails in CocoaPods resolver; current screenshot only shows the Ruby stack trace tail, not the actual pod conflict line. Since the immediate product goal is Windows, macOS may need to be made optional/disabled on push if it keeps blocking Desktop workflow success.
+2026-06-19 macOS CI follow-up
+
+- Desktop CI after `ccb6f8c`:
+  - Windows job passed (green).
+  - macOS still failed during `flutter build macos`, specifically during CocoaPods resolver (`molinillo` stack trace). The visible screenshot only shows the stack trace tail, not the `[!] CocoaPods could not find compatible versions...` root line.
+- Checked macOS plugin podspecs from pub cache:
+  - Current `MACOSX_DEPLOYMENT_TARGET = 10.15`.
+  - Firebase macOS podspecs require at most 10.13; Google Sign-In / in_app_purchase require 10.15; WebView requires 10.14. So deployment target is not obviously too low.
+- Added `.github/workflows/desktop-build.yml` macOS step `pod repo update` after `flutter pub get` and before `flutter build macos`.
+- Rationale: CocoaPods `molinillo` resolver failures in CI are often stale spec repo/CDN metadata; refreshing specs is the least invasive next fix.
+- If macOS still fails, next required evidence: search the Actions log for `[!]` or `could not find compatible versions` and capture the conflict block above the Ruby stack trace.
