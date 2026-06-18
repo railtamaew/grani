@@ -10316,3 +10316,10 @@ Windows platform:
 - Added `.github/workflows/desktop-build.yml` macOS step `pod repo update` after `flutter pub get` and before `flutter build macos`.
 - Rationale: CocoaPods `molinillo` resolver failures in CI are often stale spec repo/CDN metadata; refreshing specs is the least invasive next fix.
 - If macOS still fails, next required evidence: search the Actions log for `[!]` or `could not find compatible versions` and capture the conflict block above the Ruby stack trace.
+2026-06-19 macOS CI diagnostics/fix
+
+- Windows Desktop job is green; focus moved to macOS.
+- `pod repo update` alone did not fix macOS; job still failed in `flutter build macos` with only CocoaPods/molinillo stack trace visible in the screenshot.
+- Changed macOS CI to run explicit `pod install --repo-update --verbose` from `mobile-app/macos` before `flutter build macos`.
+- Goal: either resolve pods before Flutter build or expose the real CocoaPods conflict block (`[!] ...`) in a dedicated, easier-to-read step.
+- Firebase SDK version from FlutterFire is `10.25.0`; current macOS deployment target is `10.15`, which satisfies visible plugin podspec requirements.

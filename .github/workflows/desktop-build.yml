@@ -74,8 +74,9 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Update CocoaPods specs
-        run: pod repo update
+      - name: Install macOS pods
+        working-directory: mobile-app/macos
+        run: pod install --repo-update --verbose
 
       - name: Build macOS
         run: flutter build macos
