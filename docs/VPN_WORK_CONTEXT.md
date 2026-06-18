@@ -10323,3 +10323,27 @@ Windows platform:
 - Changed macOS CI to run explicit `pod install --repo-update --verbose` from `mobile-app/macos` before `flutter build macos`.
 - Goal: either resolve pods before Flutter build or expose the real CocoaPods conflict block (`[!] ...`) in a dedicated, easier-to-read step.
 - Firebase SDK version from FlutterFire is `10.25.0`; current macOS deployment target is `10.15`, which satisfies visible plugin podspec requirements.
+## 2026-06-19 01:02 MSK - Desktop CI: expose CocoaPods root conflict
+
+Context:
+- GitHub repository: `railtamaew/grani`, branch `main`.
+- Windows job in `Desktop Build (Windows + macOS)` is now green after fixing Windows runner compile errors.
+- macOS still fails before `flutter build macos`, at CocoaPods dependency resolution.
+- GitHub Actions screenshots only show the tail Ruby/Molinillo backtrace:
+  - `molinillo/resolution.rb`
+  - `cocoapods/resolver.rb`
+  - `pod install`
+  - `Error: Process completed with exit code 1`
+- The actionable CocoaPods `[!] ...` conflict is above the visible tail, so we cannot safely choose a real dependency fix from screenshots alone.
+
+Change made:
+- Updated `.github/workflows/desktop-build.yml` macOS `Install macOS pods` step.
+- It now runs `pod install --repo-update --verbose` through `tee pod-install.log`.
+- On failure it prints:
+  - a grouped `CocoaPods failure summary` with grep around `[!]`, compatible-version, spec-source, Firebase/Google/macOS conflict markers;
+  - a grouped `CocoaPods tail` with the last 300 lines.
+
+Expected next step:
+- Let the GitHub Actions run finish.
+- If macOS still fails, inspect the new `CocoaPods failure summary` group or send that block.
+- Then fix the actual dependency/version/platform conflict instead of guessing from the Ruby stack tail.

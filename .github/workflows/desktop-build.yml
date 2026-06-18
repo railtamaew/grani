@@ -76,7 +76,17 @@ jobs:
 
       - name: Install macOS pods
         working-directory: mobile-app/macos
-        run: pod install --repo-update --verbose
+        run: |
+          set -o pipefail
+          pod install --repo-update --verbose 2>&1 | tee pod-install.log || {
+            echo "::group::CocoaPods failure summary"
+            grep -n -E "^\[!\]|could not find compatible|Specs satisfying|required a higher minimum deployment|Unable to find|None of your spec sources|conflict|Firebase|Google|macOS|OS X" -A 50 -B 25 pod-install.log || true
+            echo "::endgroup::"
+            echo "::group::CocoaPods tail"
+            tail -n 300 pod-install.log
+            echo "::endgroup::"
+            exit 1
+          }
 
       - name: Build macOS
         run: flutter build macos
