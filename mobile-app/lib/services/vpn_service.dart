@@ -3894,13 +3894,18 @@ class VpnService extends ChangeNotifier {
     return awgKeys.any((k) => RegExp('$k\\s*=').hasMatch(content));
   }
 
-  /// Применение GraniWG/AmneziaWG. Android uses embedded amneziawg-go via MethodChannel.
+  /// Применение GraniWG/AmneziaWG через native MethodChannel.
+  ///
+  /// Android uses the embedded amneziawg-go backend. Windows delegates to the
+  /// desktop runner (`awg-quick.exe`) resolved by the native C++ channel.
   Future<bool> _applyGraniWGConfig(String config, VpnProtocol protocol) async {
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid || Platform.isWindows) {
       final ok = await NativeVpnService.connectAmneziaWg(
         config,
         connectionSessionId: _connectionSessionId,
-        source: 'legacy_ui_amneziawg',
+        source: Platform.isWindows
+            ? 'desktop_windows_amneziawg'
+            : 'legacy_ui_amneziawg',
       );
       if (ok) {
         _isConnected = true;
@@ -3911,7 +3916,7 @@ class VpnService extends ChangeNotifier {
       return ok;
     }
     throw UnimplementedError(
-      'GraniWG desktop path archived. Android AmneziaWG is the MVP path.',
+      'GraniWG is not implemented for ${Platform.operatingSystem}.',
     );
   }
 
@@ -3929,12 +3934,14 @@ class VpnService extends ChangeNotifier {
     );
   }
 
-  /// Disconnect Android embedded AmneziaWG runner.
+  /// Disconnect embedded/native AmneziaWG runner.
   Future<void> _disconnectGraniWG() async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid && !Platform.isWindows) return;
     await NativeVpnService.disconnectAmneziaWg(
       reason: 'user',
-      source: 'legacy_ui_amneziawg',
+      source: Platform.isWindows
+          ? 'desktop_windows_amneziawg'
+          : 'legacy_ui_amneziawg',
       connectionSessionId: _connectionSessionId,
     );
   }
