@@ -10271,3 +10271,10 @@ Windows platform:
 - This avoids committing the binary DLL to the private repo while still bundling it into Flutter assets for the Windows release artifact.
 - Important: the first CI run may take longer because `build.cmd` downloads Go, llvm-mingw, and Wintun into its `.deps` folder.
 - Next validation point: confirm the GitHub Actions Windows job completes and that the uploaded `windows-release` artifact contains `data/flutter_assets/bin/amneziawg/windows/tunnel.dll`.
+2026-06-18 GitHub Actions fix: Flutter SDK version
+
+- GitHub Actions Desktop Build failed on both Windows and macOS during `Install dependencies` / `flutter pub get`.
+- Root cause from Actions logs: workflow used Flutter `3.24.x`; that SDK pins `flutter_localizations -> intl 0.19.0`, while `mobile-app/pubspec.yaml` requires `intl ^0.20.2`, so version solving failed before any Windows or macOS build step.
+- Server/local project is on Flutter `3.38.3` stable, Dart `3.10.1`; dependencies resolve there.
+- Updated `.github/workflows/desktop-build.yml` and `.github/workflows/mobile-app.yml` from Flutter `3.24.x` to `3.38.3`.
+- Also hardened `mobile-app/windows/runner/main.cpp`: service-mode config file reading now uses WinAPI `CreateFileW`/`ReadFile` instead of `std::ifstream(std::wstring)`, avoiding MSVC wide-path/STL compatibility issues and possible `/W4 /WX` warnings.
