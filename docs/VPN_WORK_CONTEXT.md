@@ -10291,3 +10291,17 @@ Windows platform:
   - Project had macOS plugins but no committed `mobile-app/macos/Podfile`; Firebase podspec explicitly expects users to update/commit macOS Podfile platform settings when needed.
   - Fix: added standard Flutter macOS `Podfile` with `platform :osx, '10.15'`, `flutter_macos_podfile_setup`, `flutter_install_all_macos_pods`, and `flutter_additional_macos_build_settings`.
 - Next validation: rerun Desktop Build after this commit; expected next stage is Windows CMake configure past Firebase SDK and macOS CocoaPods resolver past explicit platform.
+2026-06-19 Windows C++ compile fixes
+
+- Desktop CI reached Windows C++ compilation after the Firebase/CMake policy fix.
+- Windows errors from Actions:
+  - `shellapi.h`: parse/redefinition cascade around `EXTERN_C` / `DECLSPEC_IMPORT`.
+  - `grani_vpn_channel.cpp`: `IsUserAnAdmin`: identifier not found.
+  - `main.cpp`: `DWORD_MAX` undeclared, helper `ReadFile` shadowed WinAPI `ReadFile`, causing wrong overload resolution.
+- Fixes:
+  - Removed `shellapi.h` dependency from `grani_vpn_channel.cpp`.
+  - Replaced `IsUserAnAdmin()` with `IsRunningAsAdmin()` implemented through `AllocateAndInitializeSid` + `CheckTokenMembership`.
+  - Renamed service-mode helper from `ReadFile` to `ReadUtf8File`.
+  - Called WinAPI as `::ReadFile`.
+  - Cast DWORD byte counts to `size_t` in comparisons to avoid `/W4 /WX` warning-as-error.
+- macOS still fails in CocoaPods resolver; current screenshot only shows the Ruby stack trace tail, not the actual pod conflict line. Since the immediate product goal is Windows, macOS may need to be made optional/disabled on push if it keeps blocking Desktop workflow success.

@@ -5,7 +5,6 @@
 #include <flutter/method_channel.h>
 #include <flutter/method_result_functions.h>
 #include <flutter/standard_method_codec.h>
-#include <shellapi.h>
 #include <windows.h>
 
 #include <memory>
@@ -168,7 +167,23 @@ bool WriteUtf8File(const std::wstring& path, const std::string& content) {
                             static_cast<DWORD>(content.size()), &written,
                             nullptr);
   CloseHandle(file);
-  return ok && written == content.size();
+  return ok && static_cast<size_t>(written) == content.size();
+}
+
+bool IsRunningAsAdmin() {
+  SID_IDENTIFIER_AUTHORITY nt_authority = SECURITY_NT_AUTHORITY;
+  PSID administrators_group = nullptr;
+  const BOOL allocated = AllocateAndInitializeSid(
+      &nt_authority, 2, SECURITY_BUILTIN_DOMAIN_RID,
+      DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &administrators_group);
+  if (!allocated) {
+    return false;
+  }
+
+  BOOL is_member = FALSE;
+  const BOOL ok = CheckTokenMembership(nullptr, administrators_group, &is_member);
+  FreeSid(administrators_group);
+  return ok && is_member == TRUE;
 }
 
 int RunHiddenAndWait(const std::wstring& exe, const std::wstring& args) {
@@ -490,7 +505,7 @@ void RegisterGraniVpnChannel(flutter::BinaryMessenger* messenger) {
           return;
         }
         if (method == "requestPermission") {
-          result->Success(flutter::EncodableValue(IsUserAnAdmin() == TRUE));
+          result->Success(flutter::EncodableValue(IsRunningAsAdmin()));
           return;
         }
         result->NotImplemented();

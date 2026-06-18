@@ -4,6 +4,7 @@
 #include <windows.h>
 
 #include <cstdlib>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -76,7 +77,7 @@ std::optional<std::wstring> ResolveTunnelDllPath() {
   return std::nullopt;
 }
 
-std::optional<std::string> ReadFile(const std::wstring& path) {
+std::optional<std::string> ReadUtf8File(const std::wstring& path) {
   HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
                             nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
                             nullptr);
@@ -86,7 +87,8 @@ std::optional<std::string> ReadFile(const std::wstring& path) {
 
   LARGE_INTEGER file_size{};
   if (!GetFileSizeEx(file, &file_size) || file_size.QuadPart < 0 ||
-      file_size.QuadPart > static_cast<LONGLONG>(DWORD_MAX)) {
+      file_size.QuadPart >
+          static_cast<LONGLONG>(std::numeric_limits<DWORD>::max())) {
     CloseHandle(file);
     return std::nullopt;
   }
@@ -95,8 +97,8 @@ std::optional<std::string> ReadFile(const std::wstring& path) {
   DWORD bytes_read = 0;
   const BOOL ok =
       content.empty() ||
-      ReadFile(file, content.data(), static_cast<DWORD>(content.size()),
-               &bytes_read, nullptr);
+      ::ReadFile(file, content.data(), static_cast<DWORD>(content.size()),
+                 &bytes_read, nullptr);
   CloseHandle(file);
 
   if (!ok || static_cast<size_t>(bytes_read) != content.size()) {
@@ -123,7 +125,7 @@ std::optional<int> RunAmneziaWgServiceIfRequested() {
   std::wstring tunnel_name = argv[3];
   LocalFree(argv);
 
-  const auto config = ReadFile(config_path);
+  const auto config = ReadUtf8File(config_path);
   const auto dll_path = ResolveTunnelDllPath();
   if (!config || !dll_path) {
     return EXIT_FAILURE;
