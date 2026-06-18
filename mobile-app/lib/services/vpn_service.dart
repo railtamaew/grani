@@ -3897,7 +3897,8 @@ class VpnService extends ChangeNotifier {
   /// Применение GraniWG/AmneziaWG через native MethodChannel.
   ///
   /// Android uses the embedded amneziawg-go backend. Windows delegates to the
-  /// desktop runner (`awg-quick.exe`) resolved by the native C++ channel.
+  /// native C++ channel, which prefers AmneziaWG `tunnel.dll` via Windows
+  /// Service Control Manager and keeps `awg-quick.exe` only as a debug fallback.
   Future<bool> _applyGraniWGConfig(String config, VpnProtocol protocol) async {
     if (Platform.isAndroid || Platform.isWindows) {
       final ok = await NativeVpnService.connectAmneziaWg(

@@ -10247,3 +10247,20 @@ Windows platform:
 - `https://github.com/amnezia-vpn/amneziawg-windows` в README описывает сборку `x64/tunnel.dll` через `build.cmd`.
 - Вывод: текущий contract в `mobile-app/windows/runner/grani_vpn_channel.cpp` с поиском `awg-quick.exe` полезен как временный MVP/debug runner contract, но не совпадает напрямую с official Amnezia Windows integration.
 - Следующий engineering decision: либо создать совместимый `awg-quick.exe` wrapper вокруг `amneziawg-windows/tunnel.dll`, либо переписать Windows native channel на прямую интеграцию с `tunnel.dll`/service model.
+2026-06-18 Windows platform update: native AmneziaWG service runner
+
+- Goal: continue full Windows platform development for GrANI without AWS Windows VPS; use private GitHub repo + GitHub Actions Windows runner for builds.
+- Previous Windows runner was only an MVP looking for `awg-quick.exe`. Upstream check showed this is not the official AmneziaWG Windows path: `amneziawg-go` points Windows users to `amneziawg-windows`, which builds `x64/tunnel.dll`.
+- Implemented Windows service-host path:
+  - `mobile-app/windows/runner/main.cpp` now detects `/awg-service <config_path> <tunnel_name>` before Flutter startup.
+  - In service mode it reads UTF-8 config, resolves `tunnel.dll` from `GRANI_AWG_TUNNEL_DLL`, bundled `data/flutter_assets/bin/amneziawg/windows/tunnel.dll`, or app dir `tunnel.dll`, then calls exported `WireGuardTunnelService(configWide, tunnelNameWide)`.
+  - `mobile-app/windows/runner/grani_vpn_channel.cpp` now prefers `tunnel.dll`: writes config to `%LOCALAPPDATA%\GRANI\grani-awg.conf`, stops old service, creates/updates Windows service `grani-awg`, sets dependencies `Nsi` and `TcpIp`, sets unrestricted service SID, starts service, and waits for `SERVICE_RUNNING`.
+  - `awg-quick.exe` fallback remains only for legacy/debug testing via `GRANI_AWG_QUICK` or bundled/local `awg-quick.exe`.
+  - Native status now reports runner `tunnel.dll`, `awg-quick`, or `missing`, and checks the Windows service state when possible.
+- Updated `mobile-app/bin/amneziawg/README.md`: Windows production binary is now `windows/tunnel.dll` from `https://github.com/amnezia-vpn/amneziawg-windows`; macOS remains `amneziawg-go`.
+- Updated Dart comment in `mobile-app/lib/services/vpn_service.dart` to reflect the Windows `tunnel.dll` service path.
+- Verification:
+  - `git diff --check` passed.
+  - `flutter analyze lib/services/vpn_service.dart` ran; no new Dart errors, only the known six warnings about unused fields/methods in `vpn_service.dart`.
+  - Windows compile/runtime still must be validated by GitHub Actions on Windows and then on a real Windows machine with built `tunnel.dll` bundled or `GRANI_AWG_TUNNEL_DLL` set.
+- Next required task: build or fetch `amneziawg-windows` `x64/tunnel.dll`, add it to `mobile-app/bin/amneziawg/windows/tunnel.dll` or configure CI to build/package it, then run GitHub Actions Windows desktop build and test connect as admin.
