@@ -2,6 +2,11 @@
 cmake_minimum_required(VERSION 3.14)
 project(mobile_app LANGUAGES CXX)
 
+# Firebase C++ SDK versions bundled by FlutterFire still declare very old
+# CMake compatibility. New GitHub Actions images can have CMake 4+, which
+# requires an explicit lower policy floor for those third-party CMakeLists.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Minimum CMake policy compatibility" FORCE)
+
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 set(BINARY_NAME "mobile_app")

@@ -10278,3 +10278,16 @@ Windows platform:
 - Server/local project is on Flutter `3.38.3` stable, Dart `3.10.1`; dependencies resolve there.
 - Updated `.github/workflows/desktop-build.yml` and `.github/workflows/mobile-app.yml` from Flutter `3.24.x` to `3.38.3`.
 - Also hardened `mobile-app/windows/runner/main.cpp`: service-mode config file reading now uses WinAPI `CreateFileW`/`ReadFile` instead of `std::ifstream(std::wstring)`, avoiding MSVC wide-path/STL compatibility issues and possible `/W4 /WX` warnings.
+2026-06-19 Desktop CI second-wave failures
+
+- After updating GitHub Actions Flutter SDK to `3.38.3`, dependency resolution moved forward and Desktop Build reached real platform build steps.
+- Windows failure:
+  - Step: `Build Windows`.
+  - Error from Actions log: `firebase_cpp_sdk_windows/CMakeLists.txt:17 (cmake_minimum_required): Compatibility with CMake < 3.5 has been removed from CMake`.
+  - Fix: set `CMAKE_POLICY_VERSION_MINIMUM 3.5` in `mobile-app/windows/CMakeLists.txt` so Firebase C++ SDK sub-CMakeLists remains compatible with newer GitHub Actions CMake images.
+- macOS failure:
+  - Step: `Build macOS`.
+  - Error was in CocoaPods dependency resolver (`molinillo`/`cocoapods` stack).
+  - Project had macOS plugins but no committed `mobile-app/macos/Podfile`; Firebase podspec explicitly expects users to update/commit macOS Podfile platform settings when needed.
+  - Fix: added standard Flutter macOS `Podfile` with `platform :osx, '10.15'`, `flutter_macos_podfile_setup`, `flutter_install_all_macos_pods`, and `flutter_additional_macos_build_settings`.
+- Next validation: rerun Desktop Build after this commit; expected next stage is Windows CMake configure past Firebase SDK and macOS CocoaPods resolver past explicit platform.
