@@ -1,0 +1,12 @@
+# Пример drop-in для Xray на VPN-ноде: мягкий reload без полного restart.
+# Скопировать на сервер:
+#   sudo mkdir -p /etc/systemd/system/xray.service.d
+#   sudo cp grani-exec-reload.conf.example /etc/systemd/system/xray.service.d/grani-exec-reload.conf
+# Путь к бинарнику и конфигу подставьте под установку (часто /usr/local/bin/xray и /usr/local/etc/xray/config.json).
+# Затем: sudo systemctl daemon-reload && sudo systemctl reload xray
+#
+# Первый ExecReload: проверка JSON; второй: SIGHUP основному процессу (Xray перечитывает config).
+[Service]
+ExecReload=
+ExecReload=/usr/local/bin/xray run -test -config=/usr/local/etc/xray/config.json
+ExecReload=/bin/kill -HUP $MAINPID

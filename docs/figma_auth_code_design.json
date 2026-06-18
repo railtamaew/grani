@@ -1,0 +1,90 @@
+{
+  "source": "Figma API",
+  "frame_id": "516:223",
+  "design_width": 412,
+  "design_height": 917,
+  "frame": {
+    "x": 1463.0,
+    "y": 1060.0,
+    "width": 412.0,
+    "height": 917.0
+  },
+  "background_gradient": {
+    "colors_hex": [
+      "#FFFFFF",
+      "#F7F9FA"
+    ],
+    "stops": [
+      0.0,
+      1.0
+    ]
+  },
+  "title_block": {
+    "x": 1495.0,
+    "y": 1462.0,
+    "width": 352.0,
+    "height": 74.0
+  },
+  "title": {
+    "fontSize": 40.0,
+    "fontWeight": 400,
+    "letterSpacing": -1.6,
+    "lineHeightPx": 36.0,
+    "fontFamily": "Montserrat",
+    "fills": [
+      "#192F3F"
+    ],
+    "bounds": {
+      "x": 1495.0,
+      "y": 1462.0,
+      "width": 352.0,
+      "height": 36.0
+    }
+  },
+  "subtitle": {
+    "fontSize": 16.0,
+    "fontWeight": 300,
+    "letterSpacing": 0.96,
+    "lineHeightPx": 15.520000457763672,
+    "fontFamily": "Montserrat",
+    "fills": [
+      "#192F3F"
+    ],
+    "bounds": {
+      "x": 1495.0,
+      "y": 1518.0,
+      "width": 352.0,
+      "height": 18.0
+    }
+  },
+  "pin_label": {
+    "fontSize": 32.0,
+    "fontWeight": 400,
+    "fills": [
+      "#192F3F"
+    ]
+  },
+  "error_message": {
+    "fontSize": 14.0,
+    "fontWeight": 300,
+    "fills": [
+      "#192F3F"
+    ]
+  },
+  "resend_link": {
+    "fontSize": 14.0,
+    "fontWeight": 300,
+    "fills": [
+      "#192F3F"
+    ]
+  },
+  "pin_box": {
+    "node_id": "516:236",
+    "x": 1675.0,
+    "y": 1634.0,
+    "width": 70.0,
+    "height": 100.0,
+    "cornerRadius": 25.0,
+    "background_hex": "#F4F6F8"
+  }
+}

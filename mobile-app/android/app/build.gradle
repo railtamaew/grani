@@ -1,0 +1,202 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+    id "com.google.gms.google-services"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+if (flutterVersionCode == null) {
+    flutterVersionCode = '1'
+}
+
+def flutterVersionName = localProperties.getProperty('flutter.versionName')
+if (flutterVersionName == null) {
+    flutterVersionName = '1.0'
+}
+
+// Загрузка конфигурации подписи из key.properties
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withReader('UTF-8') { reader ->
+        keystoreProperties.load(reader)
+    }
+}
+
+android {
+    namespace = "com.granivpn.mobile"
+    compileSdk = 36
+    
+    ndkVersion = "28.2.13676358"
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    buildFeatures {
+        aidl true
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
+    defaultConfig {
+        applicationId = "com.granivpn.mobile"
+        minSdkVersion = flutter.minSdkVersion
+        targetSdk = 36
+        versionCode = flutterVersionCode.toInteger()
+        versionName = flutterVersionName
+        multiDexEnabled = true
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // OAuth callback scheme: debug — .debug, release (Play) — .mobile; applicationName — Flutter
+        manifestPlaceholders = [
+            oauthScheme: "com.granivpn.mobile.debug",
+            applicationName: "io.flutter.app.FlutterApplication"
+        ]
+        // Поддерживаем и 32-битные Android-устройства вроде Redmi 9A.
+        // Flutter split-per-abi сам задает ABI splits; одновременно с ndk.abiFilters
+        // Gradle падает с conflicting configuration, поэтому для split-сборки
+        // передаем -PgraniSplitPerAbi=true и даем Flutter управлять ABI.
+        def graniAbiFilters = project.findProperty("graniAbiFilters")
+            ?.toString()
+            ?.split(",")
+            ?.collect { it.trim() }
+            ?.findAll { it.length() > 0 }
+        if (graniAbiFilters != null && !graniAbiFilters.isEmpty()) {
+            ndk {
+                abiFilters(*graniAbiFilters)
+            }
+        } else if (!project.hasProperty("graniSplitPerAbi")) {
+            ndk {
+                abiFilters 'arm64-v8a', 'armeabi-v7a'
+            }
+        }
+    }
+
+    signingConfigs {
+        release {
+            storeFile = keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
+            storePassword = keystoreProperties['storePassword']
+            keyAlias = keystoreProperties['keyAlias']
+            keyPassword = keystoreProperties['keyPassword']
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.release
+            minifyEnabled = true
+            shrinkResources = true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            manifestPlaceholders = [oauthScheme: "com.granivpn.mobile"]
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // Official Hysteria Android binaries are packaged as native libs so
+            // Android extracts them into applicationInfo.nativeLibraryDir.
+            // Keep them executable and do not let strip corrupt non-library ELF files.
+            useLegacyPackaging = true
+            keepDebugSymbols += ['**/libhysteria2.so']
+        }
+        
+        // Исключаем эмуляторные/desktop ABI, но оставляем обе телефонные ARM ABI.
+        exclude 'lib/x86/**'
+        exclude 'lib/x86_64/**'
+        if (project.hasProperty("graniExcludeArmv7")) {
+            exclude 'lib/armeabi-v7a/**'
+        }
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+flutter {
+    source = '../..'
+}
+
+// Принудительная перекомпиляция Kotlin - отключаем up-to-date проверку
+// ВАЖНО: Это предотвращает использование старых скомпилированных классов
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+    outputs.upToDateWhen { false }
+    // Отключаем инкрементальную компиляцию
+    incremental = false
+    // Принудительно очищаем выходные файлы перед компиляцией
+    doFirst {
+        delete destinationDirectory
+    }
+}
+
+// ДОПОЛНИТЕЛЬНО: Принудительная очистка всех задач компиляции
+tasks.all { task ->
+    if (task instanceof org.gradle.api.tasks.compile.AbstractCompile) {
+        task.outputs.upToDateWhen { false }
+    }
+}
+
+// Очистка перед сборкой release (если задача существует)
+tasks.matching { it.name == "assembleRelease" }.configureEach {
+    doFirst {
+        delete fileTree("${buildDir}/intermediates/kotlin") { include "**/*" }
+        delete fileTree("${buildDir}/tmp/kotlin-classes") { include "**/*" }
+    }
+}
+
+// Очистка перед сборкой debug (если задача существует)
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+    doFirst {
+        delete fileTree("${buildDir}/intermediates/kotlin") { include "**/*" }
+        delete fileTree("${buildDir}/tmp/kotlin-classes") { include "**/*" }
+    }
+}
+
+// AmneziaWG ships its own libwg-go.so. The legacy wireguard_flutter plugin is not
+// registered on Android and its transitive WireGuard tunnel AAR conflicts at packaging time.
+configurations.configureEach {
+    exclude group: "com.wireguard.android", module: "tunnel"
+}
+
+dependencies {
+    // Для [EntitlementFcmReceiver]: RemoteMessage из FCM data (BOM согласует версию с FlutterFire).
+    implementation platform("com.google.firebase:firebase-bom:33.7.0")
+    implementation "com.google.firebase:firebase-messaging"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.1.0"
+    implementation "androidx.appcompat:appcompat:1.7.0"
+    implementation "androidx.activity:activity-ktx:1.9.0"
+    // Нативный XRay-core (libXray) из Maven Central.
+    // Важно: эта версия подтягивает современный core (26.x), совместимый с REALITY.
+    implementation "io.github.wanliyunyan:libxray:25.12.8"
+    // Hysteria2 runs through Hysteria2ProcessWrapper + native libhysteria2.so.
+    // Keep libbox out of release builds: it adds libbox.so/libgojni.so but is no
+    // longer used by the active Android VPN runtime.
+    implementation project(":tun2socks")
+    implementation project(":amneziawg-tunnel")
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "io.mockk:mockk:1.13.12"
+    testImplementation "org.json:json:20231013"
+    androidTestImplementation "androidx.test.ext:junit:1.1.1"
+    androidTestImplementation "androidx.test:runner:1.2.0"
+    androidTestImplementation "androidx.test.uiautomator:uiautomator:2.2.0"
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.0.4"
+    implementation "androidx.multidex:multidex:2.0.1"
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
+}

@@ -1,0 +1,238 @@
+# Environment variables and secrets - КРИТИЧНО: НЕ КОММИТИТЬ!
+*.env
+*.env.*
+.env
+.env.local
+.env.development
+.env.staging
+.env.production
+env-production.env
+env-staging.env
+!env.example
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+/lib/
+/lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+venv/
+ENV/
+env/
+.venv
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.npm
+.eslintcache
+.node_repl_history
+*.tgz
+.yarn-integrity
+
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+local.properties
+.gradle/
+.cxx/
+*.apk
+*.aab
+*.ipa
+*.app
+*.dSYM.zip
+*.dSYM
+*.symbols
+*.map.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+*.ipr
+*.iws
+
+# Logs
+*.log
+logs/
+*.log.*
+/tmp/
+*.tmp
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.sql
+
+# Keys and certificates
+*.pem
+*.key
+*.crt
+*.cert
+*.p12
+*.pfx
+*.jks
+keystore.properties
+key.properties
+!key.properties.example
+!key.properties.template
+
+# SSH keys
+.ssh/
+*.pub
+id_rsa
+id_ed25519
+*.pem
+
+# Build artifacts
+build/
+dist/
+*.tar.gz
+*.zip
+*.rar
+*.aar
+
+# Local compiled utilities / accidental binaries
+/dc
+/xyzzy_cli
+/lscopy
+
+# Test coverage
+.coverage
+htmlcov/
+.tox/
+.pytest_cache/
+.coverage.*
+coverage.xml
+*.cover
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.swp
+*.swo
+
+# APK files (build artifacts)
+*.apk
+*.aab
+
+# Release/download artifacts
+outputs/
+release_apks/
+server-config/static-pages/downloads/
+
+# Playwright/test reports
+admin-panel/playwright-report/
+admin-panel/test-results/
+
+# External repositories checked out on the server; add back as real submodules if needed.
+emulator_web/utils/websockify/
+
+# Mobile app build directories
+mobile-app/build/
+mobile-app/.dart_tool/
+mobile-app/.flutter-plugins
+mobile-app/.flutter-plugins-dependencies
+mobile-app/.packages
+mobile-app/.pub/
+
+# Admin panel build
+admin-panel/build/
+admin-panel/.env.local
+admin-panel/.env.production.local
+admin-panel/.env.development.local
+
+# Backend
+backend/__pycache__/
+backend/*.pyc
+backend/.env
+backend/.env.*
+backend/static/uploads/
+
+# Server config secrets
+server-config/.env
+server-config/.env.*
+server-config/env-production.env
+server-config/env-staging.env
+!server-config/env.example
+
+# DKIM keys
+dkim_keys/*.pem
+!dkim_keys/*.example
+
+# WireGuard configs (may contain keys)
+wg0.conf
+*.conf
+!*.conf.example
+
+# Backup files
+*.backup
+*.backup_*
+*.bak-*
+*.codex-backup-*
+.asset-backups/
+.env.backup_
+
+# Sensitive historical diagnostics/config dumps
+/TECHNICAL_AUDIT_REPORT.md
+/xray_config.json
+
+# Secrets and credentials
+secrets/
+credentials/
+*.secret
+*.credential
+
+# Monitoring and analytics (may contain tokens)
+monitoring/
+analytics/
+
+# Firebase / Google credentials
+grani-*-*.json
+*-firebase*.json
+
+backend/celerybeat-schedule
+
+docs/figma_auth_data.json

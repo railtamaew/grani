@@ -1,0 +1,6 @@
+# Testing dependencies
+# httpx<0.28 нужен для Starlette TestClient (в httpx 0.28 убран параметр app в Client)
+httpx>=0.25.0,<0.28.0
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0

@@ -1,0 +1,49 @@
+pluginManagement {
+    def flutterSdkPath = {
+        def localPropertiesFile = file("local.properties")
+        if (!localPropertiesFile.exists()) {
+            throw new FileNotFoundException("local.properties file not found at: ${localPropertiesFile.absolutePath}")
+        }
+        def properties = new Properties()
+        localPropertiesFile.withInputStream { properties.load(it) }
+        def flutterSdkPath = properties.getProperty("flutter.sdk")
+        if (flutterSdkPath == null || flutterSdkPath.isEmpty()) {
+            throw new GradleException("flutter.sdk not set in local.properties. File content:\n${localPropertiesFile.text}")
+        }
+        def flutterSdkDir = file(flutterSdkPath)
+        if (!flutterSdkDir.exists()) {
+            throw new FileNotFoundException("Flutter SDK not found at: ${flutterSdkDir.absolutePath}")
+        }
+        return flutterSdkPath
+    }
+    settings.ext.flutterSdkPath = flutterSdkPath()
+
+    includeBuild("${settings.ext.flutterSdkPath}/packages/flutter_tools/gradle")
+
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+
+    plugins {
+        id "dev.flutter.flutter-gradle-plugin" version "1.0.0" apply false
+    }
+}
+
+plugins {
+    id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+    id "com.android.application" version "8.9.1" apply false
+    id "com.android.library" version "8.9.1" apply false
+    id "org.jetbrains.kotlin.android" version "2.1.0" apply false
+}
+
+include ":app"
+
+// tun2socks bridge (TUN -> SOCKS for Xray)
+include ":tun2socks"
+project(":tun2socks").projectDir = new File(settingsDir, "third_party/tun2socks")
+
+// AmneziaWG userspace backend (embedded third_party module)
+include ":amneziawg-tunnel"
+project(":amneziawg-tunnel").projectDir = new File(settingsDir, "third_party/amneziawg-android/tunnel")

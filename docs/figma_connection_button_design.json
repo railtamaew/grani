@@ -1,0 +1,305 @@
+{
+  "source": "Figma API",
+  "node_id": "939:555",
+  "design_width": 412,
+  "design_height": 917,
+  "frame": {
+    "x": 5.0,
+    "y": 2390.0,
+    "width": 412.0,
+    "height": 2654.0
+  },
+  "off": {
+    "frame": {
+      "width": 412.0,
+      "height": 655.0,
+      "x": 10.0,
+      "y": 2407.0
+    },
+    "children": [
+      {
+        "width": 350.0,
+        "height": 30.0,
+        "x": 45.0,
+        "y": 2963.0,
+        "strokeWeight": 1.0,
+        "name": "bottom_controls"
+      },
+      {
+        "width": 205.0,
+        "height": 205.0,
+        "x": 113.5,
+        "y": 2705.0,
+        "strokeWeight": 1.0,
+        "name": "connection_button"
+      },
+      {
+        "width": 192.1165771484375,
+        "height": 56.0146484375,
+        "x": 119.941650390625,
+        "y": 2610.07177734375,
+        "strokeWeight": 1.0,
+        "name": "trial_status"
+      },
+      {
+        "width": 336.0,
+        "height": 125.0,
+        "x": 42.0,
+        "y": 2453.0,
+        "strokeWeight": 1.0,
+        "name": "trial_info"
+      }
+    ],
+    "connection_button": {
+      "width": 205.0,
+      "height": 205.0,
+      "x": 113.5,
+      "y": 2705.0
+    },
+    "label": {
+      "text": "подключить",
+      "fontSize": 28.0,
+      "fontWeight": 600,
+      "fills": [
+        "#182D3D"
+      ]
+    },
+    "ring": {
+      "width": 200.0,
+      "height": 200.0,
+      "x": 116.0,
+      "y": 2707.5,
+      "strokeWeight": 12.0,
+      "stroke_hex": "#2A6882",
+      "name": "ring"
+    },
+    "strokeWeight": 12.0,
+    "stroke_hex": "#2A6882"
+  },
+  "on": {
+    "frame": {
+      "width": 412.0,
+      "height": 655.0,
+      "x": 10.0,
+      "y": 4369.0
+    },
+    "children": [
+      {
+        "width": 350.0,
+        "height": 30.0,
+        "x": 45.0,
+        "y": 4925.0,
+        "strokeWeight": 1.0,
+        "name": "bottom_controls"
+      },
+      {
+        "width": 205.0,
+        "height": 205.0,
+        "x": 113.5,
+        "y": 4667.0,
+        "strokeWeight": 1.0,
+        "name": "connection_button"
+      },
+      {
+        "width": 191.11669921875,
+        "height": 56.0146484375,
+        "x": 119.941650390625,
+        "y": 4572.07177734375,
+        "strokeWeight": 1.0,
+        "name": "trial_status"
+      },
+      {
+        "width": 336.0,
+        "height": 125.0,
+        "x": 42.0,
+        "y": 4415.0,
+        "strokeWeight": 1.0,
+        "name": "trial_info"
+      }
+    ],
+    "connection_button": {
+      "width": 205.0,
+      "height": 205.0,
+      "x": 113.5,
+      "y": 4667.0
+    },
+    "label": {
+      "text": "подключено",
+      "fontSize": 24.0,
+      "fontWeight": 600,
+      "fills": [
+        "#02222F"
+      ]
+    },
+    "ring": {
+      "width": 200.0,
+      "height": 200.0,
+      "x": 115.99996185302734,
+      "y": 4669.5,
+      "strokeWeight": 7.0,
+      "stroke_hex": "#E8AC89",
+      "name": "ring"
+    },
+    "strokeWeight": 7.0,
+    "stroke_hex": "#E8AC89"
+  },
+  "connecting": {
+    "frame": {
+      "width": 412.0,
+      "height": 655.0,
+      "x": 10.0,
+      "y": 3073.0
+    },
+    "children": [
+      {
+        "width": 350.0,
+        "height": 30.0,
+        "x": 45.0,
+        "y": 3629.0,
+        "strokeWeight": 1.0,
+        "name": "bottom_controls"
+      },
+      {
+        "width": 205.0,
+        "height": 205.0,
+        "x": 113.5,
+        "y": 3371.0,
+        "strokeWeight": 1.0,
+        "name": "connection_button"
+      },
+      {
+        "width": 192.1165771484375,
+        "height": 56.0146484375,
+        "x": 119.941650390625,
+        "y": 3276.07177734375,
+        "strokeWeight": 1.0,
+        "name": "trial_status"
+      },
+      {
+        "width": 336.0,
+        "height": 125.0,
+        "x": 42.0,
+        "y": 3119.0,
+        "strokeWeight": 1.0,
+        "name": "trial_info"
+      }
+    ],
+    "connection_button": {
+      "width": 205.0,
+      "height": 205.0,
+      "x": 113.5,
+      "y": 3371.0
+    },
+    "label": {
+      "text": "соединение...",
+      "fontSize": 24.0,
+      "fontWeight": 600,
+      "fills": [
+        "#182D3D"
+      ]
+    },
+    "ring": {
+      "width": 200.0,
+      "height": 200.0,
+      "x": 121.3258056640625,
+      "y": 3379.162353515625,
+      "strokeWeight": 7.0,
+      "stroke_hex": "#E89B6E",
+      "name": "ring"
+    },
+    "strokeWeight": 7.0,
+    "stroke_hex": "#E89B6E"
+  },
+  "disconnecting": {
+    "frame": {
+      "width": 412.0,
+      "height": 655.0,
+      "x": 10.0,
+      "y": 3715.0
+    },
+    "children": [
+      {
+        "width": 350.0,
+        "height": 30.0,
+        "x": 45.0,
+        "y": 4271.0,
+        "strokeWeight": 1.0,
+        "name": "bottom_controls"
+      },
+      {
+        "width": 205.0,
+        "height": 205.0,
+        "x": 113.5,
+        "y": 4013.0,
+        "strokeWeight": 1.0,
+        "name": "connection_button"
+      },
+      {
+        "width": 192.1165771484375,
+        "height": 56.0146484375,
+        "x": 119.941650390625,
+        "y": 3918.07177734375,
+        "strokeWeight": 1.0,
+        "name": "trial_status"
+      },
+      {
+        "width": 336.0,
+        "height": 125.0,
+        "x": 42.0,
+        "y": 3761.0,
+        "strokeWeight": 1.0,
+        "name": "trial_info"
+      }
+    ],
+    "connection_button": {
+      "width": 205.0,
+      "height": 205.0,
+      "x": 113.5,
+      "y": 4013.0
+    },
+    "label": {
+      "text": "отключаемся...",
+      "fontSize": 24.0,
+      "fontWeight": 600,
+      "fills": [
+        "#182D3D"
+      ]
+    },
+    "ring": {
+      "width": 200.0,
+      "height": 200.0,
+      "x": 115.99996185302734,
+      "y": 4015.5,
+      "strokeWeight": 7.0,
+      "stroke_hex": "#E8AD8B",
+      "name": "ring"
+    },
+    "strokeWeight": 7.0,
+    "stroke_hex": "#E8AD8B"
+  },
+  "_layer_names": [
+    "CONNECTING",
+    "DISCONNECTING",
+    "OFF",
+    "ON",
+    "bottom_controls",
+    "button_connection",
+    "connection_button",
+    "flag_icon",
+    "label",
+    "protocol_icon",
+    "protocol_selector",
+    "protocol_title",
+    "ring",
+    "server_selector",
+    "server_title",
+    "speed_label",
+    "subtitle",
+    "timer_box",
+    "timer_label",
+    "timer_value",
+    "title",
+    "trial_info",
+    "trial_status"
+  ]
+}

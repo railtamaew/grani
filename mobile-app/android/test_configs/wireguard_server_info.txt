@@ -1,0 +1,15 @@
+# Информация о реальном WireGuard сервере
+
+[Server]
+IP = 45.12.132.94
+Port = 51820
+PublicKey = 1f9Euwg9rNI7A2BnsTzjyKdxyo2j7kRbYpyrIKpT6Fc=
+
+[Client]
+PrivateKey = kAXi4TLijK02yUHEUKVKoChRDicxUFBQnydMQY0NI0k=
+PublicKey = TVg3PioAwVBCbPxC9I0vRGI8YokqnMx7NlBDoPZrgCo=
+Address = 10.0.0.2/32
+
+# Важно: Пир клиента должен быть добавлен на сервере
+# Публичный ключ клиента: TVg3PioAwVBCbPxC9I0vRGI8YokqnMx7NlBDoPZrgCo=
+# IP клиента: 10.0.0.2/32

@@ -1,0 +1,24 @@
+# Шаблон конфигурации подписи приложения
+# Скопируйте этот файл в key.properties и заполните своими данными
+# ВАЖНО: key.properties уже в .gitignore и не будет закоммичен
+
+# Пароль для keystore
+storePassword=ВАШ_ПАРОЛЬ_STORE
+
+# Пароль для ключа
+keyPassword=ВАШ_ПАРОЛЬ_KEY
+
+# Алиас ключа
+keyAlias=granivpn-key
+
+# Путь к keystore файлу
+# Windows:
+# storeFile=C:/Users/username/granivpn-release-key.jks
+# macOS:
+# storeFile=/Users/username/granivpn-release-key.jks
+# Linux:
+# storeFile=/home/username/granivpn-release-key.jks
+
+storeFile=ПУТЬ_К_ВАШЕМУ_KEYSTORE.jks
+
+

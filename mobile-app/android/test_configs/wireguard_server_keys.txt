@@ -1,0 +1,10 @@
+# Ключи тестового WireGuard сервера
+# Используйте эти ключи для настройки тестового сервера (если нужно)
+
+[Server]
+PrivateKey = 8A/D5DF4GbU++badP2+l+M3lfnGlLUO3alG9Aw0VwEA=
+PublicKey = WnaKt23AC8AOJVnC/vIm3/wMN9FgEC7Vtzv4uFjGhkk=
+
+[Client]
+PrivateKey = OCs5WchogmEfQhxVLzRjoaJtmv6xBO8enJwtGDdbgWw=
+PublicKey = C7f+OPeeBIb/qRAQF3RcgAgUIQrMZDi1+UUAfV/grwo=

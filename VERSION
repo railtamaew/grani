@@ -1,0 +1,14 @@
+Version: 1.0.0
+Build Number: 20260122090833
+Build Date: 2026-01-22 09:08:33
+Build Time: 1769072913
+APK Size: 82M
+APK Path: mobile-app/build/app/outputs/flutter-apk/app-release.apk
+Architecture: arm64
+Changes:
+- КРИТИЧНО: Исправлена передача XRay конфигурации - теперь передается обычный JSON вместо base64
+- libXray.runXrayFromJSON() теперь получает правильный формат конфигурации
+- Добавлено детальное диагностическое логирование для отладки подключения
+- Улучшена обработка ошибок в _syncConnectionState с таймаутами
+- Добавлен автоматический сброс _isConnecting при ошибках синхронизации
+- Добавлены логи времени выполнения операций отключения на сервере

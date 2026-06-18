@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "639166931934",
+    "project_id": "grani-479612",
+    "storage_bucket": "grani-479612.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:639166931934:android:20a1da18ebdefece26b34f",
+        "android_client_info": {
+          "package_name": "com.granivpn.mobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "639166931934-nrqvjmguujm6a1jrvhusm7ail4fom97n.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCB_0bttXOqge-JMdYMWDdMfcVL0ivgq74"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "639166931934-nrqvjmguujm6a1jrvhusm7ail4fom97n.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

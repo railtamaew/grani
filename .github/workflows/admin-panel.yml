@@ -1,0 +1,42 @@
+name: Admin Panel
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'admin-panel/**'
+      - '.github/workflows/admin-panel.yml'
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - 'admin-panel/**'
+      - '.github/workflows/admin-panel.yml'
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin-panel
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test -- --watchAll=false --passWithNoTests
+
+      - name: Production build + Observability route in bundle
+        run: |
+          npm run build
+          grep -Rq '/observability' build/static/js/ || (echo "FAIL: bundle must include /observability route"; exit 1)

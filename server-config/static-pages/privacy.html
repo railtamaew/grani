@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-PEVT8SSG8C"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-PEVT8SSG8C');
+  </script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.png" type="image/png" sizes="48x48">
+  <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="/favicon-16.png" type="image/png" sizes="16x16">
+  <link rel="mask-icon" href="/mask-icon.svg" color="#192F3F">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <title>Privacy Policy — GRANI VPN</title>
+  <meta name="description" content="Privacy Policy for GRANI VPN. Version 2.0, updated June 1, 2026.">
+  <style>
+    :root {
+      --ink: #192F3F;
+      --ink-deep: #02222F;
+      --muted: #647487;
+      --soft: #8A96A3;
+      --line: #DEE6EE;
+      --line-soft: #E6EBF2;
+      --surface: #F7F9FA;
+      --surface-soft: #F8FAFC;
+      --surface-inset: #EFF4F8;
+      --white: #FFFFFF;
+      --accent: #EF7F34;
+      --success: #2EC07E;
+      --danger: #E46E61;
+      --shadow: 0 18px 46px -28px rgba(6, 20, 46, 0.28), 0 -7px 20px -16px rgba(255, 255, 255, 0.95);
+      --shadow-soft: 0 12px 30px -22px rgba(6, 20, 46, 0.22), 0 -5px 16px -13px rgba(255, 255, 255, 0.95);
+      --radius: 22px;
+      --radius-control: 18px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--surface);
+      color: var(--ink);
+    }
+
+    body {
+      margin: 0;
+      font-family: Montserrat, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      line-height: 1.62;
+      letter-spacing: 0;
+      background:
+        radial-gradient(circle at 50% -260px, rgba(255, 255, 255, 0.98) 0, rgba(255, 255, 255, 0.94) 270px, transparent 520px),
+        linear-gradient(180deg, #FFFFFF 0%, #F7F9FA 100%);
+      color: var(--ink);
+    }
+
+    a {
+      color: var(--ink);
+      text-decoration-color: rgba(25, 47, 63, 0.28);
+      text-underline-offset: 3px;
+    }
+
+    a:hover { text-decoration-color: rgba(25, 47, 63, 0.64); }
+
+    .page {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 26px 0 56px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 8px 0 28px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      color: var(--ink);
+      text-decoration: none;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-size: 13px;
+    }
+
+    .brand-surface {
+      width: 44px;
+      height: 44px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 52%, #F1F4F7 100%);
+      border: 1px solid rgba(222, 230, 238, 0.86);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .brand img {
+      width: 24px;
+      height: 31px;
+      display: block;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .nav a {
+      display: inline-flex;
+      min-height: 36px;
+      align-items: center;
+      padding: 0 14px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 52%, #F1F4F7 100%);
+      border: 1px solid rgba(222, 230, 238, 0.76);
+      box-shadow: var(--shadow-soft);
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+      gap: 24px;
+      align-items: stretch;
+      margin: 8px 0 28px;
+    }
+
+    .hero-main,
+    .summary-card,
+    .policy-card,
+    .index-card,
+    .notice,
+    .footer {
+      background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 52%, #F1F4F7 100%);
+      border: 1px solid rgba(222, 230, 238, 0.86);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .hero-main {
+      padding: clamp(28px, 5vw, 56px);
+      min-height: 390px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .eyebrow {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin: 0 0 20px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(36px, 6vw, 72px);
+      line-height: 0.98;
+      font-weight: 750;
+      color: var(--ink-deep);
+      max-width: 760px;
+    }
+
+    .hero-copy {
+      max-width: 760px;
+      margin: 28px 0 0;
+      color: var(--muted);
+      font-size: clamp(16px, 2vw, 18px);
+    }
+
+    .version-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 34px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 0 13px;
+      border-radius: 999px;
+      background: rgba(239, 244, 248, 0.78);
+      border: 1px solid rgba(222, 230, 238, 0.82);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .summary-card {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .summary-title {
+      margin: 0;
+      color: var(--ink-deep);
+      font-size: 18px;
+      font-weight: 750;
+    }
+
+    .summary-list {
+      display: grid;
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .summary-list li {
+      padding: 13px 14px;
+      border-radius: var(--radius-control);
+      background: rgba(255, 255, 255, 0.58);
+      border: 1px solid rgba(230, 235, 242, 0.82);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .summary-list strong {
+      color: var(--ink);
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 276px minmax(0, 1fr);
+      gap: 24px;
+      align-items: start;
+    }
+
+    .index-card {
+      position: sticky;
+      top: 18px;
+      padding: 18px;
+    }
+
+    .index-card h2 {
+      margin: 0 0 12px;
+      font-size: 14px;
+      color: var(--ink-deep);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .index-card a {
+      display: block;
+      padding: 9px 0;
+      border-top: 1px solid rgba(230, 235, 242, 0.9);
+      color: var(--muted);
+      font-size: 14px;
+      text-decoration: none;
+    }
+
+    .index-card a:hover { color: var(--ink); }
+
+    .policy-card {
+      padding: clamp(24px, 4.2vw, 52px);
+    }
+
+    .lang-block + .lang-block {
+      margin-top: 48px;
+      padding-top: 40px;
+      border-top: 1px solid rgba(222, 230, 238, 0.9);
+    }
+
+    h2 {
+      margin: 40px 0 12px;
+      color: var(--ink-deep);
+      font-size: clamp(24px, 3vw, 34px);
+      line-height: 1.14;
+      font-weight: 760;
+    }
+
+    h2:first-child { margin-top: 0; }
+
+    h3 {
+      margin: 26px 0 10px;
+      color: var(--ink);
+      font-size: 18px;
+      line-height: 1.25;
+      font-weight: 750;
+    }
+
+    p { margin: 10px 0; }
+
+    ul {
+      margin: 10px 0 0;
+      padding-left: 20px;
+    }
+
+    li { margin: 7px 0; }
+
+    .lead {
+      color: var(--muted);
+      font-size: 17px;
+      margin-bottom: 24px;
+    }
+
+    .notice {
+      padding: 18px 20px;
+      margin: 24px 0;
+      box-shadow: var(--shadow-soft);
+      background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 62%, #EFF4F8 100%);
+    }
+
+    .notice strong {
+      display: block;
+      color: var(--ink-deep);
+      margin-bottom: 4px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      margin: 18px 0 26px;
+      overflow: hidden;
+      border: 1px solid rgba(222, 230, 238, 0.92);
+      border-radius: var(--radius-control);
+      background: rgba(255, 255, 255, 0.72);
+      font-size: 14px;
+    }
+
+    th, td {
+      padding: 13px 14px;
+      vertical-align: top;
+      text-align: left;
+      border-bottom: 1px solid rgba(230, 235, 242, 0.92);
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    th {
+      color: var(--ink-deep);
+      background: rgba(239, 244, 248, 0.76);
+      font-weight: 750;
+    }
+
+    .footer {
+      margin-top: 26px;
+      padding: 24px;
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .footer strong { color: var(--ink); }
+
+    @media (max-width: 860px) {
+      .hero,
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .index-card {
+        position: static;
+      }
+
+      .hero-main {
+        min-height: auto;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .page {
+        width: min(100% - 20px, 1120px);
+        padding-top: 16px;
+      }
+
+      .topbar {
+        align-items: flex-start;
+      }
+
+      .nav a {
+        min-height: 34px;
+        padding: 0 11px;
+      }
+
+      .hero-main,
+      .summary-card,
+      .policy-card,
+      .index-card,
+      .footer {
+        border-radius: 18px;
+      }
+
+      table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="topbar">
+      <a class="brand" href="https://granilink.com" aria-label="GRANI home">
+        <span class="brand-surface"><img src="/assets/logo_grani_new.png" alt="GRANI"></span>
+        <span>GRANI VPN</span>
+      </a>
+      <nav class="nav" aria-label="Language">
+        <a href="#ru">RU</a>
+        <a href="#en">EN</a>
+        <a href="mailto:support@granilink.com">support@granilink.com</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="hero-main">
+        <div>
+          <p class="eyebrow">Privacy Policy</p>
+          <h1>Политика конфиденциальности GRANI VPN</h1>
+          <p class="hero-copy">Документ описывает, какие данные нужны сервису для аккаунта, подписки, VPN-подключения, безопасности и диагностики, а также какие данные мы не собираем.</p>
+        </div>
+        <div class="version-row">
+          <span class="pill">Версия 2.0</span>
+          <span class="pill">Обновлено: 1 июня 2026</span>
+          <span class="pill">https://granilink.com/privacy</span>
+        </div>
+      </div>
+
+      <aside class="summary-card">
+        <h2 class="summary-title">Коротко</h2>
+        <ul class="summary-list">
+          <li><strong>Мы не храним содержание трафика.</strong> GRANI VPN не записывает содержимое сайтов, сообщений, файлов или приложений, которые проходят через VPN.</li>
+          <li><strong>Технические логи существуют.</strong> Они нужны для авторизации, подписок, защиты от злоупотреблений, диагностики ошибок и стабильности VPN.</li>
+          <li><strong>Данные маршрутизируются через выбранные VPN-серверы.</strong> Инфраструктура может находиться в разных странах в зависимости от выбранной локации.</li>
+          <li><strong>Платежи обрабатываются платформами.</strong> Мы не получаем полные данные банковских карт; подписки Android обрабатываются через Google Play.</li>
+        </ul>
+      </aside>
+    </section>
+
+    <section class="layout">
+      <aside class="index-card" aria-label="Contents">
+        <h2>Содержание</h2>
+        <a href="#ru">Русская версия</a>
+        <a href="#ru-data">Какие данные обрабатываются</a>
+        <a href="#ru-logs">Логи и VPN</a>
+        <a href="#ru-retention">Сроки хранения</a>
+        <a href="#ru-rights">Права пользователя</a>
+        <a href="#en">English version</a>
+      </aside>
+
+      <article class="policy-card">
+        <section id="ru" class="lang-block" lang="ru">
+          <h2>1. Общие положения</h2>
+          <p class="lead">Настоящая Политика конфиденциальности описывает, как GRANI VPN, доступный через приложение GRANI и домены granilink.com, app.granilink.com, api.granilink.com и связанные сервисы, обрабатывает данные пользователей.</p>
+          <p>В документе термины «GRANI», «GRANI VPN», «мы» означают операторов сервиса GRANI VPN. Термины «вы» и «пользователь» означают лицо, которое посещает сайт, устанавливает приложение, создает аккаунт, использует пробный период, подписку или VPN-подключение.</p>
+          <p>Используя сайт, приложение или VPN-сервис, вы подтверждаете, что ознакомились с настоящей Политикой. Если вы не согласны с ней, не используйте сервис.</p>
+
+          <h2>2. Контакты</h2>
+          <p>По вопросам конфиденциальности, удаления данных, доступа к данным и технической поддержки можно обратиться по адресу <a href="mailto:support@granilink.com">support@granilink.com</a>.</p>
+          <p>Основной сайт: <a href="https://granilink.com">https://granilink.com</a>.</p>
+
+          <h2 id="ru-data">3. Какие данные мы обрабатываем</h2>
+          <h3>3.1. Аккаунт и авторизация</h3>
+          <ul>
+            <li>Email-адрес и данные, необходимые для входа в аккаунт.</li>
+            <li>Код подтверждения email и технические записи о факте подтверждения.</li>
+            <li>При входе через Google: идентификатор Google-аккаунта, email, имя или отображаемое имя, если они предоставлены Google.</li>
+            <li>Токены сессии и служебные признаки авторизации.</li>
+          </ul>
+
+          <h3>3.2. Подписка и платежи</h3>
+          <ul>
+            <li>Статус пробного периода или подписки, тариф, срок действия, история изменений статуса.</li>
+            <li>Идентификаторы покупки, purchase token, package name и иные данные, необходимые для проверки подписки через Google Play.</li>
+            <li>Мы не получаем и не храним полные данные банковских карт. Платежные данные обрабатываются платежными платформами и магазинами приложений.</li>
+          </ul>
+
+          <h3>3.3. Устройство и приложение</h3>
+          <ul>
+            <li>Идентификатор устройства в системе GRANI, используемый для лимита устройств и управления доступом.</li>
+            <li>Платформа, версия ОС, версия приложения, build number, язык интерфейса, настройки приложения.</li>
+            <li>Список устройств аккаунта, статус текущего устройства и данные, необходимые для выхода или удаления устройства из аккаунта.</li>
+          </ul>
+
+          <h3>3.4. VPN-сессии и серверы</h3>
+          <ul>
+            <li>Выбранный VPN-сервер, страна или локация сервера, протокол, время начала и окончания сессии.</li>
+            <li>Состояние подключения, этапы подключения, коды ошибок, request id, correlation id и технические признаки выполнения команд.</li>
+            <li>Служебные ключи и параметры, необходимые для настройки VPN-подключения на устройстве и сервере.</li>
+          </ul>
+
+          <h3>3.5. Технические логи сайта, API и приложения</h3>
+          <ul>
+            <li>IP-адрес, user-agent, URL запроса, время запроса, HTTP-статус, request id и технические заголовки, которые обрабатываются web/API-инфраструктурой.</li>
+            <li>Диагностические события приложения: ошибки подключения, состояние VPN-пайплайна, выбранный server_id/protocol, сетевые таймауты и результаты health-check.</li>
+            <li>Логи контейнеров, nginx, backend, фоновых задач и систем мониторинга, необходимые для стабильности и безопасности сервиса.</li>
+          </ul>
+
+          <h2 id="ru-logs">4. Что мы не собираем в рамках VPN</h2>
+          <div class="notice">
+            <strong>No traffic content logging</strong>
+            GRANI VPN не предназначен для записи содержания вашего интернет-трафика. Мы не сохраняем содержимое сайтов, сообщений, файлов, звонков, DNS-содержимое как историю просмотра или содержимое приложений.
+          </div>
+          <ul>
+            <li>Мы не создаем историю посещенных сайтов пользователя как продуктовую функцию.</li>
+            <li>Мы не сохраняем содержание страниц, сообщений, передаваемых файлов или медиа.</li>
+            <li>Мы не получаем контакты, фотографии, видео и персональные файлы на устройстве, если они не предоставлены вами напрямую в обращении в поддержку.</li>
+            <li>Мы не используем VPN-трафик для продажи поведенческих профилей или таргетированной рекламы.</li>
+          </ul>
+          <p>При этом для работы VPN любые VPN-серверы технически обрабатывают сетевые пакеты в момент передачи. На уровне инфраструктуры могут возникать краткосрочные технические записи, необходимые для маршрутизации, защиты от злоупотреблений, диагностики аварий и соблюдения требований закона.</p>
+
+          <h2>5. Цели обработки</h2>
+          <ul>
+            <li>Создание и обслуживание аккаунта.</li>
+            <li>Предоставление пробного периода, подписки и VPN-доступа.</li>
+            <li>Выбор сервера, подготовка конфигурации и управление VPN-сессией.</li>
+            <li>Ограничение количества устройств согласно тарифу.</li>
+            <li>Проверка покупок и статуса подписки.</li>
+            <li>Техническая поддержка, диагностика ошибок и улучшение стабильности приложения.</li>
+            <li>Защита сервиса от злоупотреблений, атак, автоматизированных запросов и мошенничества.</li>
+            <li>Соблюдение применимых юридических требований.</li>
+          </ul>
+
+          <h2>6. Правовые основания</h2>
+          <p>В зависимости от юрисдикции и конкретного сценария мы обрабатываем данные на основании исполнения договора с пользователем, законного интереса в обеспечении безопасности и стабильности сервиса, согласия пользователя, а также выполнения юридических обязанностей.</p>
+
+          <h2>7. Третьи лица и инфраструктура</h2>
+          <p>Мы можем использовать поставщиков инфраструктуры и сервисов, которые помогают обеспечивать работу GRANI VPN:</p>
+          <ul>
+            <li>хостинг и дата-центры для backend, VPN-серверов и баз данных;</li>
+            <li>Cloudflare или аналогичные сервисы для защиты и доставки web/API-трафика, если они используются для соответствующих доменов;</li>
+            <li>Google и Google Play для входа, проверки подписок и обработки платежей на Android;</li>
+            <li>почтовые сервисы для отправки кодов, уведомлений и ответов поддержки;</li>
+            <li>инструменты мониторинга, логирования и диагностики для стабильности сервиса.</li>
+          </ul>
+          <p>VPN endpoints и VPN-порты не должны проксироваться через Cloudflare как обычный web-трафик; они работают как отдельная VPN-инфраструктура. Мы не продаем персональные данные третьим лицам.</p>
+
+          <h2 id="ru-retention">8. Сроки хранения</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Категория</th>
+                <th>Назначение</th>
+                <th>Ориентировочный срок</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Аккаунт и email</td>
+                <td>Авторизация, поддержка, управление подпиской</td>
+                <td>Пока аккаунт активен и далее в пределах законных требований</td>
+              </tr>
+              <tr>
+                <td>Подписка и покупки</td>
+                <td>Проверка доступа, бухгалтерские и юридические требования</td>
+                <td>Пока требуется для исполнения договора и закона</td>
+              </tr>
+              <tr>
+                <td>Устройства аккаунта</td>
+                <td>Лимит устройств, безопасность аккаунта</td>
+                <td>Пока устройство привязано к аккаунту или пока нужен аудит безопасности</td>
+              </tr>
+              <tr>
+                <td>VPN-сессии и технические события подключения</td>
+                <td>Работа сервиса, диагностика, защита от злоупотреблений</td>
+                <td>Обычно до 30 дней, если не требуется более долгий срок для расследования инцидента</td>
+              </tr>
+              <tr>
+                <td>Backend/API/container логи</td>
+                <td>Стабильность, мониторинг, безопасность</td>
+                <td>Обычно до 90 дней в рамках ротации логов, если не требуется более долгий срок по закону или инциденту</td>
+              </tr>
+              <tr>
+                <td>Обращения в поддержку</td>
+                <td>Ответ на запрос и история решения проблемы</td>
+                <td>Пока необходимо для поддержки и защиты прав сторон</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>9. Безопасность</h2>
+          <ul>
+            <li>Передача данных между приложением, сайтом и API защищается TLS, где это применимо.</li>
+            <li>Доступ к production-инфраструктуре ограничивается техническими и организационными мерами.</li>
+            <li>Секреты, ключи, токены и платежные идентификаторы обрабатываются как чувствительные технические данные.</li>
+            <li>Мы применяем мониторинг, журналы событий, контейнеризацию, сетевые ограничения и обновления инфраструктуры.</li>
+          </ul>
+          <p>Ни один сервис не может гарантировать абсолютную безопасность. При обнаружении существенного инцидента мы будем действовать в соответствии с применимыми требованиями закона и уведомления пользователей.</p>
+
+          <h2 id="ru-rights">10. Ваши права</h2>
+          <p>В зависимости от применимого законодательства вы можете запросить доступ к данным, исправление, удаление, ограничение обработки, переносимость, отзыв согласия или возражение против обработки.</p>
+          <p>Для запроса напишите на <a href="mailto:support@granilink.com">support@granilink.com</a>. Мы можем запросить подтверждение личности, чтобы не раскрыть данные постороннему лицу. Обычно мы отвечаем в течение 30 дней, если иной срок не установлен законом.</p>
+
+          <h2>11. Cookies и сайт</h2>
+          <p>Сайт GRANI может использовать необходимые cookies, локальное хранилище и технические журналы web-сервера для работы сайта, защиты от злоупотреблений и измерения стабильности. Вы можете управлять cookies через настройки браузера.</p>
+
+          <h2>12. Международная передача данных</h2>
+          <p>GRANI VPN работает с VPN-серверами и инфраструктурой в разных странах. В зависимости от выбранной локации VPN и используемой инфраструктуры данные могут обрабатываться за пределами вашей страны. Мы применяем технические и договорные меры защиты там, где это требуется и возможно.</p>
+
+          <h2>13. Возраст</h2>
+          <p>Сервис предназначен для пользователей, достигших возраста, необходимого для заключения договора и использования цифровых сервисов в своей юрисдикции. Мы не предназначаем сервис для детей и не собираем намеренно данные детей.</p>
+
+          <h2>14. Изменения политики</h2>
+          <p>Мы можем обновлять Политику при изменении продукта, инфраструктуры, требований магазинов приложений или законодательства. Новая версия публикуется по адресу <a href="https://granilink.com/privacy">https://granilink.com/privacy</a>. Существенные изменения могут дополнительно сообщаться в приложении, по email или иным доступным способом.</p>
+
+          <h2>15. Версия документа</h2>
+          <p>Версия: 2.0. Дата обновления: 1 июня 2026 года. Эта версия заменяет предыдущую редакцию 1.0 от 9 октября 2025 года.</p>
+        </section>
+
+        <section id="en" class="lang-block" lang="en">
+          <h2>1. Overview</h2>
+          <p class="lead">This Privacy Policy explains how GRANI VPN, available through the GRANI application and the domains granilink.com, app.granilink.com, api.granilink.com and related services, processes user data.</p>
+          <p>“GRANI”, “GRANI VPN”, “we” and “us” mean the operators of the GRANI VPN service. “You” and “user” mean a person who visits the website, installs the application, creates an account, uses a trial, subscription or VPN connection.</p>
+          <p>By using the website, application or VPN service, you confirm that you have read this Policy. If you do not agree with it, do not use the service.</p>
+
+          <h2>2. Contact</h2>
+          <p>For privacy, deletion, access and support requests, contact <a href="mailto:support@granilink.com">support@granilink.com</a>.</p>
+          <p>Main website: <a href="https://granilink.com">https://granilink.com</a>.</p>
+
+          <h2>3. Data We Process</h2>
+          <h3>3.1. Account and authentication</h3>
+          <ul>
+            <li>Email address and data required to sign in.</li>
+            <li>Email verification codes and technical records of verification.</li>
+            <li>For Google sign-in: Google account identifier, email, name or display name if provided by Google.</li>
+            <li>Session tokens and service authentication flags.</li>
+          </ul>
+
+          <h3>3.2. Subscription and payments</h3>
+          <ul>
+            <li>Trial or subscription status, plan, expiration date and subscription status history.</li>
+            <li>Purchase identifiers, purchase token, package name and other data needed to verify subscriptions through Google Play.</li>
+            <li>We do not receive or store full bank card details. Payment data is processed by payment platforms and app stores.</li>
+          </ul>
+
+          <h3>3.3. Device and application</h3>
+          <ul>
+            <li>GRANI device identifier used for device limits and access control.</li>
+            <li>Platform, OS version, app version, build number, interface language and application settings.</li>
+            <li>Account device list, current device status and data needed to sign out or remove a device from the account.</li>
+          </ul>
+
+          <h3>3.4. VPN sessions and servers</h3>
+          <ul>
+            <li>Selected VPN server, country or location, protocol, session start and end time.</li>
+            <li>Connection state, connection stages, error codes, request id, correlation id and technical command execution markers.</li>
+            <li>Service keys and parameters required to configure the VPN connection on the device and server.</li>
+          </ul>
+
+          <h3>3.5. Website, API and application technical logs</h3>
+          <ul>
+            <li>IP address, user-agent, request URL, request time, HTTP status, request id and technical headers processed by web/API infrastructure.</li>
+            <li>Application diagnostics: connection errors, VPN pipeline state, selected server_id/protocol, network timeouts and health-check results.</li>
+            <li>Container, nginx, backend, background job and monitoring logs required for service stability and security.</li>
+          </ul>
+
+          <h2>4. What We Do Not Collect in VPN Traffic</h2>
+          <div class="notice">
+            <strong>No traffic content logging</strong>
+            GRANI VPN is not designed to record the content of your Internet traffic. We do not store the content of websites, messages, files, calls, DNS content as browsing history, or application content.
+          </div>
+          <ul>
+            <li>We do not create a user browsing history as a product feature.</li>
+            <li>We do not store page content, messages, transferred files or media.</li>
+            <li>We do not access contacts, photos, videos or personal files on your device unless you provide them directly in a support request.</li>
+            <li>We do not use VPN traffic to sell behavioral profiles or targeted advertising.</li>
+          </ul>
+          <p>However, to provide VPN connectivity, VPN servers technically process network packets in transit. Infrastructure may generate short-term technical records required for routing, abuse prevention, incident diagnostics and legal compliance.</p>
+
+          <h2>5. Purposes of Processing</h2>
+          <ul>
+            <li>Creating and maintaining your account.</li>
+            <li>Providing trial, subscription and VPN access.</li>
+            <li>Selecting a server, preparing configuration and managing VPN sessions.</li>
+            <li>Enforcing device limits according to your plan.</li>
+            <li>Verifying purchases and subscription status.</li>
+            <li>Providing support, diagnosing errors and improving application stability.</li>
+            <li>Protecting the service against abuse, attacks, automated requests and fraud.</li>
+            <li>Complying with applicable legal requirements.</li>
+          </ul>
+
+          <h2>6. Legal Bases</h2>
+          <p>Depending on the jurisdiction and scenario, we process data to perform our agreement with you, based on our legitimate interest in service security and stability, based on your consent, and to comply with legal obligations.</p>
+
+          <h2>7. Third Parties and Infrastructure</h2>
+          <p>We may use infrastructure and service providers that help operate GRANI VPN:</p>
+          <ul>
+            <li>hosting and data centers for backend, VPN servers and databases;</li>
+            <li>Cloudflare or similar services for protection and delivery of web/API traffic, where used for relevant domains;</li>
+            <li>Google and Google Play for sign-in, subscription verification and Android payment processing;</li>
+            <li>email services for codes, notifications and support replies;</li>
+            <li>monitoring, logging and diagnostics tools for service stability.</li>
+          </ul>
+          <p>VPN endpoints and VPN ports should not be proxied through Cloudflare as ordinary web traffic; they operate as separate VPN infrastructure. We do not sell personal data.</p>
+
+          <h2>8. Retention</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Purpose</th>
+                <th>Typical retention</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Account and email</td>
+                <td>Authentication, support, subscription management</td>
+                <td>While the account is active and thereafter as required by law</td>
+              </tr>
+              <tr>
+                <td>Subscription and purchases</td>
+                <td>Access verification, accounting and legal requirements</td>
+                <td>As long as needed to perform the agreement and comply with law</td>
+              </tr>
+              <tr>
+                <td>Account devices</td>
+                <td>Device limits and account security</td>
+                <td>While the device is linked to the account or needed for security audit</td>
+              </tr>
+              <tr>
+                <td>VPN sessions and connection technical events</td>
+                <td>Service operation, diagnostics, abuse prevention</td>
+                <td>Usually up to 30 days unless longer retention is needed for an incident</td>
+              </tr>
+              <tr>
+                <td>Backend/API/container logs</td>
+                <td>Stability, monitoring and security</td>
+                <td>Usually up to 90 days under log rotation unless longer retention is required by law or incident handling</td>
+              </tr>
+              <tr>
+                <td>Support requests</td>
+                <td>Answering requests and preserving issue history</td>
+                <td>As long as needed for support and protection of rights</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>9. Security</h2>
+          <ul>
+            <li>Data transfer between the application, website and API is protected with TLS where applicable.</li>
+            <li>Access to production infrastructure is restricted by technical and organizational controls.</li>
+            <li>Secrets, keys, tokens and payment identifiers are treated as sensitive technical data.</li>
+            <li>We use monitoring, event logs, containerization, network restrictions and infrastructure updates.</li>
+          </ul>
+          <p>No service can guarantee absolute security. If we identify a material incident, we will act according to applicable legal and user notification requirements.</p>
+
+          <h2>10. Your Rights</h2>
+          <p>Depending on applicable law, you may request access, correction, deletion, restriction of processing, portability, withdrawal of consent or objection to processing.</p>
+          <p>To make a request, contact <a href="mailto:support@granilink.com">support@granilink.com</a>. We may ask you to verify your identity to avoid disclosing data to another person. We typically respond within 30 days unless another period is required by law.</p>
+
+          <h2>11. Cookies and Website</h2>
+          <p>The GRANI website may use necessary cookies, local storage and technical web server logs for website operation, abuse prevention and stability measurement. You can manage cookies in your browser settings.</p>
+
+          <h2>12. International Transfers</h2>
+          <p>GRANI VPN operates VPN servers and infrastructure in different countries. Depending on the selected VPN location and infrastructure used, data may be processed outside your country. We apply technical and contractual safeguards where required and feasible.</p>
+
+          <h2>13. Age</h2>
+          <p>The service is intended for users who are old enough to enter into an agreement and use digital services in their jurisdiction. The service is not directed to children and we do not knowingly collect children’s data.</p>
+
+          <h2>14. Changes to This Policy</h2>
+          <p>We may update this Policy when the product, infrastructure, app store requirements or law changes. The new version is published at <a href="https://granilink.com/privacy">https://granilink.com/privacy</a>. Material changes may also be communicated in the application, by email or by another available method.</p>
+
+          <h2>15. Document Version</h2>
+          <p>Version: 2.0. Updated: June 1, 2026. This version replaces version 1.0 dated October 9, 2025.</p>
+        </section>
+      </article>
+    </section>
+
+    <footer class="footer">
+      <div>
+        <strong>GRANI VPN</strong><br>
+        Serious privacy for an engineering-grade VPN service.
+      </div>
+      <div>
+        <strong>Contact</strong><br>
+        <a href="mailto:support@granilink.com">support@granilink.com</a>
+      </div>
+      <div>
+        <strong>Version</strong><br>
+        2.0 · June 1, 2026
+      </div>
+    </footer>
+  </main>
+</body>
+</html>

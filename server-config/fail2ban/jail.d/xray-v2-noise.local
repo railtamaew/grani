@@ -1,0 +1,9 @@
+[xray-v2-noise]
+enabled = true
+filter = xray-v2-noise
+backend = systemd
+journalmatch = _SYSTEMD_UNIT=xray-v2.service
+maxretry = 25
+findtime = 120
+bantime = 1800
+action = iptables-allports[name=xray-v2-noise]

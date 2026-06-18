@@ -1,0 +1,34 @@
+{
+  "log": {
+    "level": "info"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "tun0",
+      "inet4_address": "10.0.0.2/30",
+      "mtu": 1420,
+      "stack": "system",
+      "sniff": true,
+      "auto_route": true,
+      "strict_route": false
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "dns": {
+    "servers": [
+      {
+        "address": "8.8.8.8"
+      },
+      {
+        "address": "8.8.4.4"
+      }
+    ]
+  }
+}

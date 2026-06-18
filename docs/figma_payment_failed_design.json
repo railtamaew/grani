@@ -1,0 +1,73 @@
+{
+  "source": "Figma API",
+  "node_id": "958:444",
+  "design_width": 412,
+  "design_height": 917,
+  "texts": [
+    {
+      "name": "Повторить оплату",
+      "path": "/send_button/Повторить оплату",
+      "characters": "Повторить оплату",
+      "fontSize": 22.0,
+      "fontWeight": 556,
+      "letterSpacing": 1.3199999999999998,
+      "lineHeightPx": 24.200000762939453,
+      "fontFamily": "Montserrat",
+      "fills": [
+        "#FFFFFF"
+      ]
+    },
+    {
+      "name": "Оплата не прошла",
+      "path": "/text/Оплата не прошла",
+      "characters": "Оплата не прошла",
+      "fontSize": 30.0,
+      "fontWeight": 400,
+      "letterSpacing": -1.2,
+      "lineHeightPx": 27.0,
+      "fontFamily": "Montserrat",
+      "fills": [
+        "#192F3F"
+      ]
+    },
+    {
+      "name": "Мы не смогли списать оплату. ",
+      "path": "/text/Мы не смогли списать оплату. ",
+      "characters": "Мы не смогли списать оплату. ",
+      "fontSize": 16.0,
+      "fontWeight": 300,
+      "letterSpacing": 0.96,
+      "lineHeightPx": 15.520000457763672,
+      "fontFamily": "Montserrat",
+      "fills": [
+        "#192F3F"
+      ]
+    }
+  ],
+  "title": {
+    "name": "Оплата не прошла",
+    "path": "/text/Оплата не прошла",
+    "characters": "Оплата не прошла",
+    "fontSize": 30.0,
+    "fontWeight": 400,
+    "letterSpacing": -1.2,
+    "lineHeightPx": 27.0,
+    "fontFamily": "Montserrat",
+    "fills": [
+      "#192F3F"
+    ]
+  },
+  "description": {
+    "name": "Мы не смогли списать оплату. ",
+    "path": "/text/Мы не смогли списать оплату. ",
+    "characters": "Мы не смогли списать оплату. ",
+    "fontSize": 16.0,
+    "fontWeight": 300,
+    "letterSpacing": 0.96,
+    "lineHeightPx": 15.520000457763672,
+    "fontFamily": "Montserrat",
+    "fills": [
+      "#192F3F"
+    ]
+  }
+}

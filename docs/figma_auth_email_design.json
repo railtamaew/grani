@@ -1,0 +1,92 @@
+{
+  "source": "Figma API",
+  "frame_id": "516:206",
+  "design_width": 412,
+  "design_height": 917,
+  "frame": {
+    "x": 0.0,
+    "y": 1064.0,
+    "width": 412.0,
+    "height": 917.0
+  },
+  "background_gradient": {
+    "colors_hex": [
+      "#FFFFFF",
+      "#F7F9FA"
+    ],
+    "stops": [
+      0.0,
+      1.0
+    ]
+  },
+  "title_block": {
+    "x": 32.0,
+    "y": 1466.0,
+    "width": 352.0,
+    "height": 72.0
+  },
+  "title": {
+    "fontSize": 40.0,
+    "fontWeight": 400,
+    "letterSpacing": -1.6,
+    "lineHeightPx": 36.0,
+    "fontFamily": "Montserrat",
+    "fills": [
+      "#192F3F"
+    ],
+    "bounds": {
+      "x": 32.0,
+      "y": 1466.0,
+      "width": 352.0,
+      "height": 36.0
+    }
+  },
+  "subtitle": {
+    "fontSize": 16.0,
+    "fontWeight": 300,
+    "letterSpacing": 0.96,
+    "lineHeightPx": 15.520000457763672,
+    "fontFamily": "Montserrat",
+    "fills": [
+      "#192F3F"
+    ],
+    "bounds": {
+      "x": 32.0,
+      "y": 1522.0,
+      "width": 352.0,
+      "height": 16.0
+    }
+  },
+  "email_input": {
+    "node_id": "516:216",
+    "x": 32.0,
+    "y": 1555.0,
+    "width": 348.0,
+    "height": 62.0,
+    "cornerRadius": 25.0,
+    "background_hex": "#F4F6F8"
+  },
+  "send_button": {
+    "node_id": "516:220",
+    "x": 32.0,
+    "y": 1633.0,
+    "width": 348.0,
+    "height": 62.0,
+    "cornerRadius": 25.0,
+    "background_hex": "#182D3D",
+    "text_style": {
+      "fontSize": 22.0,
+      "fontWeight": 556,
+      "fills": [
+        "#FFFFFF"
+      ]
+    }
+  },
+  "privacy_link": {
+    "fontSize": 14.0,
+    "fontWeight": 300,
+    "fills": [
+      "#192F3F"
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+[Unit]
+Description=GRANI edge heartbeat (report config hash to API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/grani-edge
+ExecStart=/usr/local/bin/grani-edge-heartbeat

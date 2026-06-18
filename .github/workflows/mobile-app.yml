@@ -1,0 +1,49 @@
+name: Mobile App
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'mobile-app/**'
+      - '.github/workflows/mobile-app.yml'
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - 'mobile-app/**'
+      - '.github/workflows/mobile-app.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Только lib/: ошибки — fail; info/warning не рвут CI (постепенно чистим линтер).
+      - name: Analyze lib
+        run: flutter analyze lib --no-fatal-infos --no-fatal-warnings
+
+      # connect_vpn отдельно: после сотен тестов mocktail иногда даёт флейк на hasActiveSubscription.
+      - name: Run tests (connect use case first)
+        run: flutter test test/use_cases/connect_vpn_use_case_test.dart
+        env:
+          FLUTTER_TEST: 1
+
+      - name: Run tests (rest of unit tests)
+        run: |
+          flutter test test/core test/services test/protocols test/main_initial_route_test.dart test/widget_test.dart
+        env:
+          FLUTTER_TEST: 1

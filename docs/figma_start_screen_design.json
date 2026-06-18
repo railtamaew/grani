@@ -1,0 +1,109 @@
+{
+  "source": "Figma API",
+  "frame_id": "516:295",
+  "design_width": 412,
+  "design_height": 917,
+  "frame": {
+    "x": 0.0,
+    "y": 10.0,
+    "width": 412.0,
+    "height": 917.0
+  },
+  "background_gradient": {
+    "colors_hex": [
+      "#FFFFFF",
+      "#F7F9FA"
+    ],
+    "stops": [
+      0.0,
+      1.0
+    ]
+  },
+  "logo": {
+    "node_id": "924:311",
+    "x": 187.51536560058594,
+    "y": 74.40678405761719,
+    "width": 36.96928024291992,
+    "height": 48.0
+  },
+  "textBlock": {
+    "x": 32.0,
+    "y": 339.0,
+    "width": 348.0,
+    "height": 137.0
+  },
+  "title": {
+    "fontSize": 40.0,
+    "fontWeight": 400,
+    "letterSpacing": -1.6,
+    "lineHeightPx": 36.0,
+    "fontFamily": "Montserrat",
+    "fills": [
+      "#192F3F"
+    ],
+    "bounds": {
+      "x": 32.0,
+      "y": 339.0,
+      "width": 348.0,
+      "height": 70.0
+    }
+  },
+  "subtitle": {
+    "fontSize": 16.0,
+    "fontWeight": 300,
+    "letterSpacing": 0.96,
+    "lineHeightPx": 15.520000457763672,
+    "fontFamily": "Montserrat",
+    "fills": [
+      "#192F3F"
+    ],
+    "bounds": {
+      "x": 32.0,
+      "y": 426.0,
+      "width": 348.0,
+      "height": 32.0
+    }
+  },
+  "button_google": {
+    "node_id": "516:308",
+    "x": 32.0,
+    "y": 492.0,
+    "width": 348.0,
+    "height": 62.0,
+    "cornerRadius": 25.0,
+    "background_hex": "#F4F6F8",
+    "icon_node_id": "516:310",
+    "text_style": {
+      "fontSize": 20.0,
+      "fontWeight": 556
+    }
+  },
+  "button_email": {
+    "node_id": "517:571",
+    "x": 32.0,
+    "y": 570.0,
+    "width": 348.0,
+    "height": 62.0,
+    "cornerRadius": 25.0,
+    "background_hex": "#F4F6F8",
+    "icon_node_id": "516:313",
+    "text_style": {
+      "fontSize": 20.0,
+      "fontWeight": 556
+    }
+  },
+  "link_sign_in": {
+    "fontSize": 14.0,
+    "fontWeight": 300,
+    "fills": [
+      "#192F3F"
+    ]
+  },
+  "privacy_link": {
+    "fontSize": 14.0,
+    "fontWeight": 300,
+    "fills": [
+      "#4F6E84"
+    ]
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "source": "Figma API",
+  "frame_id": "958:337",
+  "design_width": 412,
+  "design_height": 917,
+  "frame": {
+    "x": 920.0,
+    "y": 2110.0,
+    "width": 412.0,
+    "height": 3184.0
+  },
+  "background_gradient": {
+    "colors_hex": [
+      "#FFFFFF",
+      "#F7F9FA"
+    ],
+    "stops": [
+      0.0,
+      1.0
+    ]
+  },
+  "title": {
+    "fontSize": 32.0,
+    "fontWeight": 400,
+    "letterSpacing": -1.28,
+    "lineHeightPx": 28.799999237060547,
+    "fontFamily": "Montserrat",
+    "fills": [
+      "#192F3F"
+    ],
+    "bounds": {
+      "x": 958.0,
+      "y": 4415.0,
+      "width": 346.94580078125,
+      "height": 115.688232421875
+    },
+    "text": "Подписка активна"
+  },
+  "subtitle": {
+    "fontSize": 16.0,
+    "fontWeight": 300,
+    "fills": [
+      "#192F3F"
+    ],
+    "text": "Соединение установлено, трафик защищён"
+  },
+  "states": {
+    "ON": {
+      "title": "Подписка активна",
+      "subtitle": "Соединение установлено, трафик защищён"
+    },
+    "DISCONNECTING": {
+      "title": "Отключение...",
+      "subtitle": "Завершаем защищённое соединение"
+    },
+    "CONNECTING": {
+      "title": "Идет подключение...",
+      "subtitle": "Ожидайте, выполняется подключение.\r"
+    },
+    "OFF": {
+      "title": "Подписка активна",
+      "subtitle": "Сервис активен и готов к подключению"
+    }
+  },
+  "_layer_names": [
+    "9:30",
+    "Base",
+    "Battery",
+    "CONNECTING",
+    "Camera",
+    "DISCONNECTING",
+    "HomeScreen",
+    "Navigation bars",
+    "OFF",
+    "ON",
+    "Signal",
+    "Status",
+    "Status Icons",
+    "Status bar",
+    "Time & Date",
+    "Tue, Jul 19",
+    "Until 10:00 AM",
+    "Vector",
+    "Wi-Fi Network",
+    "Wifi",
+    "android_UI",
+    "bottom_controls",
+    "button_connection",
+    "connection_button",
+    "content",
+    "flag_icon",
+    "handle",
+    "header",
+    "label",
+    "logo",
+    "menu",
+    "protocol_icon",
+    "protocol_selector",
+    "protocol_title",
+    "ring",
+    "server_selector",
+    "server_title",
+    "share",
+    "signal",
+    "speed_label",
+    "subtitle",
+    "timer_box",
+    "timer_label",
+    "timer_value",
+    "title",
+    "trial_info",
+    "trial_status"
+  ]
+}

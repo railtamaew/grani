@@ -1,0 +1,534 @@
+{
+  "screen": "1143:193",
+  "screen_name": "DevicesScreen",
+  "frame": {
+    "name": "DevicesScreen",
+    "width": 412.0,
+    "height": 917.0,
+    "x": 2811.0,
+    "y": 1299.0,
+    "cornerRadius": 18.0,
+    "fills_raw": [
+      "GRADIENT_LINEAR"
+    ]
+  },
+  "children": [],
+  "children_count": 61,
+  "device_cards_sample": [
+    {
+      "name": "button_email",
+      "width": 371.0,
+      "height": 50.0,
+      "x": 2834.0,
+      "y": 1911.0,
+      "cornerRadius": 25.0,
+      "fill_hex": "#F4F6F8",
+      "depth": 2
+    },
+    {
+      "name": "button_email",
+      "width": 371.0,
+      "height": 50.0,
+      "x": 2834.0,
+      "y": 2115.0,
+      "cornerRadius": 25.0,
+      "fill_hex": "#F4F6F8",
+      "depth": 2
+    }
+  ],
+  "text_nodes_sample": [
+    {
+      "name": "9:30",
+      "width": 29.0,
+      "height": 20.0,
+      "x": 2827.0,
+      "y": 1309.0,
+      "fill_hex": "#171D1B",
+      "characters": "9:30",
+      "fontSize": 14.0,
+      "fontWeight": 400,
+      "fontFamily": "Roboto",
+      "text_fill_hex": "#171D1B",
+      "depth": 5
+    },
+    {
+      "name": "Tue, Jul 19",
+      "width": 70.0,
+      "height": 20.0,
+      "x": 2864.0,
+      "y": 1309.0,
+      "fill_hex": "#000000",
+      "characters": "Tue, Jul 19",
+      "fontSize": 14.0,
+      "fontWeight": 400,
+      "fontFamily": "Roboto",
+      "text_fill_hex": "#000000",
+      "depth": 5
+    },
+    {
+      "name": "Until 10:00 AM",
+      "width": 95.0,
+      "height": 20.0,
+      "x": 3209.0,
+      "y": 1309.0,
+      "fill_hex": "#000000",
+      "characters": "Until 10:00 AM",
+      "fontSize": 14.0,
+      "fontWeight": 400,
+      "fontFamily": "Roboto",
+      "text_fill_hex": "#000000",
+      "depth": 6
+    },
+    {
+      "name": "Вход с email",
+      "width": 52.0,
+      "height": 12.0,
+      "x": 3128.0,
+      "y": 1930.0,
+      "fill_hex": "#DC2626",
+      "characters": "Удалить",
+      "fontSize": 12.0,
+      "fontWeight": 500,
+      "fontFamily": "Montserrat",
+      "text_fill_hex": "#DC2626",
+      "depth": 4
+    },
+    {
+      "name": "Вход с email",
+      "width": 152.0,
+      "height": 10.0,
+      "x": 2901.0,
+      "y": 1940.0,
+      "fill_hex": "#182D3D",
+      "characters": "Android Было неделю назадд",
+      "fontSize": 10.0,
+      "fontWeight": 300,
+      "fontFamily": "Montserrat",
+      "text_fill_hex": "#182D3D",
+      "depth": 3
+    },
+    {
+      "name": "Вход с email",
+      "width": 113.0,
+      "height": 14.0,
+      "x": 2901.0,
+      "y": 1922.0,
+      "fill_hex": "#182D3D",
+      "characters": "OnePlus MT2111",
+      "fontSize": 14.0,
+      "fontWeight": 700,
+      "fontFamily": "Montserrat",
+      "text_fill_hex": "#182D3D",
+      "depth": 3
+    },
+    {
+      "name": "Вход с email",
+      "width": 52.0,
+      "height": 12.0,
+      "x": 3128.0,
+      "y": 2134.0,
+      "fill_hex": "#DC2626",
+      "characters": "Удалить",
+      "fontSize": 12.0,
+      "fontWeight": 500,
+      "fontFamily": "Montserrat",
+      "text_fill_hex": "#DC2626",
+      "depth": 4
+    },
+    {
+      "name": "Вход с email",
+      "width": 139.0,
+      "height": 10.0,
+      "x": 2901.0,
+      "y": 2144.0,
+      "fill_hex": "#182D3D",
+      "characters": "Android Был неделю назад",
+      "fontSize": 10.0,
+      "fontWeight": 300,
+      "fontFamily": "Montserrat",
+      "text_fill_hex": "#182D3D",
+      "depth": 3
+    },
+    {
+      "name": "Вход с email",
+      "width": 113.0,
+      "height": 14.0,
+      "x": 2901.0,
+      "y": 2126.0,
+      "fill_hex": "#182D3D",
+      "characters": "OnePlus MT2111",
+      "fontSize": 14.0,
+      "fontWeight": 700,
+      "fontFamily": "Montserrat",
+      "text_fill_hex": "#182D3D",
+      "depth": 3
+    },
+    {
+      "name": "Вход с email",
+      "width": 52.0,
+      "height": 12.0,
+      "x": 3128.0,
+      "y": 2000.0,
+      "fill_hex": "#DC2626",
+      "characters": "Удалить",
+      "fontSize": 12.0,
+      "fontWeight": 500,
+      "fontFamily": "Montserrat",
+      "text_fill_hex": "#DC2626",
+      "depth": 4
+    },
+    {
+      "name": "Вход с email",
+      "width": 110.0,
+      "height": 10.0,
+      "x": 2901.0,
+      "y": 2010.0,
+      "fill_hex": "#182D3D",
+      "characters": "iOS Было 3 дня назад",
+      "fontSize": 10.0,
+      "fontWeight": 300,
+      "fontFamily": "Montserrat",
+      "text_fill_hex": "#182D3D",
+      "depth": 3
+    },
+    {
+      "name": "Вход с email",
+      "width": 117.0,
+      "height": 14.0,
+      "x": 2901.0,
+      "y": 1992.0,
+      "fill_hex": "#182D3D",
+      "characters": "Apple iPhone 13",
+      "fontSize": 14.0,
+      "fontWeight": 700,
+      "fontFamily": "Montserrat",
+      "text_fill_hex": "#182D3D",
+      "depth": 3
+    },
+    {
+      "name": "Вход с email",
+      "width": 97.0,
+      "height": 12.0,
+      "x": 3085.0,
+      "y": 1860.0,
+      "fill_hex": "#40484F",
+      "characters": "Это устройство",
+      "fontSize": 12.0,
+      "fontWeight": 500,
+      "fontFamily": "Montserrat",
+      "text_fill_hex": "#40484F",
+      "depth": 4
+    },
+    {
+      "name": "Вход с email",
+      "width": 18.0,
+      "height": 10.0,
+      "x": 2901.0,
+      "y": 1870.0,
+      "fill_hex": "#182D3D",
+      "characters": "iOS ",
+      "fontSize": 10.0,
+      "fontWeight": 300,
+      "fontFamily": "Montserrat",
+      "text_fill_hex": "#182D3D",
+      "depth": 3
+    },
+    {
+      "name": "Вход с email",
+      "width": 84.0,
+      "height": 10.0,
+      "x": 2923.0,
+      "y": 1870.0,
+      "fill_hex": "#48B14C",
+      "characters": "Активно сейчас",
+      "fontSize": 10.0,
+      "fontWeight": 500,
+      "fontFamily": "Montserrat",
+      "text_fill_hex": "#48B14C",
+      "depth": 3
+    }
+  ],
+  "all_nodes_with_bounds": [
+    {
+      "name": "DevicesScreen",
+      "w": 412.0,
+      "h": 917.0,
+      "x": 2811.0,
+      "y": 1299.0
+    },
+    {
+      "name": "android_UI",
+      "w": 412.0,
+      "h": 917.0,
+      "x": 2811.0,
+      "y": 1299.0
+    },
+    {
+      "name": "Status bar",
+      "w": 412.0,
+      "h": 40.0,
+      "x": 2811.0,
+      "y": 1299.0
+    },
+    {
+      "name": "Status",
+      "w": 412.0,
+      "h": 40.0,
+      "x": 2811.0,
+      "y": 1299.0
+    },
+    {
+      "name": "Time & Date",
+      "w": 128.0,
+      "h": 40.0,
+      "x": 2827.0,
+      "y": 1299.0
+    },
+    {
+      "name": "9:30",
+      "w": 29.0,
+      "h": 20.0,
+      "x": 2827.0,
+      "y": 1309.0
+    },
+    {
+      "name": "Tue, Jul 19",
+      "w": 70.0,
+      "h": 20.0,
+      "x": 2864.0,
+      "y": 1309.0
+    },
+    {
+      "name": "Status Icons",
+      "w": 46.0,
+      "h": 52.0,
+      "x": 3161.0,
+      "y": 1293.0
+    },
+    {
+      "name": "Wi-Fi Network",
+      "w": 30.0,
+      "h": 16.0,
+      "x": 3161.0,
+      "y": 1311.0
+    },
+    {
+      "name": "Wifi",
+      "w": 16.0,
+      "h": 16.0,
+      "x": 3161.0,
+      "y": 1311.0
+    },
+    {
+      "name": "Signal",
+      "w": 16.0,
+      "h": 16.0,
+      "x": 3175.0,
+      "y": 1311.0
+    },
+    {
+      "name": "Battery",
+      "w": 16.0,
+      "h": 52.0,
+      "x": 3191.0,
+      "y": 1293.0
+    },
+    {
+      "name": "Battery",
+      "w": 16.0,
+      "h": 16.0,
+      "x": 3191.0,
+      "y": 1311.0
+    },
+    {
+      "name": "Until 10:00 AM",
+      "w": 95.0,
+      "h": 20.0,
+      "x": 3209.0,
+      "y": 1309.0
+    },
+    {
+      "name": "Camera",
+      "w": 24.0,
+      "h": 24.0,
+      "x": 3005.0,
+      "y": 1307.0
+    },
+    {
+      "name": "Camera",
+      "w": 24.0,
+      "h": 24.0,
+      "x": 3005.0,
+      "y": 1307.0
+    },
+    {
+      "name": "Navigation bars",
+      "w": 412.0,
+      "h": 24.0,
+      "x": 2811.0,
+      "y": 2192.0
+    },
+    {
+      "name": "handle",
+      "w": 108.0,
+      "h": 4.0,
+      "x": 2963.0,
+      "y": 2202.0
+    },
+    {
+      "name": "Frame 3",
+      "w": 393.0,
+      "h": 61.0,
+      "x": 2823.0,
+      "y": 1905.0
+    },
+    {
+      "name": "button_email",
+      "w": 371.0,
+      "h": 50.0,
+      "x": 2834.0,
+      "y": 1911.0
+    },
+    {
+      "name": "button",
+      "w": 74.0,
+      "h": 28.0,
+      "x": 3118.0,
+      "y": 1922.0
+    },
+    {
+      "name": "Вход с email",
+      "w": 52.0,
+      "h": 12.0,
+      "x": 3128.0,
+      "y": 1930.0
+    },
+    {
+      "name": "Вход с email",
+      "w": 152.0,
+      "h": 10.0,
+      "x": 2901.0,
+      "y": 1940.0
+    },
+    {
+      "name": "Вход с email",
+      "w": 113.0,
+      "h": 14.0,
+      "x": 2901.0,
+      "y": 1922.0
+    },
+    {
+      "name": "Vector",
+      "w": 32.0,
+      "h": 19.0,
+      "x": 2853.0,
+      "y": 1926.0
+    },
+    {
+      "name": "Frame 6",
+      "w": 393.0,
+      "h": 61.0,
+      "x": 2823.0,
+      "y": 2109.0
+    },
+    {
+      "name": "button_email",
+      "w": 371.0,
+      "h": 50.0,
+      "x": 2834.0,
+      "y": 2115.0
+    },
+    {
+      "name": "button",
+      "w": 74.0,
+      "h": 28.0,
+      "x": 3118.0,
+      "y": 2126.0
+    },
+    {
+      "name": "Вход с email",
+      "w": 52.0,
+      "h": 12.0,
+      "x": 3128.0,
+      "y": 2134.0
+    },
+    {
+      "name": "Вход с email",
+      "w": 139.0,
+      "h": 10.0,
+      "x": 2901.0,
+      "y": 2144.0
+    },
+    {
+      "name": "Вход с email",
+      "w": 113.0,
+      "h": 14.0,
+      "x": 2901.0,
+      "y": 2126.0
+    },
+    {
+      "name": "Vector",
+      "w": 32.0,
+      "h": 19.0,
+      "x": 2853.0,
+      "y": 2130.0
+    },
+    {
+      "name": "Frame 4",
+      "w": 393.0,
+      "h": 61.0,
+      "x": 2823.0,
+      "y": 1975.0
+    },
+    {
+      "name": "button_email",
+      "w": 371.0,
+      "h": 50.0,
+      "x": 2834.0,
+      "y": 1981.0
+    },
+    {
+      "name": "button",
+      "w": 74.0,
+      "h": 28.0,
+      "x": 3118.0,
+      "y": 1992.0
+    },
+    {
+      "name": "Вход с email",
+      "w": 52.0,
+      "h": 12.0,
+      "x": 3128.0,
+      "y": 2000.0
+    },
+    {
+      "name": "Вход с email",
+      "w": 110.0,
+      "h": 10.0,
+      "x": 2901.0,
+      "y": 2010.0
+    },
+    {
+      "name": "Вход с email",
+      "w": 117.0,
+      "h": 14.0,
+      "x": 2901.0,
+      "y": 1992.0
+    },
+    {
+      "name": "Vector",
+      "w": 32.0,
+      "h": 19.0,
+      "x": 2853.0,
+      "y": 1996.0
+    },
+    {
+      "name": "Frame 7",
+      "w": 393.0,
+      "h": 61.0,
+      "x": 2823.0,
+      "y": 1835.0
+    }
+  ],
+  "title_to_connected_gap": 39
+}

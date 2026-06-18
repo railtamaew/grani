@@ -1,0 +1,35 @@
+# Опциональный override для Boring HTTPS: TUN-хелпер как сервис.
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.boring-https.yml up -d
+# В .env или server-config/.env должны быть BORING_HTTPS_GATEWAY_URL и BORING_HTTPS_TUN_SOCKET=/run/grani/boring_https_tun.sock
+
+services:
+  api:
+    volumes:
+      - ../../backend:/app
+      - /etc/wireguard:/etc/wireguard:ro
+      - boring_https_socket:/run/grani
+      - ../../logs/docker-api:/var/log/grani
+      - ../../logs/test_apps:/opt/grani/logs/test_apps
+    environment:
+      - BORING_HTTPS_TUN_SOCKET=/run/grani/boring_https_tun.sock
+      - BACKEND_LOG_FILE=/var/log/grani/grani-backend.log
+
+  boring_https_tun:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    container_name: granivpn_boring_https_tun
+    command: python3 /app/scripts/boring_https_tun_helper.py --socket /run/grani/boring_https_tun.sock --tun-ip 10.0.0.1/30 --setup-routing
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    volumes:
+      - ../../backend:/app
+      - boring_https_socket:/run/grani
+    restart: unless-stopped
+    networks:
+      - granivpn_network
+
+volumes:
+  boring_https_socket:

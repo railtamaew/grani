@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Boring HTTPS Gateway — проверка</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.2rem; }
+    pre { background: #f4f4f4; padding: 0.75rem; overflow: auto; }
+    button { padding: 0.5rem 1rem; margin: 0.25rem 0; cursor: pointer; }
+    .ok { color: green; }
+    .err { color: #c00; }
+  </style>
+</head>
+<body>
+  <h1>Проверка Boring HTTPS Gateway (без приложения)</h1>
+  <p>Base URL: <input id="base" value="http://127.0.0.1:8799" size="40"> <button id="run">Проверить</button></p>
+  <pre id="out">Нажмите «Проверить».</pre>
+  <script>
+    document.getElementById('run').onclick = async () => {
+      const base = document.getElementById('base').value.replace(/\/$/, '');
+      const out = document.getElementById('out');
+      const log = (msg, isErr) => { out.textContent += msg + '\n'; };
+      out.textContent = '';
+      try {
+        const url = base + '/api/vpn/tunnel';
+        log('1. Health check (POST пустое тело)...');
+        const r1 = await fetch(url, { method: 'POST', body: '' });
+        log('   ' + (r1.ok ? 'OK ' + r1.status : 'Ошибка ' + r1.status));
+        if (!r1.ok) { log('Gateway недоступен или путь неверный.'); return; }
+        log('2. Туннельный фрейм (4 байта длина=2 + 2 байта payload)...');
+        const body = new Uint8Array([0, 0, 0, 2, 1, 2]);
+        const r2 = await fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/octet-stream' } });
+        log('   ' + (r2.ok ? 'OK ' + r2.status : 'Ошибка ' + r2.status));
+        if (r2.ok) {
+          const buf = await r2.arrayBuffer();
+          const arr = new Uint8Array(buf);
+          log('   Ответ: ' + arr.length + ' байт, hex: ' + Array.from(arr).map(b => b.toString(16).padStart(2,'0')).join(' '));
+        }
+        log('\nГотово. Gateway отвечает корректно.');
+      } catch (e) {
+        log('Ошибка: ' + e.message);
+      }
+    };
+  </script>
+</body>
+</html>

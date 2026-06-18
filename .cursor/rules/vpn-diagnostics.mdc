@@ -1,0 +1,60 @@
+---
+description: Глубокая диагностика VPN-соединения — анализ клиентских и серверных логов, конфигураций, и поиск root cause
+alwaysApply: false
+---
+
+# Диагностика VPN-соединения (Deep Analysis)
+
+Когда пользователь просит проанализировать проблемы с VPN-соединением или присылает логи, выполняй **полный системный анализ** по следующему плану:
+
+## 1. Серверная сторона (VPN-сервер)
+
+- Подключись к VPN серверу через SSH (из контейнера `granivpn_api` с ключом из БД `servers.ssh_key_content`, тип ключа Ed25519)
+- Проверь: `systemctl is-active xray`, `xray version`, `ss -tlnp | grep -E "443|4443|8443"`
+- Прочитай **конфиг** `/usr/local/etc/xray/config.json` — проверь inbounds, порты, security, clients
+- Прочитай **access.log** и **error.log** (`/var/log/xray/`) — ищи email клиента, IP, rejected/accepted
+- Проверь `iptables -L INPUT -n` на блокировки
+
+## 2. Бэкенд (API-сервер)
+
+- `docker logs --tail 200 granivpn_api` — ошибки SSH, создания клиентов, конфигурации
+- Запроси БД: `servers` (IP, порты, reality_enabled, ssh_key), `devices` (protocol, vpn_client_id, is_active)
+- Проверь генерацию `json_config`: порт, tls, протокол — совпадают ли с серверным inbound
+
+## 3. Клиентская сторона
+
+- Из логов клиента определи: адрес/порт подключения, routing (direct/proxy), ошибки tun2socks
+- Сравни порт/security в клиентском конфиге с серверным inbound
+- Проверь: есть ли routing loop (`proxy/socks: TCP Connect request to VPN_SERVER_IP`)
+- Проверь: `BSocksClient_Init failed` → проблема с локальным SOCKS proxy (Xray crash или protect() failure)
+
+## 4. Перекрёстная проверка
+
+- Найди email клиента (формат `userId_deviceId@granivpn.com`) в серверном access.log
+- Если 0 записей → клиент НЕ доходит до сервера (сеть, кеш, неверный порт)
+- Grep error.log по IP клиента → REALITY ошибки = клиент на неверном порту
+- Сравни таймзоны: клиент (UTC или local), сервер (CET/UTC+1)
+
+## 5. Частые проблемы
+
+| Симптом | Причина |
+|---------|---------|
+| `REALITY: failed to read client hello` | Клиент шлёт plain VLESS на REALITY-порт (443 vs 4443) |
+| `BSocksClient_Init failed` | Xray SOCKS proxy упал или перегружен |
+| `splice: connection reset by peer` на localhost | Routing loop или protect() failure |
+| 0 записей email в access.log | Трафик не доходит до сервера |
+| `DioException [connection timeout]` к API | Сеть/DNS при включённом VPN, проверь split tunnel |
+
+## Порты сервера
+
+- **443** — VLESS + REALITY (TLS обфускация)
+- **4443** — VLESS + none (plain, без шифрования)
+- **8443** — VMess + none
+
+## Формат ответа
+
+Дай структурированный ответ с:
+1. Статус каждого компонента (сервер, API, клиент)
+2. **Root cause** — конкретная причина с доказательствами из логов
+3. Таблица с конфигурацией портов
+4. Решение (немедленное + в коде)

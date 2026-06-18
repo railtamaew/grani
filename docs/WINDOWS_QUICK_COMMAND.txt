@@ -1,0 +1,10 @@
+=== БЫСТРАЯ ПРОВЕРКА CURSOR НА WINDOWS ===
+
+Скопируйте эту команду и выполните в PowerShell:
+
+Write-Host "`n=== Проверка Cursor ===" -ForegroundColor Cyan; Write-Host "1. Интернет..." -NoNewline; if (Test-Connection 8.8.8.8 -Count 1 -Quiet) { Write-Host " ✓ OK" -ForegroundColor Green } else { Write-Host " ✗ НЕТ" -ForegroundColor Red }; Write-Host "2. DNS..." -NoNewline; try { $dns = Resolve-DnsName cursor.sh -ErrorAction Stop; Write-Host " ✓ OK (IP: $($dns[0].IPAddress))" -ForegroundColor Green } catch { Write-Host " ✗ ОШИБКА" -ForegroundColor Red }; Write-Host "3. Сайт cursor.sh..." -NoNewline; try { Invoke-WebRequest -Uri "https://www.cursor.sh" -Method Head -TimeoutSec 5 -UseBasicParsing | Out-Null; Write-Host " ✓ Доступен" -ForegroundColor Green } catch { Write-Host " ✗ Недоступен" -ForegroundColor Red }; Write-Host "4. Прокси..." -NoNewline; if ($env:HTTP_PROXY -or $env:HTTPS_PROXY) { Write-Host " ⚠ Настроен" -ForegroundColor Yellow } else { Write-Host " ✓ Не настроен" -ForegroundColor Green }; Write-Host "5. Cursor..." -NoNewline; if (Test-Path "$env:APPDATA\Cursor") { Write-Host " ✓ Установлен" -ForegroundColor Green } else { Write-Host " ⚠ Не найден" -ForegroundColor Yellow }; Write-Host "`n=== Готово ===" -ForegroundColor Cyan
+
+---
+
+Или откройте файл: /opt/grani/scripts/check_cursor_windows_simple.ps1
+и скопируйте его содержимое в PowerShell.

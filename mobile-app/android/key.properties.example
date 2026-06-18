@@ -1,0 +1,9 @@
+# Пример файла key.properties
+# Скопируйте этот файл в key.properties и заполните реальными значениями
+# НЕ КОММИТЬТЕ key.properties в репозиторий!
+
+storePassword=ВАШ_ПАРОЛЬ_ХРАНИЛИЩА
+keyPassword=ВАШ_ПАРОЛЬ_КЛЮЧА
+keyAlias=granivpn
+storeFile=/Users/ВАШ_ПУТЬ/granivpn-release-key.jks
+

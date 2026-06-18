@@ -1,0 +1,46 @@
+{
+  "log": {
+    "level": "info"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "tun0",
+      "inet4_address": "10.0.0.2/30",
+      "mtu": 1420,
+      "stack": "system",
+      "sniff": true,
+      "auto_route": true,
+      "strict_route": false
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "vless-out",
+      "server": "45.12.132.94",
+      "server_port": 4443,
+      "uuid": "691022bf-14cf-4ec3-8649-c49988f8578f",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "www.google.com",
+        "reality": {
+          "public_key": "Pyqln2OpBGGAJVXweJusMJAqzuqqH675fqF8Bdl3kGY",
+          "short_id": "822c3e48"
+        }
+      }
+    }
+  ],
+  "dns": {
+    "servers": [
+      {
+        "address": "8.8.8.8"
+      },
+      {
+        "address": "8.8.4.4"
+      }
+    ]
+  }
+}

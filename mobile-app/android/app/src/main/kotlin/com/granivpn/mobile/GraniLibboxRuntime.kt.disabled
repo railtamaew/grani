@@ -1,0 +1,245 @@
+package com.granivpn.mobile
+
+import android.content.Context
+import android.net.VpnService
+import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.util.Log
+import io.nekohasekai.libbox.CommandServer
+import io.nekohasekai.libbox.CommandServerHandler
+import io.nekohasekai.libbox.ConnectionOwner
+import io.nekohasekai.libbox.InterfaceUpdateListener
+import io.nekohasekai.libbox.Libbox
+import io.nekohasekai.libbox.LocalDNSTransport
+import io.nekohasekai.libbox.NetworkInterfaceIterator
+import io.nekohasekai.libbox.Notification
+import io.nekohasekai.libbox.OverrideOptions
+import io.nekohasekai.libbox.PlatformInterface
+import io.nekohasekai.libbox.SetupOptions
+import io.nekohasekai.libbox.StringIterator
+import io.nekohasekai.libbox.SystemProxyStatus
+import io.nekohasekai.libbox.TunOptions
+import io.nekohasekai.libbox.WIFIState
+import java.io.File
+import java.security.KeyStore
+import java.util.Base64
+import java.util.concurrent.atomic.AtomicBoolean
+
+class GraniLibboxRuntime(
+    private val service: GraniVpnService,
+    private val sessionName: String,
+    private val onState: (String) -> Unit,
+    private val onError: (String) -> Unit,
+) : PlatformInterface, CommandServerHandler {
+    companion object {
+        private const val TAG = "GraniLibboxRuntime"
+        private val setupDone = AtomicBoolean(false)
+    }
+
+    private var commandServer: CommandServer? = null
+    private var pfd: ParcelFileDescriptor? = null
+    @Volatile
+    private var running = false
+
+    fun start(config: String) {
+        setupIfNeeded(service.applicationContext)
+        val server = CommandServer(this, this)
+        commandServer = server
+        server.start()
+        server.startOrReloadService(config, OverrideOptions())
+        running = true
+        onState("started")
+        Log.i(TAG, "libbox service started")
+    }
+
+    fun stop() {
+        running = false
+        runCatching { commandServer?.closeService() }
+            .onFailure { Log.w(TAG, "closeService failed: ${it.message}") }
+        runCatching { commandServer?.close() }
+            .onFailure { Log.w(TAG, "commandServer.close failed: ${it.message}") }
+        commandServer = null
+        closeTun()
+        onState("stopped")
+    }
+
+    fun isRunning(): Boolean = running
+
+    private fun closeTun() {
+        runCatching { pfd?.close() }
+            .onFailure { Log.w(TAG, "tun close failed: ${it.message}") }
+        pfd = null
+    }
+
+    private fun setupIfNeeded(context: Context) {
+        if (!setupDone.compareAndSet(false, true)) return
+        val baseDir = File(context.filesDir, "libbox")
+        val workingDir = File(context.getExternalFilesDir(null) ?: context.filesDir, "libbox")
+        val tempDir = File(context.cacheDir, "libbox")
+        baseDir.mkdirs()
+        workingDir.mkdirs()
+        tempDir.mkdirs()
+        val options = SetupOptions().apply {
+            basePath = baseDir.path
+            workingPath = workingDir.path
+            tempPath = tempDir.path
+            fixAndroidStack = true
+            logMaxLines = 1024
+            debug = false
+        }
+        Libbox.setup(options)
+        Log.i(TAG, "libbox setup complete version=${runCatching { Libbox.version() }.getOrNull() ?: "unknown"}")
+    }
+
+    override fun usePlatformAutoDetectInterfaceControl(): Boolean = true
+
+    override fun autoDetectInterfaceControl(fd: Int) {
+        service.protect(fd)
+    }
+
+    override fun useProcFS(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+
+    override fun openTun(options: TunOptions): Int {
+        if (VpnService.prepare(service) != null) error("android: missing vpn permission")
+        closeTun()
+        val builder = service.Builder()
+            .setSession(sessionName)
+            .setMtu(if (options.mtu > 0) options.mtu else 1280)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            builder.setMetered(false)
+        }
+
+        val inet4 = options.inet4Address
+        var hasInet4 = false
+        while (inet4.hasNext()) {
+            val address = inet4.next()
+            builder.addAddress(address.address(), address.prefix())
+            hasInet4 = true
+        }
+        val inet6 = options.inet6Address
+        var hasInet6 = false
+        while (inet6.hasNext()) {
+            val address = inet6.next()
+            builder.addAddress(address.address(), address.prefix())
+            hasInet6 = true
+        }
+        if (!hasInet4 && !hasInet6) {
+            builder.addAddress("172.19.0.1", 30)
+            hasInet4 = true
+        }
+
+        builder.addDnsServer("1.1.1.1")
+        builder.addDnsServer("8.8.8.8")
+
+        if (options.autoRoute) {
+            val inet4Routes = options.inet4RouteRange
+            var hasInet4Route = false
+            while (inet4Routes.hasNext()) {
+                val route = inet4Routes.next()
+                builder.addRoute(route.address(), route.prefix())
+                hasInet4Route = true
+            }
+            if (!hasInet4Route && hasInet4) {
+                builder.addRoute("0.0.0.0", 0)
+            }
+
+            val inet6Routes = options.inet6RouteRange
+            var hasInet6Route = false
+            while (inet6Routes.hasNext()) {
+                val route = inet6Routes.next()
+                builder.addRoute(route.address(), route.prefix())
+                hasInet6Route = true
+            }
+            if (!hasInet6Route && hasInet6) {
+                builder.addRoute("::", 0)
+            }
+        }
+
+        val descriptor = builder.establish() ?: error("android: failed to establish tun")
+        pfd = descriptor
+        Log.i(TAG, "libbox tun established fd=${descriptor.fd}")
+        return descriptor.fd
+    }
+
+    override fun clearDNSCache() {}
+
+    override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {}
+
+    override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {}
+
+    override fun getInterfaces(): NetworkInterfaceIterator = EmptyNetworkInterfaceIterator
+
+    override fun includeAllNetworks(): Boolean = false
+
+    override fun localDNSTransport(): LocalDNSTransport? = null
+
+    override fun readWIFIState(): WIFIState = WIFIState("", "")
+
+    override fun underNetworkExtension(): Boolean = false
+
+    override fun systemCertificates(): StringIterator {
+        val certs = mutableListOf<String>()
+        runCatching {
+            val keyStore = KeyStore.getInstance("AndroidCAStore")
+            keyStore.load(null, null)
+            val aliases = keyStore.aliases()
+            while (aliases.hasMoreElements()) {
+                val cert = keyStore.getCertificate(aliases.nextElement())
+                certs.add(
+                    "-----BEGIN CERTIFICATE-----\n" +
+                        Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(cert.encoded) +
+                        "\n-----END CERTIFICATE-----"
+                )
+            }
+        }.onFailure {
+            Log.w(TAG, "systemCertificates failed: ${it.message}")
+        }
+        return ListStringIterator(certs)
+    }
+
+    override fun findConnectionOwner(
+        ipProtocol: Int,
+        sourceAddress: String,
+        sourcePort: Int,
+        destinationAddress: String,
+        destinationPort: Int,
+    ): ConnectionOwner = ConnectionOwner()
+
+    override fun sendNotification(notification: Notification) {
+        Log.d(TAG, "libbox notification ${notification.title}: ${notification.body}")
+    }
+
+    override fun getSystemProxyStatus(): SystemProxyStatus = SystemProxyStatus().apply {
+        available = false
+        enabled = false
+    }
+
+    override fun serviceReload() {
+        Log.i(TAG, "libbox requested service reload")
+    }
+
+    override fun serviceStop() {
+        Log.i(TAG, "libbox requested service stop")
+        stop()
+    }
+
+    override fun setSystemProxyEnabled(isEnabled: Boolean) {}
+
+    override fun writeDebugMessage(message: String?) {
+        if (!message.isNullOrBlank()) Log.d("sing-box", message)
+    }
+
+    private object EmptyNetworkInterfaceIterator : NetworkInterfaceIterator {
+        override fun hasNext(): Boolean = false
+        override fun next(): io.nekohasekai.libbox.NetworkInterface =
+            throw NoSuchElementException()
+    }
+
+    private class ListStringIterator(private val values: List<String>) : StringIterator {
+        private var index = 0
+        override fun hasNext(): Boolean = index < values.size
+        override fun len(): Int = values.size
+        override fun next(): String = values[index++]
+    }
+}

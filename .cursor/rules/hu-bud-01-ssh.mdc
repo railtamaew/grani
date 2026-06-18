@@ -1,0 +1,46 @@
+---
+description: SSH к VPN-ноде HU-BUD-01 (45.12.132.94) — БД, RemoteVPNManager, скрипты
+alwaysApply: true
+---
+
+# Доступ агента к HU-BUD-01
+
+## 1. Где хранится доступ
+
+В **PostgreSQL**, таблица **`servers`**, запись сервера **HU-BUD-01** (IP **45.12.132.94**).
+
+Обязательные поля для работы по ключу:
+
+- `ssh_host` = `45.12.132.94`
+- `ssh_port` = `22`
+- `ssh_user` = `root`
+- `ssh_key_content` — приватный ключ в **PEM** (заполнен)
+- `ssh_password` = **NULL**
+- `ssh_key_path` = **NULL**
+
+Не хранить и не искать пароль для этой ноды в коде или env для production.
+
+## 2. Как это используется в коде
+
+Все SSH-операции к ноде должны идти через **`RemoteVPNManager.get_ssh_config(server)`** → параметры из модели **`Server`**; если задан **`ssh_key_path`** или **`ssh_key_content`**, пароль **не используется** (`password` в конфиге будет `None`).
+
+Источник: `backend/services/remote_vpn_manager.py` — метод `get_ssh_config` (около строк 39–116).
+
+## 3. Как агенту запускать доступ
+
+- Поднимать окружение с **`DATABASE_URL`** (и зависимостями бэкенда), чтобы можно было загрузить запись `Server` из БД.
+- Запускать скрипты/задачи, которые уже используют **`RemoteVPNManager`** / **`SSHManager`**, например:
+
+```bash
+cd /opt/grani/backend && PYTHONPATH=/opt/grani/backend python3 scripts/setup_hungary_server.py
+```
+
+Любой другой код, который получает **`Server`** из БД и вызывает методы **`RemoteVPNManager`** (WireGuard, Xray, health-checks и т.д.), использует тот же путь.
+
+Прямой **`ssh root@45.12.132.94`** с хоста агента — только если в окружении явно настроены ключи; **в контейнере `granivpn_api` обычно нет CLI `ssh`** — доступ к ноде там идёт через **Paramiko** из приложения.
+
+## 4. Важно
+
+- Пароля для HU-BUD-01 **нет** и **не нужен** — только ключ в БД.
+- В **production** пароль из env для этой схемы **не подставляется**, если не `development`: без ключа в БД будет ошибка (см. `get_ssh_config`).
+- **Не** логировать и **не** вставлять в ответы содержимое `ssh_key_content`.

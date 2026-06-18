@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll GRANI edge assignments every 90 seconds
+
+[Timer]
+Unit=grani-edge-poll.service
+OnBootSec=45
+OnUnitActiveSec=90
+AccuracySec=10
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,130 @@
+name: mobile_app
+description: GRANI Mobile App
+publish_to: 'none'
+# versionName.versionCode — code must match AppConfig fallbacks until PackageInfo.init().
+version: 1.0.4+26
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  
+  # Состояние
+  provider: ^6.0.5
+  
+  # Сеть
+  http: ^1.1.0
+  dio: ^5.3.2
+  connectivity_plus: ^6.0.5
+  
+  # Локальное хранение
+  shared_preferences: ^2.2.3  # Обновлено для исправления v1 embedding
+  sqflite: ^2.4.2
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  path_provider: ^2.1.5
+  flutter_secure_storage: ^9.2.4
+  
+  # UI
+  cupertino_icons: ^1.0.2
+  flutter_svg: ^2.0.9
+  cached_network_image: ^3.3.1
+  
+  # Утилиты
+  intl: ^0.20.2
+  url_launcher: ^6.1.14
+  share_plus: ^10.0.2
+  device_info_plus: ^9.1.0
+  package_info_plus: ^4.2.0
+  get_it: ^7.6.4
+  # Авторизация
+  google_sign_in: ^6.2.2
+  
+  # Push уведомления
+  firebase_messaging: ^14.7.4
+  firebase_core: ^2.24.2
+  flutter_local_notifications: ^17.2.3
+  
+  # Аналитика (события для рекламы: login, purchase, refund)
+  firebase_analytics: ^10.8.7
+  
+  # Платежи
+  webview_flutter: ^4.4.2
+  in_app_purchase: ^3.2.0  # Google Play / App Store подписки (пока только Android)
+  in_app_update: ^4.2.5  # Google Play In-App Updates
+  
+  # VPN - mobile AmneziaWG is embedded under android/third_party/amneziawg-android.
+  # Криптография для WireGuard протокола
+  crypto: ^3.0.3
+  # pointycastle: ^3.7.3  # Временно отключено из-за проблем с API
+  basic_utils: ^5.7.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  build_runner: ^2.4.7
+  hive_generator: ^2.0.1
+  flutter_launcher_icons: ^0.13.1
+  
+  # Testing dependencies
+  integration_test:
+    sdk: flutter
+  mockito: ^5.4.4
+  mocktail: ^1.0.1
+  golden_toolkit: ^0.15.0
+  flutter_driver:
+    sdk: flutter
+  test: ^1.24.6
+  coverage: ^1.7.3
+
+dependency_overrides:
+  # Принудительно используем новую версию win32 для совместимости с Dart 3.9.2
+  win32: ^5.15.0
+  # Принудительно обновляем плагины для исправления v1 embedding
+  shared_preferences_android: ^2.4.15
+  url_launcher_android: ^6.3.24
+  webview_flutter_android: ^4.10.5
+  # Обновляем основные плагины до последних версий
+  path_provider_android: ^2.2.20
+
+flutter:
+  generate: true
+  uses-material-design: true
+  
+  assets:
+    - assets/images/
+    - assets/images/figma/
+    - assets/images/figma/profile/
+    - assets/icons/
+    - bin/amneziawg/
+
+  # Montserrat — по макету Figma; файлы в assets/fonts/ (см. assets/fonts/README.md)
+  fonts:
+    - family: Montserrat
+      fonts:
+        - asset: assets/fonts/Montserrat-Light.ttf
+          weight: 300
+        - asset: assets/fonts/Montserrat-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Montserrat-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Montserrat-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Montserrat-Bold.ttf
+          weight: 700
+
+# Конфигурация для генерации иконок приложения
+# Иконка должна быть экспортирована из Figma (node-id: 720:422)
+# Figma: https://www.figma.com/design/TZYqJZyQtl31Zao6JC8GSl/GRANI?node-id=720-422
+# Источник: Figma node-id 1033:124 (AppIcon_Android_Master). Экспорт: python3 scripts/figma_export_app_icon.py
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icons/icon_01.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icons/icon_01.png"

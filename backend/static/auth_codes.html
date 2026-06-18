@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Коды авторизации - GraniVPN Admin</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        h1 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        input[type="text"] {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .status-active {
+            color: #28a745;
+            font-weight: 600;
+        }
+        .status-expired {
+            color: #dc3545;
+            font-weight: 600;
+        }
+        .hash {
+            font-family: monospace;
+            font-size: 12px;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Коды авторизации</h1>
+        
+        <div class="search-box">
+            <input type="text" id="emailInput" placeholder="Введите email (например: rail.tamaew@gmail.com)">
+            <button onclick="loadCodes()">Поиск</button>
+            <button onclick="loadAllCodes()">Все коды</button>
+        </div>
+        
+        <div id="error" class="error" style="display: none;"></div>
+        <div id="loading" class="loading" style="display: none;">Загрузка...</div>
+        
+        <table id="codesTable" style="display: none;">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Email</th>
+                    <th>Code Hash</th>
+                    <th>Создан</th>
+                    <th>Истекает</th>
+                    <th>Статус</th>
+                    <th>Попытки</th>
+                    <th>IP</th>
+                </tr>
+            </thead>
+            <tbody id="codesBody">
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin + '/api';
+        let token = null;
+
+        // Попытка получить токен из localStorage или запросить авторизацию
+        async function getToken() {
+            // Получаем токен из URL параметра (приоритет)
+            const urlParams = new URLSearchParams(window.location.search);
+            token = urlParams.get('token') || localStorage.getItem('admin_token');
+            
+            if (!token) {
+                // Показываем инструкцию по получению токена
+                const message = `Токен не найден.\n\n` +
+                    `Способы получения токена:\n\n` +
+                    `1. Через скрипт на сервере:\n` +
+                    `   cd /opt/grani/backend\n` +
+                    `   python3 get_admin_token.py rail.tamaew@gmail.com\n\n` +
+                    `2. Добавьте токен в URL:\n` +
+                    `   ?token=YOUR_TOKEN\n\n` +
+                    `3. Или войдите через форму ниже`;
+                
+                const useToken = prompt(message + '\n\nВведите токен (или нажмите Cancel для входа через форму):');
+                
+                if (useToken) {
+                    token = useToken;
+                    localStorage.setItem('admin_token', token);
+                    return token;
+                }
+                
+                // Запрашиваем токен через форму входа (если есть endpoint /auth/login)
+                const email = prompt('Введите email администратора:');
+                if (!email) {
+                    throw new Error('Токен не предоставлен');
+                }
+                
+                // Для email авторизации нужно использовать verify-code
+                alert('Для email авторизации используйте скрипт get_admin_token.py или добавьте токен в URL');
+                throw new Error('Требуется токен');
+            }
+            
+            // Сохраняем токен в localStorage если он из URL
+            if (urlParams.get('token')) {
+                localStorage.setItem('admin_token', token);
+            }
+            
+            return token;
+        }
+
+        async function loadCodes(email = null) {
+            const errorDiv = document.getElementById('error');
+            const loadingDiv = document.getElementById('loading');
+            const table = document.getElementById('codesTable');
+            const tbody = document.getElementById('codesBody');
+            
+            errorDiv.style.display = 'none';
+            loadingDiv.style.display = 'block';
+            table.style.display = 'none';
+            tbody.innerHTML = '';
+
+            try {
+                await getToken();
+                
+                let url = API_BASE + '/admin/auth-codes?limit=100';
+                if (email) {
+                    url += '&email=' + encodeURIComponent(email);
+                }
+
+                const response = await fetch(url, {
+                    headers: {
+                        'Authorization': 'Bearer ' + token
+                    }
+                });
+
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        localStorage.removeItem('admin_token');
+                        throw new Error('Требуется авторизация. Обновите страницу и войдите снова.');
+                    }
+                    throw new Error('Ошибка загрузки: ' + response.status);
+                }
+
+                const data = await response.json();
+                
+                if (data.codes && data.codes.length > 0) {
+                    data.codes.forEach(code => {
+                        const row = document.createElement('tr');
+                        const isExpired = code.is_expired;
+                        const statusClass = isExpired ? 'status-expired' : 'status-active';
+                        const statusText = isExpired ? 'Истек' : `Активен (${formatTimeLeft(code.time_left_seconds)})`;
+                        
+                        row.innerHTML = `
+                            <td>${code.id}</td>
+                            <td><strong>${code.email}</strong></td>
+                            <td class="hash" title="${code.code_hash}">${code.code_hash}</td>
+                            <td>${formatDate(code.created_at)}</td>
+                            <td>${formatDate(code.expires_at)}</td>
+                            <td class="${statusClass}">${statusText}</td>
+                            <td>${code.attempts_count}</td>
+                            <td>${code.ip_address || '-'}</td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                    table.style.display = 'table';
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px;">Коды не найдены</td></tr>';
+                    table.style.display = 'table';
+                }
+            } catch (error) {
+                errorDiv.textContent = 'Ошибка: ' + error.message;
+                errorDiv.style.display = 'block';
+            } finally {
+                loadingDiv.style.display = 'none';
+            }
+        }
+
+        function loadAllCodes() {
+            document.getElementById('emailInput').value = '';
+            loadCodes();
+        }
+
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleString('ru-RU', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        function formatTimeLeft(seconds) {
+            if (seconds <= 0) return 'Истек';
+            const minutes = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${minutes}м ${secs}с`;
+        }
+
+        // Загрузка при нажатии Enter
+        document.getElementById('emailInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const email = document.getElementById('emailInput').value.trim();
+                loadCodes(email || null);
+            }
+        });
+
+        // Загрузка всех кодов при загрузке страницы
+        window.addEventListener('load', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const email = urlParams.get('email');
+            if (email) {
+                document.getElementById('emailInput').value = email;
+                loadCodes(email);
+            } else {
+                loadAllCodes();
+            }
+        });
+    </script>
+</body>
+</html>
+

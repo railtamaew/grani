@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GRANI</string>
+    <string name="quick_tile_label">GRANI</string>
+    <string name="quick_tile_no_config">Connect in the app first</string>
+    <string name="quick_tile_subscription_required">An active subscription is required. Subscribe in the app.</string>
+    <string name="vpn_notification_channel_name">GRANI VPN</string>
+    <string name="vpn_notification_title">GRANI</string>
+    <string name="vpn_notification_connected">VPN connected</string>
+    <string name="vpn_notification_recovering">Recovering…</string>
+    <string name="vpn_notification_reconnecting">Reconnecting network…</string>
+</resources>

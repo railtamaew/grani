@@ -1,0 +1,99 @@
+{
+  "source": "Figma API",
+  "frame_id": "562:488",
+  "design_width": 412,
+  "design_height": 917,
+  "frame": {
+    "x": 448.0,
+    "y": 2110.0,
+    "width": 412.0,
+    "height": 917.0
+  },
+  "background_gradient": {
+    "colors_hex": [
+      "#FFFFFF",
+      "#F7F9FA"
+    ],
+    "stops": [
+      0.0,
+      1.0
+    ]
+  },
+  "title": {
+    "fontSize": 24.0,
+    "fontWeight": 400,
+    "letterSpacing": -0.96,
+    "lineHeightPx": 21.599998474121094,
+    "fontFamily": "Montserrat",
+    "fills": [
+      "#192F3F"
+    ],
+    "text": "Для продолжения работы, выберите тариф"
+  },
+  "subtitle": {
+    "fontSize": 16.0,
+    "fontWeight": 300,
+    "letterSpacing": 0.96,
+    "lineHeightPx": 15.520000457763672,
+    "fontFamily": "Montserrat",
+    "fills": [
+      "#192F3F"
+    ],
+    "text": "Оформи подписку и получи полный доступ к скорости, защите."
+  },
+  "tariff_card": {
+    "width": 348.0,
+    "height": 93.0,
+    "cornerRadius": 25.0
+  },
+  "timer": {
+    "fontSize": 20.0,
+    "fontWeight": 400,
+    "letterSpacing": -0.8,
+    "lineHeightPx": 18.0,
+    "fontFamily": "Montserrat",
+    "fills": [
+      "#F65656"
+    ],
+    "text": "00:00"
+  },
+  "_layer_names": [
+    "9:30",
+    "Badge",
+    "Badge_bg",
+    "Base",
+    "Battery",
+    "Camera",
+    "Content",
+    "Description",
+    "Navigation bars",
+    "Price",
+    "Signal",
+    "Status",
+    "Status Icons",
+    "Status bar",
+    "Tariff_12month",
+    "Tariff_1month",
+    "Tariff_6month",
+    "Time & Date",
+    "TrialEndedScreen",
+    "Tue, Jul 19",
+    "Until 10:00 AM",
+    "Vector",
+    "Wi-Fi Network",
+    "Wifi",
+    "android_UI",
+    "handle",
+    "header",
+    "logo",
+    "menu",
+    "share",
+    "signal",
+    "timer_box",
+    "timer_label",
+    "timer_value",
+    "Для продолжения работы, выберите тариф",
+    "Оформи подписку и получи полный доступ к скорости, защите.",
+    "Текст"
+  ]
+}

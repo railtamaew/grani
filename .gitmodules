@@ -1,0 +1,3 @@
+[submodule "mobile-app/android/third_party/amneziawg-android"]
+	path = mobile-app/android/third_party/amneziawg-android
+	url = https://github.com/amnezia-vpn/amneziawg-android.git
