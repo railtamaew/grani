@@ -236,3 +236,6 @@ grani-*-*.json
 backend/celerybeat-schedule
 
 docs/figma_auth_data.json
+
+# Local production deployment config with live secrets.
+server-config/docker/docker-compose.yml
