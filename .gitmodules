@@ -1,3 +1,4 @@
 [submodule "mobile-app/android/third_party/amneziawg-android"]
 	path = mobile-app/android/third_party/amneziawg-android
-	url = https://github.com/amnezia-vpn/amneziawg-android.git
+	url = https://github.com/railtamaew/amneziawg-android.git
+	branch = grani-patches
