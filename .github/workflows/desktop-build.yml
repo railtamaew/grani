@@ -33,6 +33,19 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Build AmneziaWG Windows tunnel.dll
+        shell: pwsh
+        run: |
+          $awgSource = Join-Path $env:RUNNER_TEMP 'amneziawg-windows'
+          git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-windows.git $awgSource
+          Push-Location $awgSource
+          cmd /c build.cmd
+          Pop-Location
+
+          New-Item -ItemType Directory -Force -Path 'bin/amneziawg/windows'
+          Copy-Item (Join-Path $awgSource 'x64/tunnel.dll') 'bin/amneziawg/windows/tunnel.dll' -Force
+          Get-Item 'bin/amneziawg/windows/tunnel.dll'
+
       - name: Build Windows
         run: flutter build windows --release
 

@@ -10264,3 +10264,10 @@ Windows platform:
   - `flutter analyze lib/services/vpn_service.dart` ran; no new Dart errors, only the known six warnings about unused fields/methods in `vpn_service.dart`.
   - Windows compile/runtime still must be validated by GitHub Actions on Windows and then on a real Windows machine with built `tunnel.dll` bundled or `GRANI_AWG_TUNNEL_DLL` set.
 - Next required task: build or fetch `amneziawg-windows` `x64/tunnel.dll`, add it to `mobile-app/bin/amneziawg/windows/tunnel.dll` or configure CI to build/package it, then run GitHub Actions Windows desktop build and test connect as admin.
+2026-06-18 Windows CI update: build tunnel.dll in GitHub Actions
+
+- Added `.github/workflows/desktop-build.yml` Windows job step before `flutter build windows --release`.
+- The step clones `https://github.com/amnezia-vpn/amneziawg-windows`, runs `cmd /c build.cmd` on the GitHub Windows runner, and copies `x64/tunnel.dll` into `mobile-app/bin/amneziawg/windows/tunnel.dll`.
+- This avoids committing the binary DLL to the private repo while still bundling it into Flutter assets for the Windows release artifact.
+- Important: the first CI run may take longer because `build.cmd` downloads Go, llvm-mingw, and Wintun into its `.deps` folder.
+- Next validation point: confirm the GitHub Actions Windows job completes and that the uploaded `windows-release` artifact contains `data/flutter_assets/bin/amneziawg/windows/tunnel.dll`.
