@@ -83,6 +83,10 @@ dev_dependencies:
   coverage: ^1.7.3
 
 dependency_overrides:
+  # Keep macOS/iOS GoogleSignIn on native GoogleSignIn 7.x while Firebase is on SDK 10.25.x.
+  # google_sign_in_ios 5.9.0 pulls GoogleSignIn 8.x -> GoogleUtilities/Environment 8.x,
+  # which conflicts with Firebase 10.25.x requiring GoogleUtilities/Environment 7.x.
+  google_sign_in_ios: 5.8.0
   # Принудительно используем новую версию win32 для совместимости с Dart 3.9.2
   win32: ^5.15.0
   # Принудительно обновляем плагины для исправления v1 embedding

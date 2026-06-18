@@ -10347,3 +10347,26 @@ Expected next step:
 - Let the GitHub Actions run finish.
 - If macOS still fails, inspect the new `CocoaPods failure summary` group or send that block.
 - Then fix the actual dependency/version/platform conflict instead of guessing from the Ruby stack tail.
+## 2026-06-19 01:25 MSK - macOS CI CocoaPods conflict fixed with Google Sign-In pin
+
+Root cause from GitHub Actions macOS job `Install macOS pods`:
+- `firebase_core 2.32.0` / `firebase_messaging 14.7.10` resolve Firebase iOS SDK `10.25.0`.
+- Firebase `10.25.0` requires `GoogleUtilities/Environment` in the `7.x` range:
+  - `FirebaseCore 10.25.0` -> `GoogleUtilities/Environment (~> 7.12)`
+  - `GoogleDataTransport 9.4.1` -> `GoogleUtilities/Environment (~> 7.7)`
+  - `FirebaseMessaging 10.25.0` -> `GoogleUtilities/Environment (~> 7.8)`
+- `google_sign_in_ios 5.9.0` resolves native `GoogleSignIn (~> 8.0)`.
+- `GoogleSignIn 8.0.0` pulls `AppCheckCore 11.3.0`, which requires `GoogleUtilities/Environment (~> 8.0)`.
+- CocoaPods cannot satisfy both `GoogleUtilities/Environment 7.x` and `8.x`.
+
+Change made:
+- Added `dependency_overrides.google_sign_in_ios: 5.8.0` in `mobile-app/pubspec.yaml`.
+- Updated only the `google_sign_in_ios` block in `mobile-app/pubspec.lock`:
+  - from `5.9.0` transitive
+  - to `5.8.0` direct overridden
+- Verified `google_sign_in_ios 5.8.0` podspec depends on native `GoogleSignIn (~> 7.1)`, avoiding the `GoogleUtilities 8.x` branch while current Firebase packages stay on SDK `10.25.x`.
+
+Reason for minimal fix:
+- Avoids a broad Firebase/Google Sign-In package upgrade during Windows/macOS platform bring-up.
+- Keeps Android/mobile dependency behavior otherwise unchanged.
+- Later, when we intentionally upgrade Firebase to the current major versions, remove this override and test OAuth/push flows again.
