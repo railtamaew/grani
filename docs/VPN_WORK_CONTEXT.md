@@ -10658,3 +10658,17 @@ Expected next test behavior:
 - On successful connect, `grani-awg` should remain `Running`.
 - `windows-runner.log` should not immediately append `tunnel returned success` during an active tunnel; that line should appear only after service exits.
 - PL node should show endpoint and handshake for peer `Q2E4dZE...` / `172.27.91.5/32`.
+
+## 2026-06-19 — Windows AWG service config path artifact ready
+
+Commit pushed:
+- `b460a45 Fix Windows AWG service config path`
+
+GitHub Actions:
+- `Desktop Build (Windows + macOS)` run `27816407599` completed successfully.
+- Jobs: `windows` success, `macos` success.
+- Artifacts:
+  - `windows-release`, artifact id `7745965364`, size `26342370` bytes.
+  - `macos-release`, artifact id `7745963417`, size `404307242` bytes.
+
+Use this exact `windows-release` for the next Windows AWG test. It should pass the config file path to `tunnel.dll` instead of config contents.
