@@ -10530,3 +10530,36 @@ Fix:
 
 General UI rule recorded:
 - For all GRANI screens, text must shrink/wrap within its container and layout blocks must be positioned from real constraints/measurements. Elements must not overlap each other when the app window/viewport is compact.
+
+## 2026-06-19 — Windows desktop artifact after start overlap fix
+
+Commit pushed:
+- `6997dfe Fix Windows start screen text overlap`
+
+GitHub Actions:
+- `Desktop Build (Windows + macOS)` run `27810866716` completed successfully.
+- Jobs: `windows` success, `macos` success.
+- Artifacts:
+  - `windows-release`, size `26342268` bytes.
+  - `macos-release`, size `404307291` bytes.
+
+Use this run/artifact for the next Windows test. It includes the previous Windows shell fixes plus the start-screen compact-window text overlap fix.
+
+## 2026-06-19 — Windows AWG connect failed due non-admin service control
+
+User tested Windows artifact again: UI reached `Сбой подключения` for `WireGuard obf`.
+Diagnostics:
+- `%LOCALAPPDATA%\\GRANI\\grani-awg.conf` was written with new vpn_ip `172.27.91.5`.
+- `%LOCALAPPDATA%\\GRANI\\windows-runner.log` was not created.
+- Backend showed immediate `connect_failed` for Windows device `8ecc82be-9924-420d-9b25-a9037407a3e3`, server_id=10, protocol=graniwg.
+- PL node had peer `172.27.91.5/32`, but endpoint `(none)`, handshake timestamp `0`, rx/tx `0`.
+- Local `Start-Service grani-awg` from non-elevated shell failed: cannot open service.
+Conclusion:
+- The Windows app was running non-elevated and could not control the `grani-awg` Windows service. Failure happened before service-mode/tunnel.dll startup, so no node handshake and no windows-runner.log.
+
+Fix prepared:
+- `windows/runner/runner.exe.manifest` now requests `requireAdministrator`, so Windows should show UAC when starting GRANI from the ZIP artifact.
+- `windows/runner/grani_vpn_channel.cpp` now returns explicit `WINDOWS_ADMIN_REQUIRED` if AWG connect is attempted without admin rights.
+
+Note:
+- This is acceptable for the current ZIP/MVP. A polished Windows release should later use an installer/helper service so the UI itself does not always run elevated.

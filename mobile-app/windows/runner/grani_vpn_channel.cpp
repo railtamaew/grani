@@ -408,6 +408,11 @@ void HandleConnectAmneziaWg(
     result->Error("INVALID_CONFIG", "GRANIwg config is empty");
     return;
   }
+  if (!IsRunningAsAdmin()) {
+    result->Error("WINDOWS_ADMIN_REQUIRED",
+                  "Run GRANI as administrator to start the Windows VPN service");
+    return;
+  }
 
   const std::wstring config_path = GetConfigPath();
   if (!WriteUtf8File(config_path, *config)) {
