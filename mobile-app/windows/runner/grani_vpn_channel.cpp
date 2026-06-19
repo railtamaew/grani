@@ -72,6 +72,39 @@ bool FileExists(const std::wstring& path) {
          (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
 }
 
+std::string ReadTailUtf8File(const std::wstring& path, DWORD max_bytes = 4096) {
+  HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
+    return "";
+  }
+
+  LARGE_INTEGER size{};
+  if (!GetFileSizeEx(file, &size)) {
+    CloseHandle(file);
+    return "";
+  }
+
+  const LONGLONG limited =
+      size.QuadPart < static_cast<LONGLONG>(max_bytes)
+          ? size.QuadPart
+          : static_cast<LONGLONG>(max_bytes);
+  const DWORD to_read = static_cast<DWORD>(limited);
+  const LONG distance_low =
+      -static_cast<LONG>(to_read);
+  SetFilePointer(file, distance_low, nullptr, FILE_END);
+
+  std::string buffer(to_read, '\0');
+  DWORD read = 0;
+  const BOOL ok = ReadFile(file, buffer.data(), to_read, &read, nullptr);
+  CloseHandle(file);
+  if (!ok) {
+    return "";
+  }
+  buffer.resize(read);
+  return buffer;
+}
+
 std::wstring GetExeDir() {
   wchar_t path[MAX_PATH * 4];
   const DWORD size = GetModuleFileNameW(nullptr, path, ARRAYSIZE(path));
@@ -154,6 +187,15 @@ std::wstring GetConfigPath() {
   const std::wstring dir = base + L"\\" + kAppDataDir;
   CreateDirectoryW(dir.c_str(), nullptr);
   return dir + L"\\" + kTunnelName + L".conf";
+}
+
+std::wstring GetRunnerLogPath() {
+  const std::wstring config_path = GetConfigPath();
+  const size_t slash = config_path.find_last_of(L"\\/");
+  if (slash == std::wstring::npos) {
+    return L"windows-runner.log";
+  }
+  return config_path.substr(0, slash) + L"\\windows-runner.log";
 }
 
 bool WriteUtf8File(const std::wstring& path, const std::string& content) {
@@ -260,6 +302,30 @@ std::optional<DWORD> QueryTunnelServiceState() {
   return status.dwCurrentState;
 }
 
+std::string ServiceStateName(std::optional<DWORD> state) {
+  if (!state.has_value()) {
+    return "missing_or_unreadable";
+  }
+  switch (*state) {
+    case SERVICE_STOPPED:
+      return "stopped";
+    case SERVICE_START_PENDING:
+      return "start_pending";
+    case SERVICE_STOP_PENDING:
+      return "stop_pending";
+    case SERVICE_RUNNING:
+      return "running";
+    case SERVICE_CONTINUE_PENDING:
+      return "continue_pending";
+    case SERVICE_PAUSE_PENDING:
+      return "pause_pending";
+    case SERVICE_PAUSED:
+      return "paused";
+    default:
+      return "unknown_" + std::to_string(*state);
+  }
+}
+
 std::optional<std::string> InstallOrUpdateTunnelService(
     const std::wstring& config_path) {
   SC_HANDLE manager =
@@ -334,7 +400,11 @@ std::optional<std::string> StartTunnelService() {
   CloseServiceHandle(service);
   CloseServiceHandle(manager);
   if (!running) {
-    return "Timed out waiting for GRANI AmneziaWG service to start";
+    std::ostringstream message;
+    message << "Timed out waiting for GRANI AmneziaWG service to start; "
+            << "service_state=" << ServiceStateName(QueryTunnelServiceState())
+            << "; runner_log_tail=" << ReadTailUtf8File(GetRunnerLogPath(), 1200);
+    return message.str();
   }
   return std::nullopt;
 }
@@ -397,6 +467,35 @@ flutter::EncodableMap StatusMap() {
       {flutter::EncodableValue("rx_bytes"), flutter::EncodableValue(g_rx_bytes)},
       {flutter::EncodableValue("tx_bytes"), flutter::EncodableValue(g_tx_bytes)},
       {flutter::EncodableValue("runner"), flutter::EncodableValue(runner)},
+  };
+}
+
+flutter::EncodableMap DesktopDiagnosticsMap() {
+  const std::wstring config_path = GetConfigPath();
+  const std::wstring log_path = GetRunnerLogPath();
+  const auto service_state = QueryTunnelServiceState();
+  const auto tunnel_dll = ResolveTunnelDllPath();
+  const auto awg_quick = ResolveAwgQuickPath();
+
+  return flutter::EncodableMap{
+      {flutter::EncodableValue("platform"), flutter::EncodableValue("windows")},
+      {flutter::EncodableValue("is_admin"), flutter::EncodableValue(IsRunningAsAdmin())},
+      {flutter::EncodableValue("config_path"), flutter::EncodableValue(WideToUtf8(config_path))},
+      {flutter::EncodableValue("config_exists"), flutter::EncodableValue(FileExists(config_path))},
+      {flutter::EncodableValue("runner_log_path"), flutter::EncodableValue(WideToUtf8(log_path))},
+      {flutter::EncodableValue("runner_log_exists"), flutter::EncodableValue(FileExists(log_path))},
+      {flutter::EncodableValue("runner_log_tail"),
+       flutter::EncodableValue(ReadTailUtf8File(log_path))},
+      {flutter::EncodableValue("tunnel_dll_path"),
+       flutter::EncodableValue(tunnel_dll ? WideToUtf8(*tunnel_dll) : "")},
+      {flutter::EncodableValue("tunnel_dll_exists"), flutter::EncodableValue(tunnel_dll.has_value())},
+      {flutter::EncodableValue("awg_quick_path"),
+       flutter::EncodableValue(awg_quick ? WideToUtf8(*awg_quick) : "")},
+      {flutter::EncodableValue("awg_quick_exists"), flutter::EncodableValue(awg_quick.has_value())},
+      {flutter::EncodableValue("service_state"),
+       flutter::EncodableValue(ServiceStateName(service_state))},
+      {flutter::EncodableValue("service_state_code"),
+       flutter::EncodableValue(static_cast<int>(service_state.value_or(0)))},
   };
 }
 
@@ -507,6 +606,10 @@ void RegisterGraniVpnChannel(flutter::BinaryMessenger* messenger) {
               {flutter::EncodableValue("tx_bytes"),
                flutter::EncodableValue(g_tx_bytes)},
           }));
+          return;
+        }
+        if (method == "getDesktopVpnDiagnostics") {
+          result->Success(flutter::EncodableValue(DesktopDiagnosticsMap()));
           return;
         }
         if (method == "requestPermission") {

@@ -203,12 +203,50 @@ class WindowsSimpleVpnRuntime implements SimpleVpnRuntime {
   }
 }
 
+class MacOSSimpleVpnRuntime implements SimpleVpnRuntime {
+  const MacOSSimpleVpnRuntime();
+
+  @override
+  Future<bool> requestPermission() async => true;
+
+  @override
+  Future<bool> startConfig(
+    SimpleVpnConfig config, {
+    required String? sessionId,
+    required String source,
+  }) async {
+    throw VpnUnsupportedPlatformException(
+      'GRANIwg for macOS is not wired to a native tunnel runner yet. '
+      'The macOS desktop build can be used for UI/auth smoke tests only.',
+    );
+  }
+
+  @override
+  Future<bool?> getAmneziaWgStatus() async => false;
+
+  @override
+  Future<bool?> getNativeConnectionStatus() async => false;
+
+  @override
+  Future<bool> disconnect({
+    required String reason,
+    required String source,
+    required String? sessionId,
+    bool includeLegacy = false,
+  }) async {
+    return true;
+  }
+}
+
 SimpleVpnRuntime createSimpleVpnRuntime() {
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
     return const AndroidSimpleVpnRuntime();
   }
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
     return const WindowsSimpleVpnRuntime();
+  }
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS) {
+    return const MacOSSimpleVpnRuntime();
   }
   return const UnsupportedSimpleVpnRuntime();
 }

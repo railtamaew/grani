@@ -41,6 +41,27 @@ class NativeVpnService {
         'getTrafficStats': _getTrafficStatsCallCount,
       };
 
+  static Future<Map<String, dynamic>> getDesktopVpnDiagnostics() async {
+    if (!_isWindowsNativeVpn) {
+      return <String, dynamic>{
+        'platform': defaultTargetPlatform.name,
+        'supported': false,
+      };
+    }
+    try {
+      final result = await _channel
+          .invokeMethod<Map<dynamic, dynamic>>('getDesktopVpnDiagnostics');
+      return result == null
+          ? <String, dynamic>{}
+          : result.map((key, value) => MapEntry(key.toString(), value));
+    } catch (e) {
+      return <String, dynamic>{
+        'platform': defaultTargetPlatform.name,
+        'diagnostics_error': e.toString(),
+      };
+    }
+  }
+
   /// События изменения состояния VPN с нативного [GraniVpnService] (без polling [getStatus]).
   static const EventChannel _vpnStateChannel =
       EventChannel('com.granivpn.mobile/vpn_state');
@@ -207,6 +228,18 @@ class NativeVpnService {
         throw VpnPermissionException(
           userMessage ??
               'VPN разрешение отклонено. Для работы VPN необходимо предоставить разрешение в настройках системы.',
+        );
+      }
+      if (_isWindowsNativeVpn) {
+        final diagnostics = await getDesktopVpnDiagnostics();
+        final diagnosticText = diagnostics.entries
+            .where((entry) =>
+                entry.value != null && entry.value.toString().isNotEmpty)
+            .map((entry) => '${entry.key}=${entry.value}')
+            .join('; ');
+        throw VpnException(
+          'Ошибка подключения AmneziaWG: ${e.message}. '
+          'Windows diagnostics: $diagnosticText',
         );
       }
       throw VpnException('Ошибка подключения AmneziaWG: ${e.message}');
