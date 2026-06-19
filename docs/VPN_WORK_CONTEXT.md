@@ -10420,3 +10420,27 @@ Change made:
 Expected next result:
 - New `windows-release` artifact should contain `tunnel.dll` next to `mobile_app.exe`.
 - This still does not prove VPN works on Windows; it only makes the artifact suitable for the first real Windows smoke test.
+## 2026-06-19 07:53 MSK - Windows artifact verified after runtime packaging
+
+GitHub Actions:
+- Workflow: `Desktop Build (Windows + macOS)`
+- Run: `Package Windows tunnel runtime in desktop artifact`
+- Run ID: `27805865238`
+- Commit: `39d9efe`
+- Result: success.
+- Artifacts:
+  - `windows-release`: 25.1 MB in GitHub UI, downloaded zip about 25 MB.
+  - `macos-release`: 386 MB in GitHub UI.
+
+Windows artifact verification:
+- Downloaded `windows-release` artifact locally as `/private/tmp/grani-windows-release-39d9efe.zip`.
+- Confirmed these release files exist:
+  - `mobile_app.exe` - 826,368 bytes.
+  - `flutter_windows.dll` - 18,511,360 bytes.
+  - `tunnel.dll` - 5,111,808 bytes.
+- `tunnel.dll` is now next to `mobile_app.exe`, matching the Windows runner fallback resolution path.
+
+Status:
+- Packaging issue from previous artifact is fixed.
+- The artifact is now suitable for first real Windows smoke test.
+- This still does not prove VPN connect works; the next step is to run it on Windows with admin rights and observe service creation/connect/disconnect behavior.
