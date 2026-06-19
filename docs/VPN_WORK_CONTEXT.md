@@ -10617,3 +10617,21 @@ User also clarified Windows close behavior:
 - Clicking the window close button (X) must not stop GRANI.
 - WM_CLOSE now hides the window to tray by default.
 - The app exits only from the tray menu Выйти из GRANI / Quit GRANI, which sets an explicit force-quit flag before closing the native window.
+
+## 2026-06-19 — Windows tray/close fix desktop artifact ready
+
+Commit pushed:
+- 0821ec Fix Windows tray menu behavior
+
+GitHub Actions:
+- Desktop Build (Windows + macOS) run 27813898188 completed successfully.
+- Jobs: windows success, macos success.
+- Artifacts:
+  - windows-release, artifact id 7744930941, size 26342663 bytes.
+  - macos-release, artifact id 7744960555, size 404307195 bytes.
+
+Use this artifact for the next Windows test. It includes:
+- runtime UAC relaunch for Windows service control from previous artifact;
+- non-corrupted localized tray labels using Windows UI language;
+- close button hides GRANI to tray instead of quitting;
+- tray menu has explicit Выйти из GRANI / Quit GRANI for real process exit.
