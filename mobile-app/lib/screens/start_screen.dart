@@ -249,6 +249,8 @@ class _StartScreenState extends State<StartScreen>
                       final horizontalPadding =
                           GraniTheme.startScreenHorizontalPadding * scaleX;
                       final emailPrimary = AppConfig.isEmailPrimaryAuth;
+                      final googleSignInSupported =
+                          defaultTargetPlatform != TargetPlatform.windows;
                       return Positioned(
                         top: buttonsTop,
                         left: horizontalPadding,
@@ -257,31 +259,33 @@ class _StartScreenState extends State<StartScreen>
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Builder(
-                              builder: (context) {
-                                final authService = Provider.of<AuthService>(
-                                    context,
-                                    listen: false);
-                                return _buildStartButton(
-                                  context: context,
-                                  text: l10n.startContinueGoogle,
-                                  onPressed: authService.isLoading
-                                      ? null
-                                      : () => _handleGoogleSignIn(context),
-                                  icon: _buildGoogleIcon(scaleX, scaleY),
-                                  scaleX: scaleX,
-                                  scaleY: scaleY,
-                                  isPressed: _isGoogleButtonPressed,
-                                  isLoading: authService.isLoading,
-                                  useStartScreenStyle: !emailPrimary,
-                                );
-                              },
-                            ),
-                            SizedBox(
-                                height:
-                                    GraniTheme.startScreenGapBetweenButtons *
-                                        0.85 *
-                                        scaleY),
+                            if (googleSignInSupported) ...[
+                              Builder(
+                                builder: (context) {
+                                  final authService = Provider.of<AuthService>(
+                                      context,
+                                      listen: false);
+                                  return _buildStartButton(
+                                    context: context,
+                                    text: l10n.startContinueGoogle,
+                                    onPressed: authService.isLoading
+                                        ? null
+                                        : () => _handleGoogleSignIn(context),
+                                    icon: _buildGoogleIcon(scaleX, scaleY),
+                                    scaleX: scaleX,
+                                    scaleY: scaleY,
+                                    isPressed: _isGoogleButtonPressed,
+                                    isLoading: authService.isLoading,
+                                    useStartScreenStyle: !emailPrimary,
+                                  );
+                                },
+                              ),
+                              SizedBox(
+                                  height:
+                                      GraniTheme.startScreenGapBetweenButtons *
+                                          0.85 *
+                                          scaleY),
+                            ],
                             _buildStartButton(
                               context: context,
                               text: l10n.startContinueEmail,

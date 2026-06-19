@@ -2,6 +2,7 @@
 
 #include <dwmapi.h>
 #include <flutter_windows.h>
+#include <shellapi.h>
 
 #include "resource.h"
 
@@ -29,12 +30,29 @@ constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme"
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
 
+constexpr int kMinWindowWidth = 360;
+constexpr int kMinWindowHeight = 640;
+constexpr int kMaxWindowWidth = 560;
+constexpr int kMaxWindowHeight = 900;
+constexpr UINT kTrayIconMessage = WM_APP + 1;
+constexpr UINT_PTR kTrayIconId = 1;
+constexpr UINT kTrayMenuShow = 1001;
+constexpr UINT kTrayMenuVisitSite = 1002;
+constexpr UINT kTrayMenuExit = 1003;
+constexpr const wchar_t kGraniWebsite[] = L"https://granilink.com";
+
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 
 // Scale helper to convert logical scaler values to physical using passed in
 // scale factor
 int Scale(int source, double scale_factor) {
   return static_cast<int>(source * scale_factor);
+}
+
+double GetScaleForWindow(HWND hwnd) {
+  HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+  UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
+  return dpi / 96.0;
 }
 
 // Dynamically loads the |EnableNonClientDpiScaling| from the User32 module.
@@ -51,6 +69,68 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
     enable_non_client_dpi_scaling(hwnd);
   }
   FreeLibrary(user32_module);
+}
+
+void AddTrayIcon(HWND hwnd) {
+  NOTIFYICONDATAW data{};
+  data.cbSize = sizeof(data);
+  data.hWnd = hwnd;
+  data.uID = kTrayIconId;
+  data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+  data.uCallbackMessage = kTrayIconMessage;
+  data.hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_APP_ICON));
+  wcscpy_s(data.szTip, L"GRANI");
+  Shell_NotifyIconW(NIM_ADD, &data);
+}
+
+void RemoveTrayIcon(HWND hwnd) {
+  NOTIFYICONDATAW data{};
+  data.cbSize = sizeof(data);
+  data.hWnd = hwnd;
+  data.uID = kTrayIconId;
+  Shell_NotifyIconW(NIM_DELETE, &data);
+}
+
+void ShowAppWindow(HWND hwnd) {
+  if (IsIconic(hwnd)) {
+    ShowWindow(hwnd, SW_RESTORE);
+  } else {
+    ShowWindow(hwnd, SW_SHOWNORMAL);
+  }
+  SetForegroundWindow(hwnd);
+}
+
+void ShowTrayMenu(HWND hwnd) {
+  HMENU menu = CreatePopupMenu();
+  if (!menu) {
+    return;
+  }
+
+  AppendMenuW(menu, MF_STRING, kTrayMenuShow, L"Показать GRANI");
+  AppendMenuW(menu, MF_STRING, kTrayMenuVisitSite, L"Посетить сайт");
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(menu, MF_STRING, kTrayMenuExit, L"Закрыть GRANI");
+
+  POINT cursor;
+  GetCursorPos(&cursor);
+  SetForegroundWindow(hwnd);
+  const UINT command =
+      TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+                     cursor.x, cursor.y, 0, hwnd, nullptr);
+  DestroyMenu(menu);
+
+  switch (command) {
+    case kTrayMenuShow:
+      ShowAppWindow(hwnd);
+      break;
+    case kTrayMenuVisitSite:
+      ShellExecuteW(nullptr, L"open", kGraniWebsite, nullptr, nullptr,
+                    SW_SHOWNORMAL);
+      break;
+    case kTrayMenuExit:
+      PostMessageW(hwnd, WM_CLOSE, 0, 0);
+      break;
+  }
 }
 
 }  // namespace
@@ -145,6 +225,7 @@ bool Win32Window::Create(const std::wstring& title,
   }
 
   UpdateTheme(window);
+  AddTrayIcon(window);
 
   return OnCreate();
 }
@@ -179,7 +260,19 @@ Win32Window::MessageHandler(HWND hwnd,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
   switch (message) {
+    case kTrayIconMessage:
+      if (lparam == WM_LBUTTONUP || lparam == WM_LBUTTONDBLCLK) {
+        ShowAppWindow(hwnd);
+        return 0;
+      }
+      if (lparam == WM_RBUTTONUP || lparam == WM_CONTEXTMENU) {
+        ShowTrayMenu(hwnd);
+        return 0;
+      }
+      return 0;
+
     case WM_DESTROY:
+      RemoveTrayIcon(hwnd);
       window_handle_ = nullptr;
       Destroy();
       if (quit_on_close_) {
@@ -204,6 +297,15 @@ Win32Window::MessageHandler(HWND hwnd,
         MoveWindow(child_content_, rect.left, rect.top, rect.right - rect.left,
                    rect.bottom - rect.top, TRUE);
       }
+      return 0;
+    }
+    case WM_GETMINMAXINFO: {
+      auto info = reinterpret_cast<MINMAXINFO*>(lparam);
+      const double scale_factor = GetScaleForWindow(hwnd);
+      info->ptMinTrackSize.x = Scale(kMinWindowWidth, scale_factor);
+      info->ptMinTrackSize.y = Scale(kMinWindowHeight, scale_factor);
+      info->ptMaxTrackSize.x = Scale(kMaxWindowWidth, scale_factor);
+      info->ptMaxTrackSize.y = Scale(kMaxWindowHeight, scale_factor);
       return 0;
     }
 

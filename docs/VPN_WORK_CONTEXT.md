@@ -10444,3 +10444,59 @@ Status:
 - Packaging issue from previous artifact is fixed.
 - The artifact is now suitable for first real Windows smoke test.
 - This still does not prove VPN connect works; the next step is to run it on Windows with admin rights and observe service creation/connect/disconnect behavior.
+
+## 2026-06-19 — Windows desktop smoke test fixes after first artifact run
+
+User tested `windows-release.zip` from GitHub Actions on Windows.
+Observed:
+- App window opened as a wide `mobile_app` desktop window; mobile layout stretched/cropped.
+- Windows title/explorer icon still used Flutter/default app identity.
+- Google login did not work on Windows; email login worked.
+- Device registration worked: Windows device `ca1f3ace-ceb4-4435-b029-6eeaaae33c34` appeared in backend/admin.
+- VPN connect attempts failed for AWG/HY2/VLESS from Windows artifact.
+
+Backend/node diagnostics:
+- Backend issued PL/Warsaw AWG config for user_id=1, device public key `4qhgMW+...`, vpn_ip `172.27.91.4`, server_id=10.
+- Backend sessions were started then stopped with `reason=connect_failed` for graniwg/hysteria2/vless_ws.
+- PL node has the Windows AWG peer, but `awg show wg0 dump` shows endpoint `(none)` and handshake timestamp `0` for that public key. Therefore Windows AWG failure is local runner/service startup, not backend server selection and not PL node routing.
+- Local Windows SCM had service `grani-awg` created, but stopped; System log shows `GRANI AmneziaWG Tunnel` exited with internal error `%%3`.
+
+Changes made:
+- `mobile-app/windows/runner/main.cpp`
+  - default Windows window changed from `1280x720` to `432x760`;
+  - window title changed from `mobile_app` to `GRANI`;
+  - service mode now sets current directory to exe dir before resolving/loading `tunnel.dll`;
+  - added service diagnostics into `%LOCALAPPDATA%\\GRANI\\windows-runner.log` for config read, DLL resolution/load, missing export, and tunnel return status.
+- `mobile-app/windows/runner/win32_window.cpp`
+  - added Windows resize constraints: min `360x640`, max `560x900`, DPI-scaled.
+- `mobile-app/windows/runner/Runner.rc`
+  - updated Windows resource metadata from `mobile_app` to `GRANI`.
+- `mobile-app/windows/runner/resources/app_icon.ico`
+  - replaced Flutter/default ICO with GRANI color launcher icon generated from user-provided square PNG; ICO contains 7 embedded sizes.
+- `mobile-app/lib/screens/start_screen.dart`
+  - Google sign-in button is hidden on Windows because current `google_sign_in` flow is mobile-oriented; email login remains the Windows-supported path.
+
+Verification:
+- `/opt/flutter/bin/dart format lib/screens/start_screen.dart` OK.
+- `/opt/flutter/bin/flutter analyze lib/screens/start_screen.dart --no-fatal-infos --no-fatal-warnings` completed; only pre-existing non-fatal warning/info items remain.
+
+Next Windows test after a fresh artifact build:
+- Check that titlebar/explorer icon and app title show GRANI.
+- Check initial window size and resize limits.
+- Try AWG again, then inspect `%LOCALAPPDATA%\\GRANI\\windows-runner.log` if connect fails.
+- If AWG still fails, compare `windows-runner.log` with Windows SCM event and decide whether `WireGuardTunnelService` signature/config format must be changed to match AmneziaVPN Windows service behavior.
+
+## 2026-06-19 — Windows desktop tray/shortcut and Google auth note
+
+Before rebuilding Windows artifact, added desktop-specific UX:
+- Windows app now creates a `GRANI.lnk` desktop shortcut on normal app startup if it does not already exist. This is a ZIP-artifact convenience, not a full MSI/MSIX installer yet.
+- Windows runner now adds a system tray icon using the app icon. Left click restores/shows the app. Right click opens a menu:
+  - `Показать GRANI`
+  - `Посетить сайт`
+  - `Закрыть GRANI`
+- Tray connect/disconnect was intentionally not wired yet: doing that correctly needs Dart VPN state integration, otherwise tray actions can desync from app state.
+
+Google auth on Windows:
+- Current Google sign-in is configured around Android/mobile OAuth plus backend callback. There is no dedicated Windows desktop OAuth flow/client integrated in the app yet.
+- For the Windows MVP, Google button is hidden and email auth remains the supported path.
+- Full Windows Google login would require a separate desktop/web OAuth flow and redirect handling, not only adding another credential in Google Cloud Console.

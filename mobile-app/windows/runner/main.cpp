@@ -1,8 +1,11 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
+#include <shlobj.h>
+#include <shobjidl.h>
 #include <shellapi.h>
 #include <windows.h>
 
+#include <cstring>
 #include <cstdlib>
 #include <limits>
 #include <optional>
@@ -54,6 +57,50 @@ std::wstring GetExeDir() {
     return L".";
   }
   return result.substr(0, slash);
+}
+
+std::wstring GetExePath() {
+  wchar_t path[MAX_PATH * 4];
+  const DWORD size = GetModuleFileNameW(nullptr, path, ARRAYSIZE(path));
+  return std::wstring(path, size);
+}
+
+void EnsureDesktopShortcut() {
+  PWSTR desktop_path_raw = nullptr;
+  if (FAILED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr,
+                                  &desktop_path_raw))) {
+    return;
+  }
+
+  const std::wstring shortcut_path =
+      std::wstring(desktop_path_raw) + L"\\GRANI.lnk";
+  CoTaskMemFree(desktop_path_raw);
+
+  if (FileExists(shortcut_path)) {
+    return;
+  }
+
+  IShellLinkW* shell_link = nullptr;
+  if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                              IID_IShellLinkW,
+                              reinterpret_cast<void**>(&shell_link)))) {
+    return;
+  }
+
+  const std::wstring exe_path = GetExePath();
+  shell_link->SetPath(exe_path.c_str());
+  shell_link->SetWorkingDirectory(GetExeDir().c_str());
+  shell_link->SetIconLocation(exe_path.c_str(), 0);
+  shell_link->SetDescription(L"GRANI VPN");
+
+  IPersistFile* persist_file = nullptr;
+  if (SUCCEEDED(shell_link->QueryInterface(IID_IPersistFile,
+                                           reinterpret_cast<void**>(
+                                               &persist_file)))) {
+    persist_file->Save(shortcut_path.c_str(), TRUE);
+    persist_file->Release();
+  }
+  shell_link->Release();
 }
 
 std::optional<std::wstring> ResolveTunnelDllPath() {
@@ -125,14 +172,46 @@ std::optional<int> RunAmneziaWgServiceIfRequested() {
   std::wstring tunnel_name = argv[3];
   LocalFree(argv);
 
+  SetCurrentDirectoryW(GetExeDir().c_str());
   const auto config = ReadUtf8File(config_path);
   const auto dll_path = ResolveTunnelDllPath();
   if (!config || !dll_path) {
+    // Keep service-mode diagnostics next to the generated config. Windows SCM
+    // only reports the numeric exit code, which is not enough for field tests.
+    const std::wstring log_path =
+        config_path.substr(0, config_path.find_last_of(L"\\/")) +
+        L"\\windows-runner.log";
+    HANDLE log = CreateFileW(log_path.c_str(), FILE_APPEND_DATA,
+                             FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (log != INVALID_HANDLE_VALUE) {
+      const char* message =
+          !config ? "awg-service: failed to read config\n"
+                  : "awg-service: failed to resolve tunnel.dll\n";
+      DWORD written = 0;
+      WriteFile(log, message, static_cast<DWORD>(strlen(message)), &written,
+                nullptr);
+      CloseHandle(log);
+    }
     return EXIT_FAILURE;
   }
 
   HMODULE dll = LoadLibraryW(dll_path->c_str());
   if (!dll) {
+    const std::wstring log_path =
+        config_path.substr(0, config_path.find_last_of(L"\\/")) +
+        L"\\windows-runner.log";
+    HANDLE log = CreateFileW(log_path.c_str(), FILE_APPEND_DATA,
+                             FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (log != INVALID_HANDLE_VALUE) {
+      std::string message = "awg-service: LoadLibrary tunnel.dll failed error=" +
+                            std::to_string(GetLastError()) + "\n";
+      DWORD written = 0;
+      WriteFile(log, message.data(), static_cast<DWORD>(message.size()),
+                &written, nullptr);
+      CloseHandle(log);
+    }
     return EXIT_FAILURE;
   }
 
@@ -140,12 +219,43 @@ std::optional<int> RunAmneziaWgServiceIfRequested() {
   auto service_fn = reinterpret_cast<WireGuardTunnelServiceFn>(
       GetProcAddress(dll, "WireGuardTunnelService"));
   if (!service_fn) {
+    const std::wstring log_path =
+        config_path.substr(0, config_path.find_last_of(L"\\/")) +
+        L"\\windows-runner.log";
+    HANDLE log = CreateFileW(log_path.c_str(), FILE_APPEND_DATA,
+                             FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (log != INVALID_HANDLE_VALUE) {
+      std::string message =
+          "awg-service: WireGuardTunnelService export missing error=" +
+          std::to_string(GetLastError()) + "\n";
+      DWORD written = 0;
+      WriteFile(log, message.data(), static_cast<DWORD>(message.size()),
+                &written, nullptr);
+      CloseHandle(log);
+    }
     FreeLibrary(dll);
     return EXIT_FAILURE;
   }
 
   std::wstring config_wide = Utf8ToWide(*config);
   const unsigned char ok = service_fn(config_wide.data(), tunnel_name.data());
+  {
+    const std::wstring log_path =
+        config_path.substr(0, config_path.find_last_of(L"\\/")) +
+        L"\\windows-runner.log";
+    HANDLE log = CreateFileW(log_path.c_str(), FILE_APPEND_DATA,
+                             FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (log != INVALID_HANDLE_VALUE) {
+      std::string message = std::string("awg-service: tunnel returned ") +
+                            (ok ? "success\n" : "failure\n");
+      DWORD written = 0;
+      WriteFile(log, message.data(), static_cast<DWORD>(message.size()),
+                &written, nullptr);
+      CloseHandle(log);
+    }
+  }
   FreeLibrary(dll);
   return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
@@ -167,6 +277,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // Initialize COM, so that it is available for use in the library and/or
   // plugins.
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  EnsureDesktopShortcut();
 
   flutter::DartProject project(L"data");
 
@@ -177,8 +288,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1280, 720);
-  if (!window.Create(L"mobile_app", origin, size)) {
+  Win32Window::Size size(432, 760);
+  if (!window.Create(L"GRANI", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
