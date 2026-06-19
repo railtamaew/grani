@@ -10574,3 +10574,18 @@ Fix:
   - `trustInfo xmlns=urn:schemas-microsoft-com:asm.v2`
   - `requestedPrivileges xmlns=urn:schemas-microsoft-com:asm.v3`
   - `requestedExecutionLevel level=requireAdministrator`.
+
+## 2026-06-19 — Windows admin prompt moved from manifest to runtime relaunch
+
+Desktop run `27812301338` still failed in Windows `Build Windows` after the manifest schema change.
+Decision:
+- Do not force `requireAdministrator` through `runner.exe.manifest` for now; it appears to break the Flutter Windows build pipeline in CI.
+- Reverted the manifest admin block.
+- Added runtime elevation in `windows/runner/main.cpp` for normal app startup:
+  - if process is not admin, it calls `ShellExecuteExW` with verb `runas` and exits the non-elevated copy;
+  - `/awg-service` mode is handled before this and is not affected;
+  - if UAC is denied, app can continue without elevation, but AWG connect returns explicit `WINDOWS_ADMIN_REQUIRED` from `grani_vpn_channel.cpp`.
+
+Expected Windows behavior in next artifact:
+- Double-clicking GRANI should show a UAC prompt.
+- After allowing UAC, GRANI runs elevated and can open/start the `grani-awg` Windows service.

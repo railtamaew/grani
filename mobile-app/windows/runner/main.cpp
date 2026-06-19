@@ -103,6 +103,44 @@ void EnsureDesktopShortcut() {
   shell_link->Release();
 }
 
+bool IsRunningAsAdmin() {
+  SID_IDENTIFIER_AUTHORITY nt_authority = SECURITY_NT_AUTHORITY;
+  PSID administrators_group = nullptr;
+  const BOOL allocated = AllocateAndInitializeSid(
+      &nt_authority, 2, SECURITY_BUILTIN_DOMAIN_RID,
+      DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &administrators_group);
+  if (!allocated) {
+    return false;
+  }
+
+  BOOL is_member = FALSE;
+  const BOOL ok = CheckTokenMembership(nullptr, administrators_group, &is_member);
+  FreeSid(administrators_group);
+  return ok && is_member == TRUE;
+}
+
+bool RelaunchElevatedIfNeeded() {
+  if (IsRunningAsAdmin()) {
+    return false;
+  }
+
+  SHELLEXECUTEINFOW execute_info{};
+  execute_info.cbSize = sizeof(execute_info);
+  execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
+  execute_info.lpVerb = L"runas";
+  execute_info.lpFile = GetExePath().c_str();
+  execute_info.lpDirectory = GetExeDir().c_str();
+  execute_info.nShow = SW_SHOWNORMAL;
+
+  if (!ShellExecuteExW(&execute_info)) {
+    return false;
+  }
+  if (execute_info.hProcess) {
+    CloseHandle(execute_info.hProcess);
+  }
+  return true;
+}
+
 std::optional<std::wstring> ResolveTunnelDllPath() {
   if (auto env = GetEnvPath(L"GRANI_AWG_TUNNEL_DLL")) {
     if (FileExists(*env)) {
@@ -277,6 +315,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // Initialize COM, so that it is available for use in the library and/or
   // plugins.
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  if (RelaunchElevatedIfNeeded()) {
+    ::CoUninitialize();
+    return EXIT_SUCCESS;
+  }
   EnsureDesktopShortcut();
 
   flutter::DartProject project(L"data");
