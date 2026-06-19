@@ -10563,3 +10563,14 @@ Fix prepared:
 
 Note:
 - This is acceptable for the current ZIP/MVP. A polished Windows release should later use an installer/helper service so the UI itself does not always run elevated.
+
+## 2026-06-19 — Windows manifest schema fix after failed desktop build
+
+Desktop run `27811819708` failed in Windows job at `Build Windows`; macOS job succeeded.
+Likely cause:
+- The first admin manifest used `trustInfo xmlns=urn:schemas-microsoft-com:asm.v3` directly.
+Fix:
+- Changed manifest to canonical Windows schema:
+  - `trustInfo xmlns=urn:schemas-microsoft-com:asm.v2`
+  - `requestedPrivileges xmlns=urn:schemas-microsoft-com:asm.v3`
+  - `requestedExecutionLevel level=requireAdministrator`.
