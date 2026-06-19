@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -133,6 +134,21 @@ class _StartScreenState extends State<StartScreen>
     super.dispose();
   }
 
+  double _measureTextHeight({
+    required String text,
+    required TextStyle style,
+    required double maxWidth,
+    int? maxLines,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.ltr,
+      maxLines: maxLines,
+    )..layout(maxWidth: maxWidth);
+    return painter.size.height;
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
@@ -146,6 +162,7 @@ class _StartScreenState extends State<StartScreen>
     const designHeight = 917.0;
     final scaleX = screenWidth / designWidth;
     final scaleY = screenHeight / designHeight;
+    final typeScale = math.min(scaleX, scaleY);
     // Поднимаем текстовый блок чуть выше для более воздушной композиции.
     final logoToTitleGap = GraniTheme.startScreenLogoToTitleGap * 0.72;
 
@@ -200,6 +217,10 @@ class _StartScreenState extends State<StartScreen>
                           safeAreaHorizontalPaddingRight;
                       final textBlockWidth =
                           GraniTheme.inputFieldWidth * scaleX;
+                      final titleFontSize =
+                          GraniTheme.startScreenTitleFontSize * typeScale;
+                      final subtitleFontSize =
+                          GraniTheme.startScreenSubtitleFontSize * typeScale;
                       final leftOffset = ((safeWidth - textBlockWidth) / 2)
                           .clamp(0.0, double.infinity);
                       return AuthTextBlock(
@@ -207,16 +228,10 @@ class _StartScreenState extends State<StartScreen>
                         subtitle: l10n.startSubtitle,
                         topOffset: textBlockTop,
                         leftOffset: leftOffset,
-                        titleFontSize:
-                            GraniTheme.startScreenTitleFontSize * scaleX,
-                        titleLetterSpacing:
-                            GraniTheme.startScreenTitleLetterSpacing *
-                                (scaleX.clamp(0.5, 2.0)),
-                        subtitleFontSize:
-                            GraniTheme.startScreenSubtitleFontSize * scaleX,
-                        subtitleLetterSpacing:
-                            GraniTheme.startScreenSubtitleLetterSpacing *
-                                (scaleX.clamp(0.5, 2.0)),
+                        titleFontSize: titleFontSize,
+                        titleLetterSpacing: 0,
+                        subtitleFontSize: subtitleFontSize,
+                        subtitleLetterSpacing: 0,
                         titleSubtitleGap:
                             GraniTheme.startScreenTitleSubtitleGap * scaleY,
                       );
@@ -231,14 +246,33 @@ class _StartScreenState extends State<StartScreen>
                           GraniTheme.startScreenLogoTopOffset +
                           GraniTheme.logoHeight * scaleY +
                           logoToTitleGap * scaleY;
-                      final textBlockHeight =
-                          (GraniTheme.startScreenTitleFontSize * scaleY * 0.9) +
-                              (GraniTheme.startScreenTitleSubtitleGap *
-                                  scaleY) +
-                              (GraniTheme.startScreenSubtitleFontSize *
-                                  scaleY *
-                                  0.97 *
-                                  2);
+                      final horizontalPadding =
+                          GraniTheme.startScreenHorizontalPadding * scaleX;
+                      final textBlockWidth =
+                          GraniTheme.inputFieldWidth * scaleX;
+                      final titleStyle = GraniTheme.headingLarge.copyWith(
+                        fontSize:
+                            GraniTheme.startScreenTitleFontSize * typeScale,
+                        letterSpacing: 0,
+                      );
+                      final subtitleStyle = GraniTheme.bodyLarge.copyWith(
+                        fontSize:
+                            GraniTheme.startScreenSubtitleFontSize * typeScale,
+                        letterSpacing: 0,
+                      );
+                      final titleHeight = _measureTextHeight(
+                        text: l10n.startHeadline,
+                        style: titleStyle,
+                        maxWidth: textBlockWidth,
+                      );
+                      final subtitleHeight = _measureTextHeight(
+                        text: l10n.startSubtitle,
+                        style: subtitleStyle,
+                        maxWidth: textBlockWidth,
+                      );
+                      final textBlockHeight = titleHeight +
+                          (GraniTheme.startScreenTitleSubtitleGap * scaleY) +
+                          subtitleHeight;
                       // Увеличиваем отлип от Subtitle до кнопок Google/Email
                       // (раньше использовался множитель 0.82 — делал блок слишком близко).
                       final buttonsTop = textBlockTop +
@@ -246,8 +280,6 @@ class _StartScreenState extends State<StartScreen>
                           (GraniTheme.startScreenGapSubtitleToButtons *
                               1.28 *
                               scaleY);
-                      final horizontalPadding =
-                          GraniTheme.startScreenHorizontalPadding * scaleX;
                       final emailPrimary = AppConfig.isEmailPrimaryAuth;
                       final googleSignInSupported =
                           defaultTargetPlatform != TargetPlatform.windows;
@@ -633,19 +665,20 @@ class _StartScreenState extends State<StartScreen>
     bool isLoading = false,
     bool useStartScreenStyle = false,
   }) {
+    final typeScale = math.min(scaleX, scaleY);
     final radius = useStartScreenStyle
         ? GraniTheme.radiusButtonStartScreen * scaleX
         : GraniTheme.radiusButton * scaleX;
     final textStyle = useStartScreenStyle
         ? GraniTheme.buttonTextStartScreen.copyWith(
-            fontSize: GraniTheme.buttonTextStartScreen.fontSize! * scaleX,
+            fontSize: GraniTheme.buttonTextStartScreen.fontSize! * typeScale,
             letterSpacing: 0.06 *
                 (GraniTheme.buttonTextStartScreen.fontSize ?? 22) *
-                scaleX,
+                typeScale,
           )
         : GraniTheme.buttonTextSecondary.copyWith(
-            fontSize: 20 * scaleX,
-            letterSpacing: 0.06 * 20 * scaleX,
+            fontSize: 20 * typeScale,
+            letterSpacing: 0.06 * 20 * typeScale,
           );
     final loadingIconSize = GraniTheme.buttonIconSize;
     return AnimatedBuilder(

@@ -10500,3 +10500,33 @@ Google auth on Windows:
 - Current Google sign-in is configured around Android/mobile OAuth plus backend callback. There is no dedicated Windows desktop OAuth flow/client integrated in the app yet.
 - For the Windows MVP, Google button is hidden and email auth remains the supported path.
 - Full Windows Google login would require a separate desktop/web OAuth flow and redirect handling, not only adding another credential in Google Cloud Console.
+
+## 2026-06-19 — Windows desktop artifact after tray/shortcut commit
+
+Commit pushed:
+- `54294b9 Improve Windows desktop shell`
+
+GitHub Actions after push:
+- `Desktop Build (Windows + macOS)` run `27809884667` completed successfully.
+- Jobs: `windows` success, `macos` success.
+- Artifacts:
+  - `windows-release`, artifact id `7743366683`, size `26340267` bytes.
+  - `macos-release`, artifact id `7743377051`, size `404280350` bytes.
+
+Important distinction:
+- A separate `Mobile App` workflow was also triggered by the same push and failed in its test job. That red run does not block the Windows desktop artifact. For Windows testing use the green `Desktop Build (Windows + macOS)` run, not the failed `Mobile App` run.
+
+## 2026-06-19 — Start screen compact-window text overlap fix
+
+User tested the new Windows artifact and found the start screen headline/subtitle/button area overlapping in the compact desktop window.
+Root cause:
+- `start_screen.dart` used manual estimated text block height. The estimate assumed a near-single-line title, but the RU headline wraps to two lines in the Windows-sized window, so buttons were positioned too high.
+
+Fix:
+- `start_screen.dart` now scales auth/start typography by the smaller of width/height scale, not width only.
+- The start screen button position now uses `TextPainter` to measure the real rendered headline and subtitle heights before placing buttons.
+- Start screen title/subtitle letter spacing is set to 0 for this adaptive layout pass to avoid extra wrapping pressure.
+- Button text also uses compact typography scale so it shrinks before colliding/clipping.
+
+General UI rule recorded:
+- For all GRANI screens, text must shrink/wrap within its container and layout blocks must be positioned from real constraints/measurements. Elements must not overlap each other when the app window/viewport is compact.
