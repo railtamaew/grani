@@ -659,6 +659,13 @@ class SimpleVpnController extends ChangeNotifier {
     await _cacheService.remove(_activeSessionCacheKey);
   }
 
+  Future<Map<String, dynamic>> _desktopVpnDiagnosticsForLogs() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) {
+      return <String, dynamic>{};
+    }
+    return NativeVpnService.getDesktopVpnDiagnostics();
+  }
+
   Future<int?> _readSelectedServerId() async {
     final cached =
         (await _cacheService.getString(_selectedServerCacheKey))?.trim();
@@ -1205,6 +1212,7 @@ class SimpleVpnController extends ChangeNotifier {
 
       _setConnectionProgress('Проверяем защищенный трафик...', percent: 92);
       _throwIfConnectCancelled(attemptId);
+      final desktopDiagnostics = await _desktopVpnDiagnosticsForLogs();
       unawaited(_api.log(
         event: 'native_start_ok',
         sessionId: sessionId,
@@ -1218,6 +1226,8 @@ class SimpleVpnController extends ChangeNotifier {
           'config_type': config.configType,
           'config_from_cache': configFromCache,
           'source': source,
+          if (desktopDiagnostics.isNotEmpty)
+            'desktop_vpn_diagnostics': desktopDiagnostics,
         },
       ));
       _rememberConnectedConfig(
@@ -1273,12 +1283,18 @@ class SimpleVpnController extends ChangeNotifier {
         _setState(SimpleVpnState.disconnected);
         return;
       }
+      final desktopDiagnostics = await _desktopVpnDiagnosticsForLogs();
       await _api.log(
         event: 'connect_failed',
         level: 'error',
         sessionId: sessionId,
         deviceId: deviceId,
-        details: <String, dynamic>{'error': _error, 'source': source},
+        details: <String, dynamic>{
+          'error': _error,
+          'source': source,
+          if (desktopDiagnostics.isNotEmpty)
+            'desktop_vpn_diagnostics': desktopDiagnostics,
+        },
       );
       _setState(SimpleVpnState.error);
     } finally {
