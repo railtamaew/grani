@@ -10370,3 +10370,29 @@ Reason for minimal fix:
 - Avoids a broad Firebase/Google Sign-In package upgrade during Windows/macOS platform bring-up.
 - Keeps Android/mobile dependency behavior otherwise unchanged.
 - Later, when we intentionally upgrade Firebase to the current major versions, remove this override and test OAuth/push flows again.
+## 2026-06-19 07:32 MSK - Desktop CI is green
+
+GitHub Actions:
+- Workflow: `Desktop Build (Windows + macOS)`
+- Run: `Pin Google Sign-In iOS for macOS pods #12`
+- Commit: `498dc68`
+- Result: success.
+- Jobs:
+  - `windows`: passed.
+  - `macos`: passed.
+- Artifacts: 2 (`windows-release`, `macos-release`).
+
+What this confirms:
+- Windows Flutter desktop build compiles in GitHub Actions.
+- Windows AmneziaWG service-runner path compiles.
+- macOS Flutter desktop build compiles in GitHub Actions.
+- The CocoaPods conflict between Firebase SDK `10.25.x` and `GoogleSignIn 8.x` was resolved by pinning `google_sign_in_ios` to `5.8.0`.
+
+Current warnings:
+- GitHub shows Node.js 20 deprecation warnings for `actions/checkout@v4` and `actions/upload-artifact@v4`.
+- These warnings are not blocking; CI still succeeds. Handle later by upgrading Actions versions when upstream releases are available or when GitHub requires it.
+
+Recommended next step:
+- Download `windows-release` artifact and smoke-test it on a real Windows machine.
+- For the Windows VPN path specifically, verify launch, admin/service creation, AmneziaWG `tunnel.dll` presence, connect/disconnect, and logs.
+- Packaging/signing can come after the raw release artifact starts and performs the basic VPN flow.
