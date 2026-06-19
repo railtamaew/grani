@@ -15,7 +15,7 @@ object NativeVpnRuntimeState {
     private const val KEY_NATIVE_EXPECTED_UP = "native_vpn_expected_up"
     private const val KEY_NATIVE_EXPECTED_UP_AT = "native_vpn_expected_up_at"
     private const val KEY_NATIVE_EXPECTED_PROTOCOL = "native_vpn_expected_protocol"
-    private const val EXPECTED_UP_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000
+    private const val EXPECTED_UP_GRACE_MS = 90_000L
 
     fun markAwgExpectedUp(context: Context, expected: Boolean) {
         val app = context.applicationContext
@@ -48,6 +48,7 @@ object NativeVpnRuntimeState {
     fun isAwgExpectedUp(context: Context): Boolean {
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(KEY_AWG_EXPECTED_UP, false)) return false
+        if (!isExpectedFresh(prefs.getLong(KEY_AWG_EXPECTED_UP_AT, 0L))) return false
         return prefs.getString(KEY_LAST_PROTOCOL, null)?.equals("graniwg", ignoreCase = true) == true
     }
 
@@ -60,13 +61,16 @@ object NativeVpnRuntimeState {
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(KEY_NATIVE_EXPECTED_UP, false)) return false
         val expectedAt = prefs.getLong(KEY_NATIVE_EXPECTED_UP_AT, 0L)
-        if (expectedAt > 0L && System.currentTimeMillis() - expectedAt > EXPECTED_UP_MAX_AGE_MS) {
-            return false
-        }
+        if (!isExpectedFresh(expectedAt)) return false
         val expectedProtocol = prefs.getString(KEY_NATIVE_EXPECTED_PROTOCOL, null)
         val lastProtocol = prefs.getString(KEY_LAST_PROTOCOL, null)
         val protocol = expectedProtocol ?: lastProtocol
         return !isAwgProtocol(protocol)
+    }
+
+    private fun isExpectedFresh(expectedAt: Long): Boolean {
+        if (expectedAt <= 0L) return false
+        return System.currentTimeMillis() - expectedAt <= EXPECTED_UP_GRACE_MS
     }
 
     fun isSystemVpnActive(context: Context): Boolean {

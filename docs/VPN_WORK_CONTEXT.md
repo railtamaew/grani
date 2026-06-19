@@ -10722,3 +10722,94 @@ Verification:
 Next Android test after APK build:
 - Repeat VLESS PL quick tile scenario: app connect, YouTube, quick tile disconnect, quick tile connect while app closed/backgrounded, open/close app, quick tile disconnect.
 - Expected improvement: GRANI notification/tile should not turn off before the native tunnel is really stopped; cached tile connect should start from a cleaner runtime instead of old closed UDP pipes.
+
+## 2026-06-19 — Desktop VPN diagnostics artifact ready
+
+Continued Windows/macOS desktop work after fresh context review.
+
+Changes:
+- Added Windows native MethodChannel method `getDesktopVpnDiagnostics` in `windows/runner/grani_vpn_channel.cpp`.
+- Windows diagnostics snapshot returns non-secret local state: admin/elevated flag, generated config path/existence, runner log path/existence/tail, bundled `tunnel.dll`/`awg-quick` presence, and `grani-awg` service state/code.
+- Windows `StartTunnelService()` timeout error now includes service state and tail of `%LOCALAPPDATA%\\GRANI\\windows-runner.log`, so backend/client `connect_failed` logs should contain useful local failure context.
+- Dart `NativeVpnService.connectAmneziaWg()` now appends Windows diagnostics to thrown `VpnException` on Windows PlatformException.
+- Added explicit `MacOSSimpleVpnRuntime`: macOS build is still UI/auth smoke-test only and now reports a clear message that native GRANIwg runner is not wired yet, instead of falling through to the generic unsupported runtime.
+
+Checks:
+- `/opt/flutter/bin/dart format lib/services/native_vpn_service.dart lib/simple_vpn/simple_vpn_controller.dart` — OK.
+- `/opt/flutter/bin/flutter analyze lib/services/native_vpn_service.dart lib/simple_vpn/simple_vpn_controller.dart --no-fatal-infos --no-fatal-warnings` — exit 0; only existing `use_super_parameters` info in `native_vpn_service.dart`.
+- `git diff --check` on changed desktop files — OK.
+
+Commit/push:
+- Commit `8e128a2 Add desktop VPN diagnostics` pushed to `main`.
+- GitHub Actions `Desktop Build (Windows + macOS)` run `27824370451` completed successfully.
+- Artifacts:
+  - `windows-release`, artifact id `7749247655`, size `26346699` bytes.
+  - `macos-release`, artifact id `7749237804`, size `404281057` bytes.
+- Parallel `Mobile App` workflow failed as before; it is unrelated to desktop artifact readiness.
+
+Next Windows test:
+- Use `windows-release` from run `27824370451`.
+- Try PL/Warsaw + WireGuard obf again.
+- If it fails, backend `connect_failed` should now include Windows diagnostics. Also local tester can still inspect `%LOCALAPPDATA%\\GRANI\\windows-runner.log` and `Get-Service grani-awg`.
+
+Next macOS note:
+- macOS artifact is build/smoke-test only for UI/auth. Native macOS GRANIwg runner still needs a separate implementation/entitlements/helper strategy.
+
+## 2026-06-19 — Android common VPN runtime coordinator for app/tile state
+
+Implemented a shared Android native coordination layer so main UI, MethodChannel disconnects, Quick Tile, and permission relay do not use separate protocol-specific start/stop paths.
+
+Changes:
+- Added `VpnRuntimeCoordinator.kt`.
+  - `connect()` clears the intentional-stop flag, performs a GRANI-owned runtime cleanup before a new start, then dispatches to AWG or native VLESS/HY2 service.
+  - `disconnect()` stops AWG and/or native service through one path, marks GRANI ownership flags down, waits briefly for teardown, and schedules delayed Quick Tile refreshes.
+  - This is deliberately protocol/server-agnostic: it works by runtime ownership, not by individual server special cases.
+- `QuickTileService.kt` and `QuickTileToggleActivity.kt` now call `VpnRuntimeCoordinator` for cached reconnect and disconnect instead of manually branching by protocol.
+- `VpnPlugin.kt` now routes app-side AWG start, native VLESS/HY2 start, `disconnect`, and `disconnectAmneziaWg` through the same coordinator.
+- `NativeVpnRuntimeState.kt` no longer treats `expected_up + any Android VPN` as valid for 7 days.
+  - The fallback is now only a short 90s grace window for startup/teardown races.
+  - This prevents GRANI UI/tile from treating a third-party VPN (v2rayTun/AmneziaVPN) as a GRANI-owned tunnel after stale state.
+- `SimpleAmneziaWgRunner.kt` now explicitly marks AWG expected-up on successful UP and clears it on disconnect, while preserving the existing Quick Tile refresh behavior.
+
+Why:
+- User's Android VLESS Quick Tile test showed GRANI notification, Android VPN key, Quick Tile, app UI, and actual YouTube traffic disagreeing after app open/close and tile toggles.
+- Root class was not server/protocol-specific; it was multiple control paths updating state at different times.
+- New rule: GRANI connected/off state must be derived from GRANI-owned native service/AWG runner plus a short transition grace, not from generic Android VPN presence alone.
+
+Verification:
+- Ran `cd /opt/grani/mobile-app/android && ./gradlew :app:compileDebugKotlin`.
+- Result: BUILD SUCCESSFUL.
+- Only existing Kotlin warnings remained (`allNetworks` deprecation and existing XrayConfigParser/XrayNativeWrapper nullability warnings).
+
+No APK/AAB build was performed in this step.
+
+Next Android test after APK build:
+- Fresh install/update, login, select PL + VLESS WS.
+- App connect, open YouTube, background YouTube.
+- Quick Tile disconnect: Android VPN key, GRANI notification, tile, and app UI should all go off together after teardown.
+- Quick Tile connect while app is closed/backgrounded: should start the same cached server/protocol.
+- Open and close GRANI: notification must not disappear while the GRANI tunnel is truly active.
+- With v2rayTun/AmneziaVPN active and GRANI off: GRANI main button/tile must remain off after the 90s transition grace, because third-party VPN is not GRANI-owned.
+
+## 2026-06-19 — Windows diagnostics also logged on native start/connect failure
+
+Follow-up desktop diagnostics improvement:
+- `SimpleVpnController` now reads `NativeVpnService.getDesktopVpnDiagnostics()` on Windows and attaches it to backend `client_logs` details for:
+  - `native_start_ok` — useful if Windows service starts but node still sees no endpoint/handshake;
+  - `connect_failed` — useful when native start or later connect path fails.
+- This keeps the local diagnostic snapshot available in admin/backend logs, not only in the local `%LOCALAPPDATA%\\GRANI\\windows-runner.log` file.
+
+Checks:
+- `/opt/flutter/bin/dart format lib/simple_vpn/simple_vpn_controller.dart` — OK.
+- `/opt/flutter/bin/flutter analyze lib/services/native_vpn_service.dart lib/simple_vpn/simple_vpn_controller.dart --no-fatal-infos --no-fatal-warnings` — exit 0; only existing `use_super_parameters` info in `native_vpn_service.dart`.
+- `git diff --check` on changed files — OK.
+
+Commit/push:
+- Commit `61c560a Log Windows VPN diagnostics` pushed to `main`.
+- GitHub Actions `Desktop Build (Windows + macOS)` run `27824835288` completed successfully.
+- Artifacts:
+  - `windows-release`, artifact id `7749424620`, size `26349176` bytes.
+  - `macos-release`, artifact id `7749462701`, size `404318300` bytes.
+- Parallel `Mobile App` workflow failed as before and is unrelated to desktop artifacts.
+
+Use this latest `windows-release` artifact for the next PL/Warsaw + WireGuard obf Windows test. If it fails, check admin/client logs for `desktop_vpn_diagnostics` in `native_start_ok` or `connect_failed`.

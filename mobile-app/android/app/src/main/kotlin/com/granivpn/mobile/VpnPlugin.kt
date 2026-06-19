@@ -386,9 +386,16 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
             "disconnectAmneziaWg" -> {
                 Thread {
                     val ctx = appContext ?: activity?.applicationContext
-                    SimpleAmneziaWgRunner.disconnect(ctx)
-                    cleanupStaleAmneziaWgNotification()
-                    mainHandler.post { result.success(true) }
+                    if (ctx == null) {
+                        mainHandler.post { result.error("ACTIVITY_NULL", "Context недоступен", null) }
+                    } else {
+                        val down = VpnRuntimeCoordinator.disconnect(
+                            ctx,
+                            source = "flutter_disconnect_amneziawg",
+                            reason = "user",
+                        )
+                        mainHandler.post { result.success(down) }
+                    }
                 }.start()
             }
             "disconnect" -> {
@@ -762,8 +769,15 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
         Thread {
             try {
                 Log.i(TAG, "startAmneziaWgConnection: source=$source session=${connectionSessionId ?: "null"}")
-                val state = SimpleAmneziaWgRunner.connect(ctx, config)
-                val isUp = state == org.amnezia.awg.backend.Tunnel.State.UP
+                val connectResult = VpnRuntimeCoordinator.connect(
+                    ctx,
+                    config,
+                    "graniwg",
+                    0,
+                    source = source,
+                    connectionSessionId = connectionSessionId,
+                )
+                val isUp = connectResult.started
                 if (isUp) {
                     saveLastConfig(ctx, config, "graniwg", 0)
                     Log.i(TAG, "startAmneziaWgConnection: cached last GRANIwg config for quick tile")
@@ -863,7 +877,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                 return
             }
 
-            GraniVpnService.startService(
+            VpnRuntimeCoordinator.connect(
                 act.applicationContext,
                 config,
                 protocol,
@@ -964,14 +978,23 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                 TAG,
                 "disconnectVpn: source=${source ?: "unknown"} reason=${reason ?: "unspecified"} session=${connectionSessionId ?: "null"}",
             )
-            GraniVpnService.stopService(
-                context = act.applicationContext,
-                source = source ?: "flutter_method_channel",
-                reason = reason ?: "unspecified",
-                connectionSessionId = connectionSessionId,
-            )
-            // Не очищаем lastConfig — позволяет Quick Tile reconnect без открытия приложения
-            result.success(true)
+            Thread {
+                try {
+                    val down = VpnRuntimeCoordinator.disconnect(
+                        act.applicationContext,
+                        source = source ?: "flutter_method_channel",
+                        reason = reason ?: "unspecified",
+                        connectionSessionId = connectionSessionId,
+                    )
+                    // Не очищаем lastConfig — позволяет Quick Tile reconnect без открытия приложения
+                    mainHandler.post { result.success(down) }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Ошибка отключения VPN: ${e.message}", e)
+                    mainHandler.post {
+                        result.error("VPN_ERROR", "Ошибка отключения VPN: ${e.message}", null)
+                    }
+                }
+            }.start()
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка отключения VPN: ${e.message}", e)
             result.error("VPN_ERROR", "Ошибка отключения VPN: ${e.message}", null)

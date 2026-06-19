@@ -47,25 +47,15 @@ class QuickTileToggleActivity : AppCompatActivity() {
             return
         }
 
-        try {
-            getSharedPreferences("grani_vpn_reconnect", Context.MODE_PRIVATE)
-                .edit()
-                .putBoolean("vpn_intentionally_stopped", false)
-                .apply()
-        } catch (_: Exception) {}
         Thread {
             try {
-                if (lastConfig.protocol == "graniwg") {
-                    SimpleAmneziaWgRunner.connect(applicationContext, lastConfig.config)
-                } else {
-                    GraniVpnService.startService(
-                        applicationContext,
-                        lastConfig.config,
-                        lastConfig.protocol,
-                        lastConfig.mtu,
-                        source = "quick_tile_cached"
-                    )
-                }
+                VpnRuntimeCoordinator.connect(
+                    applicationContext,
+                    lastConfig.config,
+                    lastConfig.protocol,
+                    lastConfig.mtu,
+                    source = "quick_tile_cached",
+                )
             } finally {
                 QuickTileService.notifyVpnStateChanged(applicationContext)
             }

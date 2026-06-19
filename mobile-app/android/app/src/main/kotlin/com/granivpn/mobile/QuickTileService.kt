@@ -167,16 +167,11 @@ class QuickTileService : TileService() {
             Log.i(TAG, "quick_tile_click: disconnect in native background")
             Thread {
                 try {
-                    if (NativeVpnRuntimeState.isAwgLikelyActive(applicationContext)) {
-                        SimpleAmneziaWgRunner.disconnect(applicationContext)
-                    }
-                    if (NativeVpnRuntimeState.isNativeVpnLikelyActive(applicationContext)) {
-                        GraniVpnService.stopService(
-                            applicationContext,
-                            source = "quick_tile",
-                            reason = "user",
-                        )
-                    }
+                    VpnRuntimeCoordinator.disconnect(
+                        applicationContext,
+                        source = "quick_tile",
+                        reason = "user",
+                    )
                 } catch (e: Exception) {
                     Log.w(TAG, "quick_tile_disconnect_failed", e)
                 } finally {
@@ -219,25 +214,15 @@ class QuickTileService : TileService() {
     }
 
     private fun startCachedConfig(config: String, protocol: String?, mtu: Int) {
-        clearIntentionallyStopped()
         Thread {
             try {
-                if (protocol == "graniwg") {
-                    SimpleAmneziaWgRunner.connect(applicationContext, config)
-                } else {
-                    GraniVpnService.forceStopIfRunning(
-                        applicationContext,
-                        source = "quick_tile_cached_pre_start",
-                        reason = "clean_runtime_before_cached_start",
-                    )
-                    GraniVpnService.startService(
-                        applicationContext,
-                        config,
-                        protocol,
-                        mtu,
-                        source = "quick_tile_cached"
-                    )
-                }
+                VpnRuntimeCoordinator.connect(
+                    applicationContext,
+                    config,
+                    protocol,
+                    mtu,
+                    source = "quick_tile_cached",
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "quick_tile_connect_failed", e)
                 mainHandler.post {
@@ -270,15 +255,6 @@ class QuickTileService : TileService() {
         tile.state = if (running) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.icon = if (running) iconOn else iconOff
         tile.updateTile()
-    }
-
-    private fun clearIntentionallyStopped() {
-        try {
-            getSharedPreferences("grani_vpn_reconnect", Context.MODE_PRIVATE)
-                .edit()
-                .putBoolean("vpn_intentionally_stopped", false)
-                .apply()
-        } catch (_: Exception) {}
     }
 
     private fun openMainActivity(
