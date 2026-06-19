@@ -10635,3 +10635,26 @@ Use this artifact for the next Windows test. It includes:
 - non-corrupted localized tray labels using Windows UI language;
 - close button hides GRANI to tray instead of quitting;
 - tray menu has explicit Выйти из GRANI / Quit GRANI for real process exit.
+
+## 2026-06-19 — Windows AWG connect failure: service started but tunnel did not stay running
+
+User tested the latest Windows artifact: UI hung at `Идет подключение...`, window showed `Не отвечает`, then connection failed.
+New diagnostics after UAC/runtime-service fixes:
+- `%LOCALAPPDATA%\\GRANI\\windows-runner.log` now exists and contains repeated `awg-service: tunnel returned success`.
+- Local Windows service `grani-awg` exists but is `Stopped` after the attempt.
+- PL node still shows Windows peer `172.27.91.5/32` endpoint `(none)`, handshake `0`, rx/tx `0`.
+- Backend shows session starts followed by `connect_failed`; the PL node never receives packets from the Windows peer.
+
+Root cause found in Windows runner:
+- `main.cpp` service mode called exported `WireGuardTunnelService(...)` with the text content of the config file as the first argument.
+- WireGuard/AmneziaWG Windows service runtime expects a config file path, not config contents. Passing contents made the service return immediately without keeping the tunnel/interface running.
+
+Fix prepared:
+- `RunAmneziaWgServiceIfRequested()` now verifies that the config file exists and passes `config_path.c_str()` into `WireGuardTunnelService(...)`.
+- Removed now-unused UTF-8 config file reader and conversion helper from `main.cpp`.
+- Service log now includes `last_error` with the returned status.
+
+Expected next test behavior:
+- On successful connect, `grani-awg` should remain `Running`.
+- `windows-runner.log` should not immediately append `tunnel returned success` during an active tunnel; that line should appear only after service exits.
+- PL node should show endpoint and handshake for peer `Q2E4dZE...` / `172.27.91.5/32`.

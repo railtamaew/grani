@@ -7,7 +7,6 @@
 
 #include <cstring>
 #include <cstdlib>
-#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -16,22 +15,6 @@
 #include "utils.h"
 
 namespace {
-
-std::wstring Utf8ToWide(const std::string& value) {
-  if (value.empty()) {
-    return L"";
-  }
-  const int size = MultiByteToWideChar(CP_UTF8, 0, value.c_str(),
-                                       static_cast<int>(value.size()), nullptr,
-                                       0);
-  if (size <= 0) {
-    return L"";
-  }
-  std::wstring result(size, L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, value.c_str(),
-                      static_cast<int>(value.size()), result.data(), size);
-  return result;
-}
 
 std::optional<std::wstring> GetEnvPath(const wchar_t* name) {
   wchar_t buffer[MAX_PATH * 4];
@@ -162,36 +145,6 @@ std::optional<std::wstring> ResolveTunnelDllPath() {
   return std::nullopt;
 }
 
-std::optional<std::string> ReadUtf8File(const std::wstring& path) {
-  HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
-                            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
-                            nullptr);
-  if (file == INVALID_HANDLE_VALUE) {
-    return std::nullopt;
-  }
-
-  LARGE_INTEGER file_size{};
-  if (!GetFileSizeEx(file, &file_size) || file_size.QuadPart < 0 ||
-      file_size.QuadPart >
-          static_cast<LONGLONG>(std::numeric_limits<DWORD>::max())) {
-    CloseHandle(file);
-    return std::nullopt;
-  }
-
-  std::string content(static_cast<size_t>(file_size.QuadPart), '\0');
-  DWORD bytes_read = 0;
-  const BOOL ok =
-      content.empty() ||
-      ::ReadFile(file, content.data(), static_cast<DWORD>(content.size()),
-                 &bytes_read, nullptr);
-  CloseHandle(file);
-
-  if (!ok || static_cast<size_t>(bytes_read) != content.size()) {
-    return std::nullopt;
-  }
-  return content;
-}
-
 std::optional<int> RunAmneziaWgServiceIfRequested() {
   int argc = 0;
   LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -211,9 +164,8 @@ std::optional<int> RunAmneziaWgServiceIfRequested() {
   LocalFree(argv);
 
   SetCurrentDirectoryW(GetExeDir().c_str());
-  const auto config = ReadUtf8File(config_path);
   const auto dll_path = ResolveTunnelDllPath();
-  if (!config || !dll_path) {
+  if (!FileExists(config_path) || !dll_path) {
     // Keep service-mode diagnostics next to the generated config. Windows SCM
     // only reports the numeric exit code, which is not enough for field tests.
     const std::wstring log_path =
@@ -224,8 +176,9 @@ std::optional<int> RunAmneziaWgServiceIfRequested() {
                              FILE_ATTRIBUTE_NORMAL, nullptr);
     if (log != INVALID_HANDLE_VALUE) {
       const char* message =
-          !config ? "awg-service: failed to read config\n"
-                  : "awg-service: failed to resolve tunnel.dll\n";
+          !FileExists(config_path)
+              ? "awg-service: config file does not exist\n"
+              : "awg-service: failed to resolve tunnel.dll\n";
       DWORD written = 0;
       WriteFile(log, message, static_cast<DWORD>(strlen(message)), &written,
                 nullptr);
@@ -276,8 +229,9 @@ std::optional<int> RunAmneziaWgServiceIfRequested() {
     return EXIT_FAILURE;
   }
 
-  std::wstring config_wide = Utf8ToWide(*config);
-  const unsigned char ok = service_fn(config_wide.data(), tunnel_name.data());
+  const unsigned char ok =
+      service_fn(const_cast<wchar_t*>(config_path.c_str()),
+                 tunnel_name.data());
   {
     const std::wstring log_path =
         config_path.substr(0, config_path.find_last_of(L"\\/")) +
@@ -287,7 +241,9 @@ std::optional<int> RunAmneziaWgServiceIfRequested() {
                              FILE_ATTRIBUTE_NORMAL, nullptr);
     if (log != INVALID_HANDLE_VALUE) {
       std::string message = std::string("awg-service: tunnel returned ") +
-                            (ok ? "success\n" : "failure\n");
+                            (ok ? "success" : "failure") +
+                            " last_error=" + std::to_string(GetLastError()) +
+                            "\n";
       DWORD written = 0;
       WriteFile(log, message.data(), static_cast<DWORD>(message.size()),
                 &written, nullptr);
