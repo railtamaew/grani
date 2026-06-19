@@ -396,12 +396,12 @@ std::optional<std::string> StartTunnelService() {
     return error;
   }
 
-  const bool running = WaitForServiceState(service, SERVICE_RUNNING, 30000);
+  const bool running = WaitForServiceState(service, SERVICE_RUNNING, 6000);
   CloseServiceHandle(service);
   CloseServiceHandle(manager);
   if (!running) {
     std::ostringstream message;
-    message << "Timed out waiting for GRANI AmneziaWG service to start; "
+    message << "Timed out waiting 6s for GRANI AmneziaWG service to start; "
             << "service_state=" << ServiceStateName(QueryTunnelServiceState())
             << "; runner_log_tail=" << ReadTailUtf8File(GetRunnerLogPath(), 1200);
     return message.str();
