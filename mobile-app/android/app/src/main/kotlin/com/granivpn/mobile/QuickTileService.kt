@@ -225,6 +225,11 @@ class QuickTileService : TileService() {
                 if (protocol == "graniwg") {
                     SimpleAmneziaWgRunner.connect(applicationContext, config)
                 } else {
+                    GraniVpnService.forceStopIfRunning(
+                        applicationContext,
+                        source = "quick_tile_cached_pre_start",
+                        reason = "clean_runtime_before_cached_start",
+                    )
                     GraniVpnService.startService(
                         applicationContext,
                         config,

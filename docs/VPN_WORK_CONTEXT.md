@@ -10672,3 +10672,53 @@ GitHub Actions:
   - `macos-release`, artifact id `7745963417`, size `404307242` bytes.
 
 Use this exact `windows-release` for the next Windows AWG test. It should pass the config file path to `tunnel.dll` instead of config contents.
+
+## 2026-06-19 — Windows AWG retest after config-path artifact still fails before node handshake
+
+User retested the latest Windows artifact after the service config-path fix and reported that connection still failed / hung at connecting.
+Server-side check:
+- Backend for Windows device 8ecc82be-9924-420d-9b25-a9037407a3e3 shows repeated session/start for server_id=10 protocol=graniwg, config issued for cached peer Q2E4dZE... vpn_ip=172.27.91.5, then session stop reason=connect_failed.
+- PL/Warsaw node wg0 remains healthy for other peers, but the Windows peer Q2E4dZE... / 172.27.91.5/32 still has endpoint (none), handshake 0, rx/tx 0.
+Conclusion:
+- The failure is still before node-side AWG traffic. The server never sees packets from the Windows client peer.
+- The next useful Windows diagnostic would be local-only: %LOCALAPPDATA%\\GRANI\\windows-runner.log, Get-Service grani-awg, and whether the latest artifact actually relaunches with UAC/elevated rights.
+Decision:
+- Pause Windows debugging for now as requested and move to Android testing/quick tile diagnostics.
+
+## 2026-06-19 — Android quick tile / own-VPN diagnostic focus
+
+Next Android focus after quick tile correction:
+- Quick tile and main connect button must rely only on GRANI-owned tunnel state, not generic Android VPN presence from another app such as v2rayTun/AmneziaVPN.
+- Test states: no VPN, third-party VPN active, GRANI VLESS active, GRANI HY2 active, GRANI WireGuard obf active, subscription expired/no active subscription, app killed/reopened, tile pressed while app is closed.
+- Expected behavior: tile shows active only for GRANI tunnel; main button shows connected only for GRANI tunnel; stale GRANI notifications disappear when GRANI tunnel is down; pressing tile from off starts the same saved protocol/server as app would use; pressing tile from on disconnects GRANI only.
+
+## 2026-06-19 — Android VLESS quick tile state desync diagnostic and runtime fix
+
+User tested Android after clearing cache/login with PL + VLESS WS.
+Observed by user:
+- First app connect attempt errored, second attempt connected.
+- VLESS worked: Android VPN key shown, GRANI quick tile active, YouTube worked, backgrounding YouTube was OK.
+- Disconnect from quick tile initially looked OK.
+- Connect from quick tile while app was backgrounded worked.
+- After opening/closing GRANI, GRANI notification disappeared while Android VPN key remained and traffic still worked.
+- Next quick tile disconnect made tile grey, but Android VPN key remained; app showed disconnected while YouTube still worked.
+- Further quick tile toggles produced inconsistent state: notification/tile/UI/system VPN disagreed and YouTube sometimes stalled.
+
+Log findings:
+- VLESS really reached LOCAL_UP, DATAPLANE_VERIFIED and COMMITTED; traffic was logged.
+- After quick_tile disconnect, GraniVpnService immediately set native_expected_up=false and serviceState=IDLE, but Xray/tun2socks continued producing UDP events including repeated read/write on closed pipe.
+- This means UI/tile/notification state was being cleared before the Android TUN/libXray/tun2socks teardown was fully settled.
+
+Fix applied:
+- QuickTileService now calls GraniVpnService.forceStopIfRunning(...) before starting cached non-AWG configs from tile, so a stale native runtime gets a cleanup window before a new VLESS/HY2 start.
+- GraniVpnService.forceStopIfRunning(...) sends STOP and waits up to 2.6s until NativeVpnRuntimeState is no longer likely active.
+- GraniVpnService.stopVpn() no longer clears native_expected_up before adapter.stop()/TUN close wait; it clears it after adapter stop/wait and again in finally for safety.
+- stopVpn() now schedules delayed quick tile refreshes at 700ms and 2200ms after stop to reduce stale tile state after Android finishes closing the VPN interface.
+
+Verification:
+- Ran: cd /opt/grani/mobile-app/android && ./gradlew :app:compileDebugKotlin
+- Result: BUILD SUCCESSFUL. Only existing unrelated warnings.
+
+Next Android test after APK build:
+- Repeat VLESS PL quick tile scenario: app connect, YouTube, quick tile disconnect, quick tile connect while app closed/backgrounded, open/close app, quick tile disconnect.
+- Expected improvement: GRANI notification/tile should not turn off before the native tunnel is really stopped; cached tile connect should start from a cleaner runtime instead of old closed UDP pipes.

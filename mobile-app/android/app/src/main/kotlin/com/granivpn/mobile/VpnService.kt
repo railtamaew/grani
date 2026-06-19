@@ -160,6 +160,18 @@ class GraniVpnService : android.net.VpnService() {
             context.startService(intent)
         }
 
+        fun forceStopIfRunning(context: Context, source: String, reason: String) {
+            if (!NativeVpnRuntimeState.isNativeVpnLikelyActive(context.applicationContext)) return
+            stopService(context.applicationContext, source = source, reason = reason)
+            val deadline = SystemClock.elapsedRealtime() + 2600L
+            while (
+                NativeVpnRuntimeState.isNativeVpnLikelyActive(context.applicationContext) &&
+                SystemClock.elapsedRealtime() < deadline
+            ) {
+                Thread.sleep(100L)
+            }
+        }
+
         /** Применить DNS/split routing из prefs через libXray без перезапуска туннеля. */
         fun requestApplyRoutingHotSwap(context: Context) {
             val intent = Intent(context, GraniVpnService::class.java).apply {
@@ -700,12 +712,8 @@ class GraniVpnService : android.net.VpnService() {
         if (finalState != ServiceState.ERROR) {
             orderedStopInProgress.set(true)
         }
+        val protocolForRuntimeState = expectedNativeProtocolLabel()
         try {
-            NativeVpnRuntimeState.markNativeVpnExpectedUp(
-                applicationContext,
-                false,
-                expectedNativeProtocolLabel(),
-            )
             setServiceState(ServiceState.DISCONNECTING)
             isRunning = false
             lastStartError = null
@@ -719,6 +727,11 @@ class GraniVpnService : android.net.VpnService() {
                 adapter.stop()
             }
             waitForTunClosedBeforeForegroundRemove()
+            NativeVpnRuntimeState.markNativeVpnExpectedUp(
+                applicationContext,
+                false,
+                protocolForRuntimeState,
+            )
             
             currentProtocol = null
             currentAdapter = null
@@ -734,10 +747,23 @@ class GraniVpnService : android.net.VpnService() {
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка остановки VPN: ${e.message}", e)
         } finally {
+            NativeVpnRuntimeState.markNativeVpnExpectedUp(
+                applicationContext,
+                false,
+                protocolForRuntimeState,
+            )
             setServiceState(finalState)
             saveLastVpnStopTimestamp()
             refreshQuickTile()
+            scheduleQuickTileRefresh(700L)
+            scheduleQuickTileRefresh(2200L)
         }
+    }
+
+    private fun scheduleQuickTileRefresh(delayMs: Long) {
+        Handler(Looper.getMainLooper()).postDelayed({
+            refreshQuickTile()
+        }, delayMs)
     }
 
     /**
