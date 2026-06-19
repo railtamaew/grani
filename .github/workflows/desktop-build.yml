@@ -49,6 +49,24 @@ jobs:
       - name: Build Windows
         run: flutter build windows --release
 
+      - name: Package AmneziaWG Windows runtime
+        shell: pwsh
+        run: |
+          $releaseDir = 'build/windows/x64/runner/Release'
+          $tunnelDll = 'bin/amneziawg/windows/tunnel.dll'
+          $releaseTunnelDll = Join-Path $releaseDir 'tunnel.dll'
+
+          if (!(Test-Path $tunnelDll)) {
+            throw "Missing built AmneziaWG tunnel.dll at $tunnelDll"
+          }
+          if (!(Test-Path (Join-Path $releaseDir 'mobile_app.exe'))) {
+            throw "Missing Windows release executable in $releaseDir"
+          }
+
+          Copy-Item $tunnelDll $releaseTunnelDll -Force
+          Get-Item (Join-Path $releaseDir 'mobile_app.exe')
+          Get-Item $releaseTunnelDll
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:

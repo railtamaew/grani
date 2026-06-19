@@ -10396,3 +10396,27 @@ Recommended next step:
 - Download `windows-release` artifact and smoke-test it on a real Windows machine.
 - For the Windows VPN path specifically, verify launch, admin/service creation, AmneziaWG `tunnel.dll` presence, connect/disconnect, and logs.
 - Packaging/signing can come after the raw release artifact starts and performs the basic VPN flow.
+## 2026-06-19 07:45 MSK - Windows artifact must include AmneziaWG runtime
+
+Finding after downloading `windows-release` artifact from successful GitHub Actions run `#12`:
+- Artifact contains `mobile_app.exe`, `flutter_windows.dll`, plugin DLLs, and Flutter assets.
+- Artifact does not contain `tunnel.dll`.
+- `data/flutter_assets/bin/amneziawg/README.md` is present, but `data/flutter_assets/bin/amneziawg/windows/tunnel.dll` is not.
+
+Why this matters:
+- Windows runner code can resolve `tunnel.dll` from either:
+  - `data/flutter_assets/bin/amneziawg/windows/tunnel.dll`, or
+  - `tunnel.dll` next to `mobile_app.exe`.
+- Without `tunnel.dll`, the Windows artifact can start as a Flutter app but cannot exercise the AmneziaWG tunnel service path.
+
+Change made:
+- Updated `.github/workflows/desktop-build.yml`.
+- Added `Package AmneziaWG Windows runtime` step after `flutter build windows --release`.
+- The step verifies:
+  - `bin/amneziawg/windows/tunnel.dll` exists after building AmneziaWG Windows sources.
+  - `build/windows/x64/runner/Release/mobile_app.exe` exists.
+- Then it copies `bin/amneziawg/windows/tunnel.dll` to `build/windows/x64/runner/Release/tunnel.dll`.
+
+Expected next result:
+- New `windows-release` artifact should contain `tunnel.dll` next to `mobile_app.exe`.
+- This still does not prove VPN works on Windows; it only makes the artifact suitable for the first real Windows smoke test.
