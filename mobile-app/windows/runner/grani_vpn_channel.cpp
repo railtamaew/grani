@@ -212,6 +212,19 @@ bool WriteUtf8File(const std::wstring& path, const std::string& content) {
   return ok && static_cast<size_t>(written) == content.size();
 }
 
+void AppendUtf8File(const std::wstring& path, const std::string& content) {
+  HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
+    return;
+  }
+  DWORD written = 0;
+  WriteFile(file, content.data(), static_cast<DWORD>(content.size()), &written,
+            nullptr);
+  CloseHandle(file);
+}
+
 bool IsRunningAsAdmin() {
   SID_IDENTIFIER_AUTHORITY nt_authority = SECURITY_NT_AUTHORITY;
   PSID administrators_group = nullptr;
@@ -335,6 +348,19 @@ std::optional<std::string> InstallOrUpdateTunnelService(
   }
 
   const std::wstring command = BuildServiceCommandLine(config_path);
+  const std::wstring exe_path = GetExePath();
+  const auto tunnel_dll = ResolveTunnelDllPath();
+  std::ostringstream log;
+  log << "install_or_update_service"
+      << " exe_path=" << WideToUtf8(exe_path)
+      << " exe_exists=" << (FileExists(exe_path) ? "true" : "false")
+      << " command=" << WideToUtf8(command)
+      << " tunnel_dll_path="
+      << (tunnel_dll ? WideToUtf8(*tunnel_dll) : "")
+      << " tunnel_dll_exists=" << (tunnel_dll.has_value() ? "true" : "false")
+      << "\n";
+  AppendUtf8File(GetRunnerLogPath(), log.str());
+
   constexpr wchar_t kDependencies[] = L"Nsi\0TcpIp\0\0";
   SC_HANDLE service = CreateServiceW(
       manager, kTunnelName, L"GRANI AmneziaWG Tunnel",
@@ -390,7 +416,15 @@ std::optional<std::string> StartTunnelService() {
 
   if (!StartServiceW(service, 0, nullptr) &&
       GetLastError() != ERROR_SERVICE_ALREADY_RUNNING) {
-    const auto error = WindowsErrorMessage(GetLastError());
+    const DWORD last_error = GetLastError();
+    const auto error = WindowsErrorMessage(last_error);
+    std::ostringstream log;
+    log << "start_service_failed"
+        << " error=" << last_error
+        << " message=" << error
+        << " service_state=" << ServiceStateName(QueryTunnelServiceState())
+        << "\n";
+    AppendUtf8File(GetRunnerLogPath(), log.str());
     CloseServiceHandle(service);
     CloseServiceHandle(manager);
     return error;
@@ -404,8 +438,10 @@ std::optional<std::string> StartTunnelService() {
     message << "Timed out waiting 6s for GRANI AmneziaWG service to start; "
             << "service_state=" << ServiceStateName(QueryTunnelServiceState())
             << "; runner_log_tail=" << ReadTailUtf8File(GetRunnerLogPath(), 1200);
+    AppendUtf8File(GetRunnerLogPath(), "start_service_timeout " + message.str() + "\n");
     return message.str();
   }
+  AppendUtf8File(GetRunnerLogPath(), "start_service_running\n");
   return std::nullopt;
 }
 
@@ -480,6 +516,11 @@ flutter::EncodableMap DesktopDiagnosticsMap() {
   return flutter::EncodableMap{
       {flutter::EncodableValue("platform"), flutter::EncodableValue("windows")},
       {flutter::EncodableValue("is_admin"), flutter::EncodableValue(IsRunningAsAdmin())},
+      {flutter::EncodableValue("exe_path"), flutter::EncodableValue(WideToUtf8(GetExePath()))},
+      {flutter::EncodableValue("exe_exists"), flutter::EncodableValue(FileExists(GetExePath()))},
+      {flutter::EncodableValue("exe_dir"), flutter::EncodableValue(WideToUtf8(GetExeDir()))},
+      {flutter::EncodableValue("service_command"),
+       flutter::EncodableValue(WideToUtf8(BuildServiceCommandLine(config_path)))},
       {flutter::EncodableValue("config_path"), flutter::EncodableValue(WideToUtf8(config_path))},
       {flutter::EncodableValue("config_exists"), flutter::EncodableValue(FileExists(config_path))},
       {flutter::EncodableValue("runner_log_path"), flutter::EncodableValue(WideToUtf8(log_path))},
