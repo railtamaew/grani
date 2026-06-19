@@ -29,6 +29,7 @@ constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme"
 
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
+static bool g_force_quit_requested = false;
 
 constexpr int kMinWindowWidth = 360;
 constexpr int kMinWindowHeight = 640;
@@ -53,6 +54,28 @@ double GetScaleForWindow(HWND hwnd) {
   HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   return dpi / 96.0;
+}
+
+bool UseRussianTrayLabels() {
+  return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_RUSSIAN;
+}
+
+const wchar_t* TrayShowLabel() {
+  return UseRussianTrayLabels()
+      ? L"\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c GRANI"
+      : L"Show GRANI";
+}
+
+const wchar_t* TrayVisitSiteLabel() {
+  return UseRussianTrayLabels()
+      ? L"\u041f\u043e\u0441\u0435\u0442\u0438\u0442\u044c \u0441\u0430\u0439\u0442"
+      : L"Visit website";
+}
+
+const wchar_t* TrayExitLabel() {
+  return UseRussianTrayLabels()
+      ? L"\u0412\u044b\u0439\u0442\u0438 \u0438\u0437 GRANI"
+      : L"Quit GRANI";
 }
 
 // Dynamically loads the |EnableNonClientDpiScaling| from the User32 module.
@@ -106,10 +129,10 @@ void ShowTrayMenu(HWND hwnd) {
     return;
   }
 
-  AppendMenuW(menu, MF_STRING, kTrayMenuShow, L"Показать GRANI");
-  AppendMenuW(menu, MF_STRING, kTrayMenuVisitSite, L"Посетить сайт");
+  AppendMenuW(menu, MF_STRING, kTrayMenuShow, TrayShowLabel());
+  AppendMenuW(menu, MF_STRING, kTrayMenuVisitSite, TrayVisitSiteLabel());
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  AppendMenuW(menu, MF_STRING, kTrayMenuExit, L"Закрыть GRANI");
+  AppendMenuW(menu, MF_STRING, kTrayMenuExit, TrayExitLabel());
 
   POINT cursor;
   GetCursorPos(&cursor);
@@ -128,6 +151,7 @@ void ShowTrayMenu(HWND hwnd) {
                     SW_SHOWNORMAL);
       break;
     case kTrayMenuExit:
+      g_force_quit_requested = true;
       PostMessageW(hwnd, WM_CLOSE, 0, 0);
       break;
   }
@@ -269,6 +293,14 @@ Win32Window::MessageHandler(HWND hwnd,
         ShowTrayMenu(hwnd);
         return 0;
       }
+      return 0;
+
+    case WM_CLOSE:
+      if (!g_force_quit_requested) {
+        ShowWindow(hwnd, SW_HIDE);
+        return 0;
+      }
+      DestroyWindow(hwnd);
       return 0;
 
     case WM_DESTROY:

@@ -10589,3 +10589,31 @@ Decision:
 Expected Windows behavior in next artifact:
 - Double-clicking GRANI should show a UAC prompt.
 - After allowing UAC, GRANI runs elevated and can open/start the `grani-awg` Windows service.
+
+## 2026-06-19 — Windows artifact with runtime UAC relaunch is ready
+
+Commit pushed:
+- 
+
+## 2026-06-19 — Windows AWG retest screenshot: PL node still sees no Windows peer endpoint
+
+User reported another Windows Сбой подключения screenshot for PL/Warsaw + WireGuard obf.
+Server-side check after the report:
+- Backend tail still shows the earlier immediate connect_failed pattern for Windows device 8ecc82be-9924-420d-9b25-a9037407a3e3, server_id=10, protocol=graniwg.
+- PL node wg show wg0 dump shows Windows peers still with no endpoint/handshake/traffic:
+  - 4qhgMW+..., 172.27.91.4/32, endpoint (none), handshake 
+
+## 2026-06-19 — Windows tray menu localization and close-to-tray behavior
+
+User found Windows tray context menu text corrupted (Ð...) on Russian Windows.
+Fix:
+- mobile-app/windows/runner/win32_window.cpp no longer embeds raw Cyrillic literals in tray menu labels.
+- Tray labels are now chosen from Windows UI language:
+  - Russian UI: Показать GRANI, Посетить сайт, Выйти из GRANI;
+  - other UI languages: Show GRANI, Visit website, Quit GRANI.
+- Russian strings are encoded as Unicode escape sequences in C++ so MSVC/source-codepage handling cannot corrupt them.
+
+User also clarified Windows close behavior:
+- Clicking the window close button (X) must not stop GRANI.
+- WM_CLOSE now hides the window to tray by default.
+- The app exits only from the tray menu Выйти из GRANI / Quit GRANI, which sets an explicit force-quit flag before closing the native window.
