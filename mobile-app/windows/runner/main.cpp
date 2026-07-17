@@ -107,16 +107,23 @@ bool RelaunchElevatedIfNeeded() {
     return false;
   }
 
+  const std::wstring exe_path = GetExePath();
+  const std::wstring exe_dir = GetExeDir();
+
   SHELLEXECUTEINFOW execute_info{};
   execute_info.cbSize = sizeof(execute_info);
   execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
   execute_info.lpVerb = L"runas";
-  execute_info.lpFile = GetExePath().c_str();
-  execute_info.lpDirectory = GetExeDir().c_str();
+  execute_info.lpFile = exe_path.c_str();
+  execute_info.lpDirectory = exe_dir.c_str();
   execute_info.nShow = SW_SHOWNORMAL;
 
   if (!ShellExecuteExW(&execute_info)) {
-    return false;
+    MessageBoxW(
+        nullptr,
+        L"GRANI requires administrator rights. Approve the Windows UAC prompt and start the app again.",
+        L"GRANI", MB_OK | MB_ICONERROR);
+    return true;
   }
   if (execute_info.hProcess) {
     CloseHandle(execute_info.hProcess);
