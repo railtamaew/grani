@@ -11,8 +11,11 @@ class NativeVpnService {
   static bool get _isWindowsNativeVpn =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
+  static bool get _isMacOSNativeVpn =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+
   static bool get _supportsNativeVpnChannel =>
-      _isAndroidNativeVpn || _isWindowsNativeVpn;
+      _isAndroidNativeVpn || _isWindowsNativeVpn || _isMacOSNativeVpn;
 
   static VpnUnsupportedPlatformException _unsupportedPlatformException() {
     return VpnUnsupportedPlatformException(
@@ -42,7 +45,7 @@ class NativeVpnService {
       };
 
   static Future<Map<String, dynamic>> getDesktopVpnDiagnostics() async {
-    if (!_isWindowsNativeVpn) {
+    if (!_supportsNativeVpnChannel) {
       return <String, dynamic>{
         'platform': defaultTargetPlatform.name,
         'supported': false,
@@ -167,9 +170,9 @@ class NativeVpnService {
     }
   }
 
-  /// Запрашивает системное Android-разрешение VPN заранее, без запуска туннеля.
+  /// Запрашивает системное VPN-разрешение заранее, без запуска туннеля.
   static Future<bool> requestPermission() async {
-    if (!_isAndroidNativeVpn) {
+    if (!_supportsNativeVpnChannel) {
       return true;
     }
     try {
@@ -230,7 +233,7 @@ class NativeVpnService {
               'VPN разрешение отклонено. Для работы VPN необходимо предоставить разрешение в настройках системы.',
         );
       }
-      if (_isWindowsNativeVpn) {
+      if (_isWindowsNativeVpn || _isMacOSNativeVpn) {
         final diagnostics = await getDesktopVpnDiagnostics();
         final diagnosticText = diagnostics.entries
             .where((entry) =>
@@ -239,7 +242,7 @@ class NativeVpnService {
             .join('; ');
         throw VpnException(
           'Ошибка подключения AmneziaWG: ${e.message}. '
-          'Windows diagnostics: $diagnosticText',
+          'Desktop diagnostics: $diagnosticText',
         );
       }
       throw VpnException('Ошибка подключения AmneziaWG: ${e.message}');

@@ -207,25 +207,35 @@ class MacOSSimpleVpnRuntime implements SimpleVpnRuntime {
   const MacOSSimpleVpnRuntime();
 
   @override
-  Future<bool> requestPermission() async => true;
+  Future<bool> requestPermission() => NativeVpnService.requestPermission();
 
   @override
   Future<bool> startConfig(
     SimpleVpnConfig config, {
     required String? sessionId,
     required String source,
-  }) async {
-    throw VpnUnsupportedPlatformException(
-      'GRANIwg for macOS is not wired to a native tunnel runner yet. '
-      'The macOS desktop build can be used for UI/auth smoke tests only.',
+  }) {
+    if (config.engine != 'amneziawg' && config.configType != 'amneziawg') {
+      throw VpnUnsupportedPlatformException(
+        'Only GRANIwg/AmneziaWG is supported by the macOS runtime.',
+      );
+    }
+    return NativeVpnService.connectAmneziaWg(
+      config.config,
+      connectionSessionId: sessionId,
+      source: source,
     );
   }
 
   @override
-  Future<bool?> getAmneziaWgStatus() async => false;
+  Future<bool?> getAmneziaWgStatus() {
+    return NativeVpnService.getAmneziaWgStatus();
+  }
 
   @override
-  Future<bool?> getNativeConnectionStatus() async => false;
+  Future<bool?> getNativeConnectionStatus() {
+    return NativeVpnService.getNativeConnectionStatus();
+  }
 
   @override
   Future<bool> disconnect({
@@ -233,8 +243,12 @@ class MacOSSimpleVpnRuntime implements SimpleVpnRuntime {
     required String source,
     required String? sessionId,
     bool includeLegacy = false,
-  }) async {
-    return true;
+  }) {
+    return NativeVpnService.disconnectAmneziaWg(
+      reason: reason,
+      source: source,
+      connectionSessionId: sessionId,
+    );
   }
 }
 

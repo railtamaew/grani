@@ -33,18 +33,22 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build AmneziaWG Windows tunnel.dll
+      - name: Build official AmneziaWG Windows runtime
         shell: pwsh
         run: |
-          $awgSource = Join-Path $env:RUNNER_TEMP 'amneziawg-windows'
-          git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-windows.git $awgSource
+          $awgSource = Join-Path $env:RUNNER_TEMP 'amneziawg-windows-client'
+          git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-windows-client.git $awgSource
           Push-Location $awgSource
-          cmd /c build.cmd
+          cmd /c build.bat
           Pop-Location
 
           New-Item -ItemType Directory -Force -Path 'bin/amneziawg/windows'
-          Copy-Item (Join-Path $awgSource 'x64/tunnel.dll') 'bin/amneziawg/windows/tunnel.dll' -Force
-          Get-Item 'bin/amneziawg/windows/tunnel.dll'
+          Copy-Item (Join-Path $awgSource 'amd64/amneziawg.exe') 'bin/amneziawg/windows/amneziawg.exe' -Force
+          Copy-Item (Join-Path $awgSource 'amd64/awg.exe') 'bin/amneziawg/windows/awg.exe' -Force
+          Copy-Item (Join-Path $awgSource 'amd64/wintun.dll') 'bin/amneziawg/windows/wintun.dll' -Force
+          Get-Item 'bin/amneziawg/windows/amneziawg.exe'
+          Get-Item 'bin/amneziawg/windows/awg.exe'
+          Get-Item 'bin/amneziawg/windows/wintun.dll'
 
       - name: Build Windows
         run: flutter build windows --release
@@ -53,19 +57,23 @@ jobs:
         shell: pwsh
         run: |
           $releaseDir = 'build/windows/x64/runner/Release'
-          $tunnelDll = 'bin/amneziawg/windows/tunnel.dll'
-          $releaseTunnelDll = Join-Path $releaseDir 'tunnel.dll'
+          $runtimeDir = 'bin/amneziawg/windows'
 
-          if (!(Test-Path $tunnelDll)) {
-            throw "Missing built AmneziaWG tunnel.dll at $tunnelDll"
-          }
           if (!(Test-Path (Join-Path $releaseDir 'mobile_app.exe'))) {
             throw "Missing Windows release executable in $releaseDir"
           }
 
-          Copy-Item $tunnelDll $releaseTunnelDll -Force
+          foreach ($runtimeFile in @('amneziawg.exe', 'awg.exe', 'wintun.dll')) {
+            $source = Join-Path $runtimeDir $runtimeFile
+            if (!(Test-Path $source)) {
+              throw "Missing built AmneziaWG runtime file at $source"
+            }
+            Copy-Item $source (Join-Path $releaseDir $runtimeFile) -Force
+          }
           Get-Item (Join-Path $releaseDir 'mobile_app.exe')
-          Get-Item $releaseTunnelDll
+          Get-Item (Join-Path $releaseDir 'amneziawg.exe')
+          Get-Item (Join-Path $releaseDir 'awg.exe')
+          Get-Item (Join-Path $releaseDir 'wintun.dll')
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4

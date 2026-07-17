@@ -17,6 +17,8 @@ namespace {
 
 constexpr wchar_t kAppDataDir[] = L"GRANI";
 constexpr wchar_t kTunnelName[] = L"grani-awg";
+constexpr wchar_t kOfficialServiceName[] = L"AmneziaWGTunnel$grani-awg";
+constexpr wchar_t kLegacyServiceName[] = L"grani-awg";
 constexpr char kMissingRunnerCode[] = "WINDOWS_AWG_RUNNER_MISSING";
 
 std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> g_channel;
@@ -130,6 +132,27 @@ std::optional<std::wstring> ResolveAwgQuickPath() {
   }
 
   const std::wstring local = GetExeDir() + L"\\awg-quick.exe";
+  if (FileExists(local)) {
+    return local;
+  }
+
+  return std::nullopt;
+}
+
+std::optional<std::wstring> ResolveAmneziaWgPath() {
+  if (auto env = GetEnvPath(L"GRANI_AMNEZIAWG_EXE")) {
+    if (FileExists(*env)) {
+      return env;
+    }
+  }
+
+  const std::wstring bundled = GetExeDir() +
+      L"\\data\\flutter_assets\\bin\\amneziawg\\windows\\amneziawg.exe";
+  if (FileExists(bundled)) {
+    return bundled;
+  }
+
+  const std::wstring local = GetExeDir() + L"\\amneziawg.exe";
   if (FileExists(local)) {
     return local;
   }
@@ -288,14 +311,14 @@ bool WaitForServiceState(SC_HANDLE service, DWORD desired_state,
   return false;
 }
 
-std::optional<DWORD> QueryTunnelServiceState() {
+std::optional<DWORD> QueryServiceState(const wchar_t* service_name) {
   SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
   if (!manager) {
     return std::nullopt;
   }
 
   SC_HANDLE service =
-      OpenServiceW(manager, kTunnelName, SERVICE_QUERY_STATUS);
+      OpenServiceW(manager, service_name, SERVICE_QUERY_STATUS);
   if (!service) {
     CloseServiceHandle(manager);
     return std::nullopt;
@@ -313,6 +336,14 @@ std::optional<DWORD> QueryTunnelServiceState() {
     return std::nullopt;
   }
   return status.dwCurrentState;
+}
+
+std::optional<DWORD> QueryTunnelServiceState() {
+  return QueryServiceState(kOfficialServiceName);
+}
+
+std::optional<DWORD> QueryLegacyTunnelServiceState() {
+  return QueryServiceState(kLegacyServiceName);
 }
 
 std::string ServiceStateName(std::optional<DWORD> state) {
@@ -422,7 +453,8 @@ std::optional<std::string> StartTunnelService() {
     log << "start_service_failed"
         << " error=" << last_error
         << " message=" << error
-        << " service_state=" << ServiceStateName(QueryTunnelServiceState())
+        << " service_state="
+        << ServiceStateName(QueryLegacyTunnelServiceState())
         << "\n";
     AppendUtf8File(GetRunnerLogPath(), log.str());
     CloseServiceHandle(service);
@@ -436,7 +468,8 @@ std::optional<std::string> StartTunnelService() {
   if (!running) {
     std::ostringstream message;
     message << "Timed out waiting 6s for GRANI AmneziaWG service to start; "
-            << "service_state=" << ServiceStateName(QueryTunnelServiceState())
+            << "service_state="
+            << ServiceStateName(QueryLegacyTunnelServiceState())
             << "; runner_log_tail=" << ReadTailUtf8File(GetRunnerLogPath(), 1200);
     AppendUtf8File(GetRunnerLogPath(), "start_service_timeout " + message.str() + "\n");
     return message.str();
@@ -445,14 +478,14 @@ std::optional<std::string> StartTunnelService() {
   return std::nullopt;
 }
 
-void StopTunnelService() {
+void StopLegacyTunnelService() {
   SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
   if (!manager) {
     return;
   }
 
-  SC_HANDLE service =
-      OpenServiceW(manager, kTunnelName, SERVICE_STOP | SERVICE_QUERY_STATUS);
+  SC_HANDLE service = OpenServiceW(
+      manager, kLegacyServiceName, SERVICE_STOP | SERVICE_QUERY_STATUS);
   if (!service) {
     CloseServiceHandle(manager);
     return;
@@ -466,6 +499,78 @@ void StopTunnelService() {
 
   CloseServiceHandle(service);
   CloseServiceHandle(manager);
+}
+
+std::optional<std::string> UninstallOfficialTunnel(
+    const std::wstring& amneziawg_path) {
+  if (!QueryTunnelServiceState().has_value()) {
+    return std::nullopt;
+  }
+
+  const int exit_code = RunHiddenAndWait(
+      amneziawg_path, L"/uninstalltunnelservice " + QuoteArg(kTunnelName));
+  if (exit_code != 0) {
+    std::ostringstream message;
+    message << "Official AmneziaWG tunnel uninstall failed with exit code "
+            << exit_code;
+    AppendUtf8File(GetRunnerLogPath(), "official_uninstall_failed " +
+                                           message.str() + "\n");
+    return message.str();
+  }
+
+  const DWORD started = GetTickCount();
+  while (GetTickCount() - started < 15000) {
+    if (!QueryTunnelServiceState().has_value()) {
+      AppendUtf8File(GetRunnerLogPath(), "official_tunnel_uninstalled\n");
+      return std::nullopt;
+    }
+    Sleep(250);
+  }
+  return "Timed out waiting for the official AmneziaWG tunnel service to be removed";
+}
+
+std::optional<std::string> InstallOfficialTunnel(
+    const std::wstring& amneziawg_path,
+    const std::wstring& config_path) {
+  if (const auto error = UninstallOfficialTunnel(amneziawg_path)) {
+    return error;
+  }
+
+  StopLegacyTunnelService();
+  AppendUtf8File(
+      GetRunnerLogPath(),
+      "official_install exe=" + WideToUtf8(amneziawg_path) +
+          " config=" + WideToUtf8(config_path) + "\n");
+  const int exit_code = RunHiddenAndWait(
+      amneziawg_path, L"/installtunnelservice " + QuoteArg(config_path));
+  if (exit_code != 0) {
+    std::ostringstream message;
+    message << "Official AmneziaWG tunnel install failed with exit code "
+            << exit_code;
+    AppendUtf8File(GetRunnerLogPath(), "official_install_failed " +
+                                           message.str() + "\n");
+    return message.str();
+  }
+
+  const DWORD started = GetTickCount();
+  while (GetTickCount() - started < 15000) {
+    const auto state = QueryTunnelServiceState();
+    if (state.has_value() && *state == SERVICE_RUNNING) {
+      AppendUtf8File(GetRunnerLogPath(), "official_tunnel_running\n");
+      return std::nullopt;
+    }
+    if (state.has_value() && *state == SERVICE_STOPPED) {
+      break;
+    }
+    Sleep(250);
+  }
+
+  std::ostringstream message;
+  message << "Official AmneziaWG tunnel did not reach running state; state="
+          << ServiceStateName(QueryTunnelServiceState());
+  AppendUtf8File(GetRunnerLogPath(), "official_start_failed " + message.str() +
+                                         "\n");
+  return message.str();
 }
 
 std::optional<std::string> GetStringArg(const flutter::EncodableValue* args,
@@ -482,14 +587,18 @@ std::optional<std::string> GetStringArg(const flutter::EncodableValue* args,
 }
 
 flutter::EncodableMap StatusMap() {
-  const auto service_state = QueryTunnelServiceState();
+  const auto amneziawg = ResolveAmneziaWgPath();
+  const auto service_state = amneziawg ? QueryTunnelServiceState()
+                                       : QueryLegacyTunnelServiceState();
   const bool service_running =
       service_state.has_value() && *service_state == SERVICE_RUNNING;
   if (service_state.has_value()) {
     g_connected = service_running;
   }
   std::string runner = "missing";
-  if (ResolveTunnelDllPath()) {
+  if (amneziawg) {
+    runner = "official_amneziawg_service";
+  } else if (ResolveTunnelDllPath()) {
     runner = "tunnel.dll";
   } else if (ResolveAwgQuickPath()) {
     runner = "awg-quick";
@@ -510,6 +619,8 @@ flutter::EncodableMap DesktopDiagnosticsMap() {
   const std::wstring config_path = GetConfigPath();
   const std::wstring log_path = GetRunnerLogPath();
   const auto service_state = QueryTunnelServiceState();
+  const auto legacy_service_state = QueryLegacyTunnelServiceState();
+  const auto amneziawg = ResolveAmneziaWgPath();
   const auto tunnel_dll = ResolveTunnelDllPath();
   const auto awg_quick = ResolveAwgQuickPath();
 
@@ -519,8 +630,21 @@ flutter::EncodableMap DesktopDiagnosticsMap() {
       {flutter::EncodableValue("exe_path"), flutter::EncodableValue(WideToUtf8(GetExePath()))},
       {flutter::EncodableValue("exe_exists"), flutter::EncodableValue(FileExists(GetExePath()))},
       {flutter::EncodableValue("exe_dir"), flutter::EncodableValue(WideToUtf8(GetExeDir()))},
+      {flutter::EncodableValue("runtime_mode"),
+       flutter::EncodableValue(amneziawg ? "official_amneziawg_service"
+                                         : "legacy_fallback")},
+      {flutter::EncodableValue("amneziawg_path"),
+       flutter::EncodableValue(amneziawg ? WideToUtf8(*amneziawg) : "")},
+      {flutter::EncodableValue("amneziawg_exists"),
+       flutter::EncodableValue(amneziawg.has_value())},
+      {flutter::EncodableValue("official_service_name"),
+       flutter::EncodableValue(WideToUtf8(kOfficialServiceName))},
       {flutter::EncodableValue("service_command"),
-       flutter::EncodableValue(WideToUtf8(BuildServiceCommandLine(config_path)))},
+       flutter::EncodableValue(
+           amneziawg ? WideToUtf8(QuoteArg(*amneziawg) +
+                                  L" /installtunnelservice " +
+                                  QuoteArg(config_path))
+                     : WideToUtf8(BuildServiceCommandLine(config_path)))},
       {flutter::EncodableValue("config_path"), flutter::EncodableValue(WideToUtf8(config_path))},
       {flutter::EncodableValue("config_exists"), flutter::EncodableValue(FileExists(config_path))},
       {flutter::EncodableValue("runner_log_path"), flutter::EncodableValue(WideToUtf8(log_path))},
@@ -537,6 +661,8 @@ flutter::EncodableMap DesktopDiagnosticsMap() {
        flutter::EncodableValue(ServiceStateName(service_state))},
       {flutter::EncodableValue("service_state_code"),
        flutter::EncodableValue(static_cast<int>(service_state.value_or(0)))},
+      {flutter::EncodableValue("legacy_service_state"),
+       flutter::EncodableValue(ServiceStateName(legacy_service_state))},
   };
 }
 
@@ -560,9 +686,21 @@ void HandleConnectAmneziaWg(
     return;
   }
 
+  const auto amneziawg = ResolveAmneziaWgPath();
+  if (amneziawg) {
+    if (const auto error = InstallOfficialTunnel(*amneziawg, config_path)) {
+      result->Error("WINDOWS_AWG_SERVICE_INSTALL_FAILED", *error);
+      return;
+    }
+
+    g_connected = true;
+    result->Success(flutter::EncodableValue(true));
+    return;
+  }
+
   const auto tunnel_dll = ResolveTunnelDllPath();
   if (tunnel_dll) {
-    StopTunnelService();
+    StopLegacyTunnelService();
 
     if (const auto error = InstallOrUpdateTunnelService(config_path)) {
       result->Error("WINDOWS_AWG_SERVICE_INSTALL_FAILED", *error);
@@ -582,7 +720,8 @@ void HandleConnectAmneziaWg(
   if (!runner) {
     result->Error(
         kMissingRunnerCode,
-        "Windows GRANIwg runner is not bundled yet. Provide tunnel.dll via "
+        "Windows GRANIwg runner is not bundled yet. Package the official "
+        "amneziawg.exe runtime or provide tunnel.dll via "
         "GRANI_AWG_TUNNEL_DLL or package bin/amneziawg/windows/tunnel.dll. "
         "For legacy testing, GRANI_AWG_QUICK or awg-quick.exe is also accepted.");
     return;
@@ -602,7 +741,14 @@ void HandleConnectAmneziaWg(
 
 void HandleDisconnectAmneziaWg(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  StopTunnelService();
+  const auto amneziawg = ResolveAmneziaWgPath();
+  if (amneziawg) {
+    if (const auto error = UninstallOfficialTunnel(*amneziawg)) {
+      result->Error("WINDOWS_AWG_STOP_FAILED", *error);
+      return;
+    }
+  }
+  StopLegacyTunnelService();
 
   const auto runner = ResolveAwgQuickPath();
   if (runner) {
