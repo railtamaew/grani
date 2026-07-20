@@ -10,6 +10,7 @@ import '../protocols/xray/models/xray_config.dart';
 import '../services/native_vpn_service.dart';
 import '../services/analytics_service.dart';
 import 'simple_vpn_api.dart';
+import 'windows_hysteria2_config.dart';
 
 enum SimpleVpnState {
   disconnected,
@@ -168,19 +169,29 @@ class WindowsSimpleVpnRuntime implements SimpleVpnRuntime {
     required String? sessionId,
     required String source,
   }) async {
-    if (config.engine != 'amneziawg' && config.configType != 'amneziawg') {
-      throw Exception('Only GRANIwg/AmneziaWG is supported by Windows runtime');
+    if (config.engine == 'hysteria2' || config.protocol == 'hysteria2') {
+      final nativeConfig = buildWindowsHysteria2Config(config);
+      return NativeVpnService.connectHysteria2(
+        nativeConfig,
+        connectionSessionId: sessionId,
+        source: source,
+      );
     }
-    return NativeVpnService.connectAmneziaWg(
-      config.config,
-      connectionSessionId: sessionId,
-      source: source,
+    if (config.engine == 'amneziawg' || config.configType == 'amneziawg') {
+      return NativeVpnService.connectAmneziaWg(
+        config.config,
+        connectionSessionId: sessionId,
+        source: source,
+      );
+    }
+    throw VpnUnsupportedPlatformException(
+      'VPN engine ${config.engine} is not supported by Windows runtime',
     );
   }
 
   @override
   Future<bool?> getAmneziaWgStatus() {
-    return NativeVpnService.getAmneziaWgStatus();
+    return NativeVpnService.getNativeConnectionStatus();
   }
 
   @override
@@ -195,7 +206,7 @@ class WindowsSimpleVpnRuntime implements SimpleVpnRuntime {
     required String? sessionId,
     bool includeLegacy = false,
   }) {
-    return NativeVpnService.disconnectAmneziaWg(
+    return NativeVpnService.disconnect(
       reason: reason,
       source: source,
       connectionSessionId: sessionId,
@@ -503,14 +514,17 @@ class SimpleVpnController extends ChangeNotifier {
       unawaited(_persistSelectedServerId(_selectedServer!.id));
     }
     if (_protocols.isNotEmpty) {
+      final fallbackProtocolId = _runtimeFallbackProtocolId();
       final preferredId = _isProtocolSupportedByRuntime(preferredProtocolId)
           ? preferredProtocolId
           : _isProtocolSupportedByRuntime(_selectedProtocol.id)
               ? _selectedProtocol.id
-              : _protocols.first.id;
+              : fallbackProtocolId;
       _selectedProtocol = _protocols.firstWhere(
         (protocol) => protocol.id == preferredId,
-        orElse: () => _protocols.first,
+        orElse: () => _protocols.firstWhere(
+          (protocol) => protocol.id == fallbackProtocolId,
+        ),
       );
       unawaited(_persistSelectedProtocolId(_selectedProtocol.id));
     }
@@ -602,8 +616,10 @@ class SimpleVpnController extends ChangeNotifier {
 
   bool _isProtocolSupportedByRuntime(String? protocolId) {
     if (!_isSupportedProtocolId(protocolId)) return false;
-    if (_runtime is WindowsSimpleVpnRuntime ||
-        _runtime is MacOSSimpleVpnRuntime) {
+    if (_runtime is WindowsSimpleVpnRuntime) {
+      return protocolId == 'graniwg' || protocolId == 'hysteria2';
+    }
+    if (_runtime is MacOSSimpleVpnRuntime) {
       return protocolId == 'graniwg';
     }
     return true;
@@ -617,6 +633,13 @@ class SimpleVpnController extends ChangeNotifier {
         .toList(growable: false);
   }
 
+  String _runtimeFallbackProtocolId() {
+    if (_protocols.any((protocol) => protocol.id == 'graniwg')) {
+      return 'graniwg';
+    }
+    return _protocols.first.id;
+  }
+
   void _normalizeProtocolsForRuntime() {
     final runtimeProtocols = _filterProtocolsForRuntime(_protocols);
     if (runtimeProtocols.isNotEmpty) {
@@ -624,7 +647,10 @@ class SimpleVpnController extends ChangeNotifier {
     }
     if (!_isProtocolSupportedByRuntime(_selectedProtocol.id) ||
         !_protocols.any((protocol) => protocol.id == _selectedProtocol.id)) {
-      _selectedProtocol = _protocols.first;
+      final fallbackProtocolId = _runtimeFallbackProtocolId();
+      _selectedProtocol = _protocols.firstWhere(
+        (protocol) => protocol.id == fallbackProtocolId,
+      );
     }
   }
 

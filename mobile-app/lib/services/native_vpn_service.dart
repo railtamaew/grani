@@ -252,6 +252,45 @@ class NativeVpnService {
     }
   }
 
+  /// Starts the official Hysteria 2 client in Windows TUN mode.
+  static Future<bool> connectHysteria2(
+    String config, {
+    String? connectionSessionId,
+    String? source,
+  }) async {
+    if (!_isWindowsNativeVpn) {
+      throw _unsupportedPlatformException();
+    }
+    try {
+      final args = <String, dynamic>{'config': config};
+      if (connectionSessionId != null && connectionSessionId.isNotEmpty) {
+        args['connection_session_id'] = connectionSessionId;
+      }
+      if (source != null && source.isNotEmpty) {
+        args['source'] = source;
+      }
+      final result = await _channel.invokeMethod<bool>(
+        'connectHysteria2',
+        args,
+      );
+      return result ?? false;
+    } on PlatformException catch (e) {
+      final diagnostics = await getDesktopVpnDiagnostics();
+      final diagnosticText = diagnostics.entries
+          .where((entry) =>
+              entry.value != null && entry.value.toString().isNotEmpty)
+          .map((entry) => '${entry.key}=${entry.value}')
+          .join('; ');
+      throw VpnException(
+        'Ошибка подключения Hysteria 2: ${e.message}. '
+        'Desktop diagnostics: $diagnosticText',
+      );
+    } catch (e) {
+      if (e is VpnException) rethrow;
+      throw VpnException('Неожиданная ошибка Hysteria 2: $e');
+    }
+  }
+
   /// Отключение embedded AmneziaWG backend.
   static Future<bool> disconnectAmneziaWg({
     String? reason,

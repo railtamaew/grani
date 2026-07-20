@@ -53,7 +53,23 @@ jobs:
       - name: Build Windows
         run: flutter build windows --release
 
-      - name: Package AmneziaWG Windows runtime
+      - name: Download official Hysteria2 Windows runtime
+        shell: pwsh
+        run: |
+          $runtimeDir = 'bin/hysteria2/windows'
+          $runtimePath = Join-Path $runtimeDir 'hysteria.exe'
+          $downloadUrl = 'https://github.com/apernet/hysteria/releases/download/app/v2.10.0/hysteria-windows-amd64.exe'
+          $expectedSha256 = 'a0b4b1851919235b9424632b894b5232eec861c1c20e955e82e3dbc6698490d0'
+
+          New-Item -ItemType Directory -Force -Path $runtimeDir
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $runtimePath
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 $runtimePath).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "Hysteria2 SHA256 mismatch: expected $expectedSha256, got $actualSha256"
+          }
+          Get-Item $runtimePath
+
+      - name: Package Windows VPN runtimes
         shell: pwsh
         run: |
           $releaseDir = 'build/windows/x64/runner/Release'
@@ -70,10 +86,16 @@ jobs:
             }
             Copy-Item $source (Join-Path $releaseDir $runtimeFile) -Force
           }
+          $hysteriaSource = 'bin/hysteria2/windows/hysteria.exe'
+          if (!(Test-Path $hysteriaSource)) {
+            throw "Missing official Hysteria2 runtime at $hysteriaSource"
+          }
+          Copy-Item $hysteriaSource (Join-Path $releaseDir 'hysteria.exe') -Force
           Get-Item (Join-Path $releaseDir 'mobile_app.exe')
           Get-Item (Join-Path $releaseDir 'amneziawg.exe')
           Get-Item (Join-Path $releaseDir 'awg.exe')
           Get-Item (Join-Path $releaseDir 'wintun.dll')
+          Get-Item (Join-Path $releaseDir 'hysteria.exe')
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4

@@ -20,11 +20,14 @@ constexpr wchar_t kTunnelName[] = L"grani-awg";
 constexpr wchar_t kOfficialServiceName[] = L"AmneziaWGTunnel$grani-awg";
 constexpr wchar_t kLegacyServiceName[] = L"grani-awg";
 constexpr char kMissingRunnerCode[] = "WINDOWS_AWG_RUNNER_MISSING";
+constexpr char kMissingHysteriaCode[] = "WINDOWS_HYSTERIA2_RUNNER_MISSING";
 
 std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> g_channel;
 bool g_connected = false;
 int64_t g_rx_bytes = 0;
 int64_t g_tx_bytes = 0;
+HANDLE g_hysteria_process = nullptr;
+DWORD g_hysteria_process_id = 0;
 
 std::wstring Utf8ToWide(const std::string& value) {
   if (value.empty()) {
@@ -181,6 +184,27 @@ std::optional<std::wstring> ResolveTunnelDllPath() {
   return std::nullopt;
 }
 
+std::optional<std::wstring> ResolveHysteria2Path() {
+  if (auto env = GetEnvPath(L"GRANI_HYSTERIA2_EXE")) {
+    if (FileExists(*env)) {
+      return env;
+    }
+  }
+
+  const std::wstring bundled = GetExeDir() +
+      L"\\data\\flutter_assets\\bin\\hysteria2\\windows\\hysteria.exe";
+  if (FileExists(bundled)) {
+    return bundled;
+  }
+
+  const std::wstring local = GetExeDir() + L"\\hysteria.exe";
+  if (FileExists(local)) {
+    return local;
+  }
+
+  return std::nullopt;
+}
+
 std::wstring GetExePath() {
   wchar_t path[MAX_PATH * 4];
   const DWORD size = GetModuleFileNameW(nullptr, path, ARRAYSIZE(path));
@@ -219,6 +243,33 @@ std::wstring GetRunnerLogPath() {
     return L"windows-runner.log";
   }
   return config_path.substr(0, slash) + L"\\windows-runner.log";
+}
+
+std::wstring GetHysteria2ConfigPath() {
+  const std::wstring config_path = GetConfigPath();
+  const size_t slash = config_path.find_last_of(L"\\/");
+  if (slash == std::wstring::npos) {
+    return L"hysteria2.yaml";
+  }
+  return config_path.substr(0, slash) + L"\\hysteria2.yaml";
+}
+
+std::wstring GetHysteria2LogPath() {
+  const std::wstring config_path = GetConfigPath();
+  const size_t slash = config_path.find_last_of(L"\\/");
+  if (slash == std::wstring::npos) {
+    return L"hysteria2.log";
+  }
+  return config_path.substr(0, slash) + L"\\hysteria2.log";
+}
+
+std::wstring GetHysteria2PidPath() {
+  const std::wstring config_path = GetConfigPath();
+  const size_t slash = config_path.find_last_of(L"\\/");
+  if (slash == std::wstring::npos) {
+    return L"hysteria2.pid";
+  }
+  return config_path.substr(0, slash) + L"\\hysteria2.pid";
 }
 
 bool WriteUtf8File(const std::wstring& path, const std::string& content) {
@@ -283,6 +334,161 @@ int RunHiddenAndWait(const std::wstring& exe, const std::wstring& args) {
   CloseHandle(process.hThread);
   CloseHandle(process.hProcess);
   return static_cast<int>(exit_code);
+}
+
+void CloseHysteriaProcessHandle() {
+  if (g_hysteria_process != nullptr) {
+    CloseHandle(g_hysteria_process);
+    g_hysteria_process = nullptr;
+  }
+  g_hysteria_process_id = 0;
+}
+
+bool ProcessImageMatches(HANDLE process, const std::wstring& expected_path) {
+  std::wstring image_path(MAX_PATH * 4, L'\0');
+  DWORD size = static_cast<DWORD>(image_path.size());
+  if (!QueryFullProcessImageNameW(process, 0, image_path.data(), &size)) {
+    return false;
+  }
+  image_path.resize(size);
+  return _wcsicmp(image_path.c_str(), expected_path.c_str()) == 0;
+}
+
+HANDLE OpenPersistedHysteriaProcess() {
+  const auto hysteria = ResolveHysteria2Path();
+  if (!hysteria) {
+    return nullptr;
+  }
+
+  if (g_hysteria_process != nullptr) {
+    DWORD exit_code = 0;
+    if (GetExitCodeProcess(g_hysteria_process, &exit_code) &&
+        exit_code == STILL_ACTIVE &&
+        ProcessImageMatches(g_hysteria_process, *hysteria)) {
+      return g_hysteria_process;
+    }
+    CloseHysteriaProcessHandle();
+  }
+
+  const std::string raw_pid = ReadTailUtf8File(GetHysteria2PidPath(), 64);
+  DWORD pid = 0;
+  try {
+    pid = static_cast<DWORD>(std::stoul(raw_pid));
+  } catch (...) {
+    DeleteFileW(GetHysteria2PidPath().c_str());
+    return nullptr;
+  }
+  if (pid == 0) {
+    DeleteFileW(GetHysteria2PidPath().c_str());
+    return nullptr;
+  }
+
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION |
+                                   PROCESS_TERMINATE | SYNCHRONIZE,
+                               FALSE, pid);
+  if (process == nullptr) {
+    DeleteFileW(GetHysteria2PidPath().c_str());
+    return nullptr;
+  }
+  DWORD exit_code = 0;
+  if (!GetExitCodeProcess(process, &exit_code) || exit_code != STILL_ACTIVE ||
+      !ProcessImageMatches(process, *hysteria)) {
+    CloseHandle(process);
+    DeleteFileW(GetHysteria2PidPath().c_str());
+    return nullptr;
+  }
+
+  g_hysteria_process = process;
+  g_hysteria_process_id = pid;
+  return process;
+}
+
+bool IsHysteria2Running() {
+  return OpenPersistedHysteriaProcess() != nullptr;
+}
+
+std::optional<std::string> StopHysteria2Process() {
+  HANDLE process = OpenPersistedHysteriaProcess();
+  if (process != nullptr) {
+    if (!TerminateProcess(process, 0)) {
+      return WindowsErrorMessage(GetLastError());
+    }
+    if (WaitForSingleObject(process, 10000) != WAIT_OBJECT_0) {
+      return "Timed out waiting for Hysteria2 process to stop";
+    }
+  }
+
+  CloseHysteriaProcessHandle();
+  DeleteFileW(GetHysteria2PidPath().c_str());
+  DeleteFileW(GetHysteria2ConfigPath().c_str());
+  return std::nullopt;
+}
+
+std::optional<std::string> StartHysteria2Process(
+    const std::wstring& executable, const std::wstring& config_path) {
+  SECURITY_ATTRIBUTES security{};
+  security.nLength = sizeof(security);
+  security.bInheritHandle = TRUE;
+  HANDLE log_file = CreateFileW(
+      GetHysteria2LogPath().c_str(), FILE_APPEND_DATA,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, &security, OPEN_ALWAYS,
+      FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (log_file == INVALID_HANDLE_VALUE) {
+    return WindowsErrorMessage(GetLastError());
+  }
+
+  std::wstring command = QuoteArg(executable) + L" client -c " +
+                         QuoteArg(config_path);
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  startup.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
+  startup.wShowWindow = SW_HIDE;
+  startup.hStdOutput = log_file;
+  startup.hStdError = log_file;
+  startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+  PROCESS_INFORMATION process{};
+
+  const BOOL started = CreateProcessW(
+      executable.c_str(), command.data(), nullptr, nullptr, TRUE,
+      CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &startup,
+      &process);
+  CloseHandle(log_file);
+  if (!started) {
+    return WindowsErrorMessage(GetLastError());
+  }
+  CloseHandle(process.hThread);
+
+  const DWORD startup_wait = WaitForSingleObject(process.hProcess, 1800);
+  if (startup_wait == WAIT_OBJECT_0) {
+    DWORD exit_code = 1;
+    GetExitCodeProcess(process.hProcess, &exit_code);
+    CloseHandle(process.hProcess);
+    std::ostringstream message;
+    message << "Hysteria2 exited during startup with code " << exit_code
+            << "; log_tail="
+            << ReadTailUtf8File(GetHysteria2LogPath(), 1600);
+    return message.str();
+  }
+  if (startup_wait == WAIT_FAILED) {
+    const DWORD error = GetLastError();
+    TerminateProcess(process.hProcess, 1);
+    CloseHandle(process.hProcess);
+    return WindowsErrorMessage(error);
+  }
+
+  g_hysteria_process = process.hProcess;
+  g_hysteria_process_id = process.dwProcessId;
+  if (!WriteUtf8File(GetHysteria2PidPath(),
+                     std::to_string(g_hysteria_process_id))) {
+    TerminateProcess(g_hysteria_process, 1);
+    WaitForSingleObject(g_hysteria_process, 5000);
+    CloseHysteriaProcessHandle();
+    return "Failed to persist Hysteria2 process id";
+  }
+  AppendUtf8File(GetRunnerLogPath(),
+                 "hysteria2_started pid=" +
+                     std::to_string(g_hysteria_process_id) + "\n");
+  return std::nullopt;
 }
 
 std::wstring BuildServiceCommandLine(const std::wstring& config_path) {
@@ -587,21 +793,29 @@ std::optional<std::string> GetStringArg(const flutter::EncodableValue* args,
 }
 
 flutter::EncodableMap StatusMap() {
+  const bool hysteria_running = IsHysteria2Running();
   const auto amneziawg = ResolveAmneziaWgPath();
   const auto service_state = amneziawg ? QueryTunnelServiceState()
                                        : QueryLegacyTunnelServiceState();
   const bool service_running =
       service_state.has_value() && *service_state == SERVICE_RUNNING;
-  if (service_state.has_value()) {
-    g_connected = service_running;
+  if (hysteria_running || amneziawg || service_state.has_value()) {
+    g_connected = hysteria_running || service_running;
   }
   std::string runner = "missing";
-  if (amneziawg) {
+  std::string runtime_protocol;
+  if (hysteria_running) {
+    runner = "official_hysteria2_process";
+    runtime_protocol = "hysteria2";
+  } else if (amneziawg) {
     runner = "official_amneziawg_service";
+    runtime_protocol = service_running ? "graniwg" : "";
   } else if (ResolveTunnelDllPath()) {
     runner = "tunnel.dll";
+    runtime_protocol = service_running ? "graniwg" : "";
   } else if (ResolveAwgQuickPath()) {
     runner = "awg-quick";
+    runtime_protocol = g_connected ? "graniwg" : "";
   }
 
   return flutter::EncodableMap{
@@ -612,6 +826,10 @@ flutter::EncodableMap StatusMap() {
       {flutter::EncodableValue("rx_bytes"), flutter::EncodableValue(g_rx_bytes)},
       {flutter::EncodableValue("tx_bytes"), flutter::EncodableValue(g_tx_bytes)},
       {flutter::EncodableValue("runner"), flutter::EncodableValue(runner)},
+      {flutter::EncodableValue("runtime_protocol"),
+       flutter::EncodableValue(runtime_protocol)},
+      {flutter::EncodableValue("hysteria2_pid"),
+       flutter::EncodableValue(static_cast<int64_t>(g_hysteria_process_id))},
   };
 }
 
@@ -621,6 +839,8 @@ flutter::EncodableMap DesktopDiagnosticsMap() {
   const auto service_state = QueryTunnelServiceState();
   const auto legacy_service_state = QueryLegacyTunnelServiceState();
   const auto amneziawg = ResolveAmneziaWgPath();
+  const auto hysteria = ResolveHysteria2Path();
+  const bool hysteria_running = IsHysteria2Running();
   const auto tunnel_dll = ResolveTunnelDllPath();
   const auto awg_quick = ResolveAwgQuickPath();
 
@@ -631,12 +851,28 @@ flutter::EncodableMap DesktopDiagnosticsMap() {
       {flutter::EncodableValue("exe_exists"), flutter::EncodableValue(FileExists(GetExePath()))},
       {flutter::EncodableValue("exe_dir"), flutter::EncodableValue(WideToUtf8(GetExeDir()))},
       {flutter::EncodableValue("runtime_mode"),
-       flutter::EncodableValue(amneziawg ? "official_amneziawg_service"
-                                         : "legacy_fallback")},
+       flutter::EncodableValue(hysteria_running
+                                  ? "official_hysteria2_process"
+                                  : amneziawg ? "official_amneziawg_service"
+                                              : "legacy_fallback")},
       {flutter::EncodableValue("amneziawg_path"),
        flutter::EncodableValue(amneziawg ? WideToUtf8(*amneziawg) : "")},
       {flutter::EncodableValue("amneziawg_exists"),
        flutter::EncodableValue(amneziawg.has_value())},
+      {flutter::EncodableValue("hysteria2_path"),
+       flutter::EncodableValue(hysteria ? WideToUtf8(*hysteria) : "")},
+      {flutter::EncodableValue("hysteria2_exists"),
+       flutter::EncodableValue(hysteria.has_value())},
+      {flutter::EncodableValue("hysteria2_running"),
+       flutter::EncodableValue(hysteria_running)},
+      {flutter::EncodableValue("hysteria2_pid"),
+       flutter::EncodableValue(static_cast<int64_t>(g_hysteria_process_id))},
+      {flutter::EncodableValue("hysteria2_config_path"),
+       flutter::EncodableValue(WideToUtf8(GetHysteria2ConfigPath()))},
+      {flutter::EncodableValue("hysteria2_log_path"),
+       flutter::EncodableValue(WideToUtf8(GetHysteria2LogPath()))},
+      {flutter::EncodableValue("hysteria2_log_tail"),
+       flutter::EncodableValue(ReadTailUtf8File(GetHysteria2LogPath()))},
       {flutter::EncodableValue("official_service_name"),
        flutter::EncodableValue(WideToUtf8(kOfficialServiceName))},
       {flutter::EncodableValue("service_command"),
@@ -677,6 +913,11 @@ void HandleConnectAmneziaWg(
   if (!IsRunningAsAdmin()) {
     result->Error("WINDOWS_ADMIN_REQUIRED",
                   "Run GRANI as administrator to start the Windows VPN service");
+    return;
+  }
+
+  if (const auto error = StopHysteria2Process()) {
+    result->Error("WINDOWS_HYSTERIA2_STOP_FAILED", *error);
     return;
   }
 
@@ -739,8 +980,66 @@ void HandleConnectAmneziaWg(
   result->Success(flutter::EncodableValue(true));
 }
 
+void HandleConnectHysteria2(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto config = GetStringArg(call.arguments(), "config");
+  if (!config || config->empty()) {
+    result->Error("INVALID_CONFIG", "Hysteria2 config is empty");
+    return;
+  }
+  if (!IsRunningAsAdmin()) {
+    result->Error(
+        "WINDOWS_ADMIN_REQUIRED",
+        "Run GRANI as administrator to start the Windows Hysteria2 TUN");
+    return;
+  }
+
+  const auto hysteria = ResolveHysteria2Path();
+  if (!hysteria) {
+    result->Error(
+        kMissingHysteriaCode,
+        "Official Hysteria2 Windows runtime is not bundled. Package "
+        "hysteria.exe next to mobile_app.exe or set GRANI_HYSTERIA2_EXE.");
+    return;
+  }
+
+  if (const auto error = StopHysteria2Process()) {
+    result->Error("WINDOWS_HYSTERIA2_STOP_FAILED", *error);
+    return;
+  }
+  const auto amneziawg = ResolveAmneziaWgPath();
+  if (amneziawg) {
+    if (const auto error = UninstallOfficialTunnel(*amneziawg)) {
+      result->Error("WINDOWS_AWG_STOP_FAILED", *error);
+      return;
+    }
+  }
+  StopLegacyTunnelService();
+
+  const std::wstring config_path = GetHysteria2ConfigPath();
+  if (!WriteUtf8File(config_path, *config)) {
+    result->Error("CONFIG_WRITE_FAILED", "Failed to write Hysteria2 config");
+    return;
+  }
+  if (const auto error = StartHysteria2Process(*hysteria, config_path)) {
+    DeleteFileW(config_path.c_str());
+    result->Error("WINDOWS_HYSTERIA2_START_FAILED", *error);
+    return;
+  }
+
+  g_connected = true;
+  g_rx_bytes = 0;
+  g_tx_bytes = 0;
+  result->Success(flutter::EncodableValue(true));
+}
+
 void HandleDisconnectAmneziaWg(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto error = StopHysteria2Process()) {
+    result->Error("WINDOWS_HYSTERIA2_STOP_FAILED", *error);
+    return;
+  }
   const auto amneziawg = ResolveAmneziaWgPath();
   if (amneziawg) {
     if (const auto error = UninstallOfficialTunnel(*amneziawg)) {
@@ -778,6 +1077,10 @@ void RegisterGraniVpnChannel(flutter::BinaryMessenger* messenger) {
           HandleConnectAmneziaWg(call, std::move(result));
           return;
         }
+        if (method == "connectHysteria2") {
+          HandleConnectHysteria2(call, std::move(result));
+          return;
+        }
         if (method == "disconnectAmneziaWg" || method == "disconnect") {
           HandleDisconnectAmneziaWg(std::move(result));
           return;
@@ -797,6 +1100,10 @@ void RegisterGraniVpnChannel(flutter::BinaryMessenger* messenger) {
         }
         if (method == "getDesktopVpnDiagnostics") {
           result->Success(flutter::EncodableValue(DesktopDiagnosticsMap()));
+          return;
+        }
+        if (method == "getRuntimeDiagnostics") {
+          result->Success(flutter::EncodableValue(StatusMap()));
           return;
         }
         if (method == "requestPermission") {
