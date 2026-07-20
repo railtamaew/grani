@@ -274,7 +274,9 @@ class SimpleVpnController extends ChangeNotifier {
   })  : _api = api ?? SimpleVpnApi(),
         _runtime = runtime ?? createSimpleVpnRuntime(),
         _deviceIdProvider = deviceIdProvider,
-        _ensureDeviceRegistered = ensureDeviceRegistered;
+        _ensureDeviceRegistered = ensureDeviceRegistered {
+    _normalizeProtocolsForRuntime();
+  }
 
   static const Duration _configCacheTtl = Duration(days: 7);
   static const String _activeSessionCacheKey =
@@ -486,8 +488,12 @@ class SimpleVpnController extends ChangeNotifier {
     required String? preferredProtocolId,
   }) {
     _servers = servers;
-    _protocols =
-        protocols.isEmpty ? <SimpleVpnProtocol>[_selectedProtocol] : protocols;
+    final runtimeProtocols = _filterProtocolsForRuntime(protocols);
+    if (runtimeProtocols.isNotEmpty) {
+      _protocols = runtimeProtocols;
+    } else {
+      _normalizeProtocolsForRuntime();
+    }
     if (_servers.isNotEmpty) {
       final currentId = _selectedServer?.id ?? preferredServerId;
       _selectedServer = _servers.firstWhere(
@@ -497,9 +503,11 @@ class SimpleVpnController extends ChangeNotifier {
       unawaited(_persistSelectedServerId(_selectedServer!.id));
     }
     if (_protocols.isNotEmpty) {
-      final preferredId = _isSupportedProtocolId(preferredProtocolId)
+      final preferredId = _isProtocolSupportedByRuntime(preferredProtocolId)
           ? preferredProtocolId
-          : _selectedProtocol.id;
+          : _isProtocolSupportedByRuntime(_selectedProtocol.id)
+              ? _selectedProtocol.id
+              : _protocols.first.id;
       _selectedProtocol = _protocols.firstWhere(
         (protocol) => protocol.id == preferredId,
         orElse: () => _protocols.first,
@@ -577,7 +585,7 @@ class SimpleVpnController extends ChangeNotifier {
 
   void selectProtocol(SimpleVpnProtocol protocol) {
     if (isBusy || isConnected) return;
-    if (!_isSupportedProtocolId(protocol.id)) {
+    if (!_isProtocolSupportedByRuntime(protocol.id)) {
       return;
     }
     _selectedProtocol = protocol;
@@ -590,6 +598,34 @@ class SimpleVpnController extends ChangeNotifier {
     return protocolId == 'graniwg' ||
         protocolId == 'vless_ws' ||
         protocolId == 'hysteria2';
+  }
+
+  bool _isProtocolSupportedByRuntime(String? protocolId) {
+    if (!_isSupportedProtocolId(protocolId)) return false;
+    if (_runtime is WindowsSimpleVpnRuntime ||
+        _runtime is MacOSSimpleVpnRuntime) {
+      return protocolId == 'graniwg';
+    }
+    return true;
+  }
+
+  List<SimpleVpnProtocol> _filterProtocolsForRuntime(
+    Iterable<SimpleVpnProtocol> protocols,
+  ) {
+    return protocols
+        .where((protocol) => _isProtocolSupportedByRuntime(protocol.id))
+        .toList(growable: false);
+  }
+
+  void _normalizeProtocolsForRuntime() {
+    final runtimeProtocols = _filterProtocolsForRuntime(_protocols);
+    if (runtimeProtocols.isNotEmpty) {
+      _protocols = runtimeProtocols;
+    }
+    if (!_isProtocolSupportedByRuntime(_selectedProtocol.id) ||
+        !_protocols.any((protocol) => protocol.id == _selectedProtocol.id)) {
+      _selectedProtocol = _protocols.first;
+    }
   }
 
   Future<SimpleVpnStartResult?> _safeStartSession(
@@ -695,11 +731,11 @@ class SimpleVpnController extends ChangeNotifier {
   Future<String?> _readSelectedProtocolId() async {
     final cached =
         (await _cacheService.getString(_selectedProtocolCacheKey))?.trim();
-    return _isSupportedProtocolId(cached) ? cached : null;
+    return _isProtocolSupportedByRuntime(cached) ? cached : null;
   }
 
   Future<void> _persistSelectedProtocolId(String? protocolId) async {
-    if (!_isSupportedProtocolId(protocolId)) return;
+    if (!_isProtocolSupportedByRuntime(protocolId)) return;
     await _cacheService.setString(_selectedProtocolCacheKey, protocolId!);
   }
 
@@ -712,7 +748,7 @@ class SimpleVpnController extends ChangeNotifier {
     _lastConnectedDeviceId = deviceId;
     _lastConnectedConfigFromCache = configFromCache;
     _nodeTrafficVerifiedForSession = false;
-    if (_isSupportedProtocolId(config.protocol)) {
+    if (_isProtocolSupportedByRuntime(config.protocol)) {
       final matchedProtocol = _protocols.firstWhere(
         (protocol) => protocol.id == config.protocol,
         orElse: () => SimpleVpnProtocol(
