@@ -11,6 +11,7 @@ import '../services/native_vpn_service.dart';
 import '../services/analytics_service.dart';
 import 'simple_vpn_api.dart';
 import 'windows_hysteria2_config.dart';
+import 'windows_vless_config.dart';
 
 enum SimpleVpnState {
   disconnected,
@@ -169,6 +170,14 @@ class WindowsSimpleVpnRuntime implements SimpleVpnRuntime {
     required String? sessionId,
     required String source,
   }) async {
+    if (config.engine == 'xray' || config.protocol == 'vless_ws') {
+      final nativeConfig = buildWindowsVlessConfig(config);
+      return NativeVpnService.connectVless(
+        nativeConfig,
+        connectionSessionId: sessionId,
+        source: source,
+      );
+    }
     if (config.engine == 'hysteria2' || config.protocol == 'hysteria2') {
       final nativeConfig = buildWindowsHysteria2Config(config);
       return NativeVpnService.connectHysteria2(
@@ -286,6 +295,12 @@ class SimpleVpnController extends ChangeNotifier {
         _runtime = runtime ?? createSimpleVpnRuntime(),
         _deviceIdProvider = deviceIdProvider,
         _ensureDeviceRegistered = ensureDeviceRegistered {
+    if (_runtime is WindowsSimpleVpnRuntime) {
+      _selectedProtocol = _protocols.firstWhere(
+        (protocol) => protocol.id == 'graniwg',
+        orElse: () => _selectedProtocol,
+      );
+    }
     _normalizeProtocolsForRuntime();
   }
 
@@ -617,7 +632,9 @@ class SimpleVpnController extends ChangeNotifier {
   bool _isProtocolSupportedByRuntime(String? protocolId) {
     if (!_isSupportedProtocolId(protocolId)) return false;
     if (_runtime is WindowsSimpleVpnRuntime) {
-      return protocolId == 'graniwg' || protocolId == 'hysteria2';
+      return protocolId == 'graniwg' ||
+          protocolId == 'hysteria2' ||
+          protocolId == 'vless_ws';
     }
     if (_runtime is MacOSSimpleVpnRuntime) {
       return protocolId == 'graniwg';

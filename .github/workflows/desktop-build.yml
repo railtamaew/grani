@@ -69,6 +69,30 @@ jobs:
           }
           Get-Item $runtimePath
 
+      - name: Download official sing-box Windows runtime
+        shell: pwsh
+        run: |
+          $version = '1.13.14'
+          $runtimeDir = 'bin/sing-box/windows'
+          $archivePath = Join-Path $env:RUNNER_TEMP "sing-box-$version-windows-amd64.zip"
+          $extractDir = Join-Path $env:RUNNER_TEMP "sing-box-$version-windows-amd64"
+          $downloadUrl = "https://github.com/SagerNet/sing-box/releases/download/v$version/sing-box-$version-windows-amd64.zip"
+          $expectedSha256 = 'f580782c6dd10f7691c66cea1d7c421813c5fbf7e305d1ee7ce0c3a40d196341'
+
+          New-Item -ItemType Directory -Force -Path $runtimeDir
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "sing-box SHA256 mismatch: expected $expectedSha256, got $actualSha256"
+          }
+          Expand-Archive -Path $archivePath -DestinationPath $extractDir -Force
+          $source = Get-ChildItem -Path $extractDir -Recurse -Filter 'sing-box.exe' | Select-Object -First 1
+          if ($null -eq $source) {
+            throw 'sing-box.exe is missing from the official archive'
+          }
+          Copy-Item $source.FullName (Join-Path $runtimeDir 'sing-box.exe') -Force
+          & (Join-Path $runtimeDir 'sing-box.exe') version
+
       - name: Package Windows VPN runtimes
         shell: pwsh
         run: |
@@ -91,11 +115,17 @@ jobs:
             throw "Missing official Hysteria2 runtime at $hysteriaSource"
           }
           Copy-Item $hysteriaSource (Join-Path $releaseDir 'hysteria.exe') -Force
+          $singBoxSource = 'bin/sing-box/windows/sing-box.exe'
+          if (!(Test-Path $singBoxSource)) {
+            throw "Missing official sing-box runtime at $singBoxSource"
+          }
+          Copy-Item $singBoxSource (Join-Path $releaseDir 'sing-box.exe') -Force
           Get-Item (Join-Path $releaseDir 'mobile_app.exe')
           Get-Item (Join-Path $releaseDir 'amneziawg.exe')
           Get-Item (Join-Path $releaseDir 'awg.exe')
           Get-Item (Join-Path $releaseDir 'wintun.dll')
           Get-Item (Join-Path $releaseDir 'hysteria.exe')
+          Get-Item (Join-Path $releaseDir 'sing-box.exe')
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4

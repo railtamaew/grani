@@ -21,6 +21,7 @@ constexpr wchar_t kOfficialServiceName[] = L"AmneziaWGTunnel$grani-awg";
 constexpr wchar_t kLegacyServiceName[] = L"grani-awg";
 constexpr char kMissingRunnerCode[] = "WINDOWS_AWG_RUNNER_MISSING";
 constexpr char kMissingHysteriaCode[] = "WINDOWS_HYSTERIA2_RUNNER_MISSING";
+constexpr char kMissingSingBoxCode[] = "WINDOWS_SING_BOX_RUNNER_MISSING";
 
 std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> g_channel;
 bool g_connected = false;
@@ -28,6 +29,8 @@ int64_t g_rx_bytes = 0;
 int64_t g_tx_bytes = 0;
 HANDLE g_hysteria_process = nullptr;
 DWORD g_hysteria_process_id = 0;
+HANDLE g_sing_box_process = nullptr;
+DWORD g_sing_box_process_id = 0;
 
 std::wstring Utf8ToWide(const std::string& value) {
   if (value.empty()) {
@@ -205,6 +208,27 @@ std::optional<std::wstring> ResolveHysteria2Path() {
   return std::nullopt;
 }
 
+std::optional<std::wstring> ResolveSingBoxPath() {
+  if (auto env = GetEnvPath(L"GRANI_SING_BOX_EXE")) {
+    if (FileExists(*env)) {
+      return env;
+    }
+  }
+
+  const std::wstring bundled = GetExeDir() +
+      L"\\data\\flutter_assets\\bin\\sing-box\\windows\\sing-box.exe";
+  if (FileExists(bundled)) {
+    return bundled;
+  }
+
+  const std::wstring local = GetExeDir() + L"\\sing-box.exe";
+  if (FileExists(local)) {
+    return local;
+  }
+
+  return std::nullopt;
+}
+
 std::wstring GetExePath() {
   wchar_t path[MAX_PATH * 4];
   const DWORD size = GetModuleFileNameW(nullptr, path, ARRAYSIZE(path));
@@ -270,6 +294,33 @@ std::wstring GetHysteria2PidPath() {
     return L"hysteria2.pid";
   }
   return config_path.substr(0, slash) + L"\\hysteria2.pid";
+}
+
+std::wstring GetSingBoxConfigPath() {
+  const std::wstring config_path = GetConfigPath();
+  const size_t slash = config_path.find_last_of(L"\\/");
+  if (slash == std::wstring::npos) {
+    return L"vless-sing-box.json";
+  }
+  return config_path.substr(0, slash) + L"\\vless-sing-box.json";
+}
+
+std::wstring GetSingBoxLogPath() {
+  const std::wstring config_path = GetConfigPath();
+  const size_t slash = config_path.find_last_of(L"\\/");
+  if (slash == std::wstring::npos) {
+    return L"vless-sing-box.log";
+  }
+  return config_path.substr(0, slash) + L"\\vless-sing-box.log";
+}
+
+std::wstring GetSingBoxPidPath() {
+  const std::wstring config_path = GetConfigPath();
+  const size_t slash = config_path.find_last_of(L"\\/");
+  if (slash == std::wstring::npos) {
+    return L"vless-sing-box.pid";
+  }
+  return config_path.substr(0, slash) + L"\\vless-sing-box.pid";
 }
 
 bool WriteUtf8File(const std::wstring& path, const std::string& content) {
@@ -488,6 +539,160 @@ std::optional<std::string> StartHysteria2Process(
   AppendUtf8File(GetRunnerLogPath(),
                  "hysteria2_started pid=" +
                      std::to_string(g_hysteria_process_id) + "\n");
+  return std::nullopt;
+}
+
+void CloseSingBoxProcessHandle() {
+  if (g_sing_box_process != nullptr) {
+    CloseHandle(g_sing_box_process);
+    g_sing_box_process = nullptr;
+  }
+  g_sing_box_process_id = 0;
+}
+
+HANDLE OpenPersistedSingBoxProcess() {
+  const auto sing_box = ResolveSingBoxPath();
+  if (!sing_box) {
+    return nullptr;
+  }
+
+  if (g_sing_box_process != nullptr) {
+    DWORD exit_code = 0;
+    if (GetExitCodeProcess(g_sing_box_process, &exit_code) &&
+        exit_code == STILL_ACTIVE &&
+        ProcessImageMatches(g_sing_box_process, *sing_box)) {
+      return g_sing_box_process;
+    }
+    CloseSingBoxProcessHandle();
+  }
+
+  const std::string raw_pid = ReadTailUtf8File(GetSingBoxPidPath(), 64);
+  DWORD pid = 0;
+  try {
+    pid = static_cast<DWORD>(std::stoul(raw_pid));
+  } catch (...) {
+    DeleteFileW(GetSingBoxPidPath().c_str());
+    return nullptr;
+  }
+  if (pid == 0) {
+    DeleteFileW(GetSingBoxPidPath().c_str());
+    return nullptr;
+  }
+
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION |
+                                   PROCESS_TERMINATE | SYNCHRONIZE,
+                               FALSE, pid);
+  if (process == nullptr) {
+    DeleteFileW(GetSingBoxPidPath().c_str());
+    return nullptr;
+  }
+  DWORD exit_code = 0;
+  if (!GetExitCodeProcess(process, &exit_code) || exit_code != STILL_ACTIVE ||
+      !ProcessImageMatches(process, *sing_box)) {
+    CloseHandle(process);
+    DeleteFileW(GetSingBoxPidPath().c_str());
+    return nullptr;
+  }
+
+  g_sing_box_process = process;
+  g_sing_box_process_id = pid;
+  return process;
+}
+
+bool IsSingBoxRunning() {
+  return OpenPersistedSingBoxProcess() != nullptr;
+}
+
+std::optional<std::string> StopSingBoxProcess() {
+  HANDLE process = OpenPersistedSingBoxProcess();
+  if (process != nullptr) {
+    if (!TerminateProcess(process, 0)) {
+      return WindowsErrorMessage(GetLastError());
+    }
+    if (WaitForSingleObject(process, 10000) != WAIT_OBJECT_0) {
+      return "Timed out waiting for sing-box process to stop";
+    }
+  }
+
+  CloseSingBoxProcessHandle();
+  DeleteFileW(GetSingBoxPidPath().c_str());
+  DeleteFileW(GetSingBoxConfigPath().c_str());
+  return std::nullopt;
+}
+
+std::optional<std::string> StartSingBoxProcess(
+    const std::wstring& executable, const std::wstring& config_path) {
+  const int check_exit_code = RunHiddenAndWait(
+      executable, L"check -c " + QuoteArg(config_path));
+  if (check_exit_code != 0) {
+    std::ostringstream message;
+    message << "sing-box rejected VLESS config with exit code "
+            << check_exit_code;
+    return message.str();
+  }
+
+  SECURITY_ATTRIBUTES security{};
+  security.nLength = sizeof(security);
+  security.bInheritHandle = TRUE;
+  HANDLE log_file = CreateFileW(
+      GetSingBoxLogPath().c_str(), FILE_APPEND_DATA,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, &security, OPEN_ALWAYS,
+      FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (log_file == INVALID_HANDLE_VALUE) {
+    return WindowsErrorMessage(GetLastError());
+  }
+
+  std::wstring command = QuoteArg(executable) + L" run -c " +
+                         QuoteArg(config_path);
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  startup.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
+  startup.wShowWindow = SW_HIDE;
+  startup.hStdOutput = log_file;
+  startup.hStdError = log_file;
+  startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+  PROCESS_INFORMATION process{};
+
+  const BOOL started = CreateProcessW(
+      executable.c_str(), command.data(), nullptr, nullptr, TRUE,
+      CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &startup,
+      &process);
+  CloseHandle(log_file);
+  if (!started) {
+    return WindowsErrorMessage(GetLastError());
+  }
+  CloseHandle(process.hThread);
+
+  const DWORD startup_wait = WaitForSingleObject(process.hProcess, 1800);
+  if (startup_wait == WAIT_OBJECT_0) {
+    DWORD exit_code = 1;
+    GetExitCodeProcess(process.hProcess, &exit_code);
+    CloseHandle(process.hProcess);
+    std::ostringstream message;
+    message << "sing-box exited during startup with code " << exit_code
+            << "; log_tail="
+            << ReadTailUtf8File(GetSingBoxLogPath(), 1600);
+    return message.str();
+  }
+  if (startup_wait == WAIT_FAILED) {
+    const DWORD error = GetLastError();
+    TerminateProcess(process.hProcess, 1);
+    CloseHandle(process.hProcess);
+    return WindowsErrorMessage(error);
+  }
+
+  g_sing_box_process = process.hProcess;
+  g_sing_box_process_id = process.dwProcessId;
+  if (!WriteUtf8File(GetSingBoxPidPath(),
+                     std::to_string(g_sing_box_process_id))) {
+    TerminateProcess(g_sing_box_process, 1);
+    WaitForSingleObject(g_sing_box_process, 5000);
+    CloseSingBoxProcessHandle();
+    return "Failed to persist sing-box process id";
+  }
+  AppendUtf8File(GetRunnerLogPath(),
+                 "vless_sing_box_started pid=" +
+                     std::to_string(g_sing_box_process_id) + "\n");
   return std::nullopt;
 }
 
@@ -794,19 +999,24 @@ std::optional<std::string> GetStringArg(const flutter::EncodableValue* args,
 
 flutter::EncodableMap StatusMap() {
   const bool hysteria_running = IsHysteria2Running();
+  const bool sing_box_running = IsSingBoxRunning();
   const auto amneziawg = ResolveAmneziaWgPath();
   const auto service_state = amneziawg ? QueryTunnelServiceState()
                                        : QueryLegacyTunnelServiceState();
   const bool service_running =
       service_state.has_value() && *service_state == SERVICE_RUNNING;
-  if (hysteria_running || amneziawg || service_state.has_value()) {
-    g_connected = hysteria_running || service_running;
+  if (hysteria_running || sing_box_running || amneziawg ||
+      service_state.has_value()) {
+    g_connected = hysteria_running || sing_box_running || service_running;
   }
   std::string runner = "missing";
   std::string runtime_protocol;
   if (hysteria_running) {
     runner = "official_hysteria2_process";
     runtime_protocol = "hysteria2";
+  } else if (sing_box_running) {
+    runner = "official_sing_box_process";
+    runtime_protocol = "vless_ws";
   } else if (amneziawg) {
     runner = "official_amneziawg_service";
     runtime_protocol = service_running ? "graniwg" : "";
@@ -830,6 +1040,8 @@ flutter::EncodableMap StatusMap() {
        flutter::EncodableValue(runtime_protocol)},
       {flutter::EncodableValue("hysteria2_pid"),
        flutter::EncodableValue(static_cast<int64_t>(g_hysteria_process_id))},
+      {flutter::EncodableValue("sing_box_pid"),
+       flutter::EncodableValue(static_cast<int64_t>(g_sing_box_process_id))},
   };
 }
 
@@ -841,6 +1053,8 @@ flutter::EncodableMap DesktopDiagnosticsMap() {
   const auto amneziawg = ResolveAmneziaWgPath();
   const auto hysteria = ResolveHysteria2Path();
   const bool hysteria_running = IsHysteria2Running();
+  const auto sing_box = ResolveSingBoxPath();
+  const bool sing_box_running = IsSingBoxRunning();
   const auto tunnel_dll = ResolveTunnelDllPath();
   const auto awg_quick = ResolveAwgQuickPath();
 
@@ -853,6 +1067,8 @@ flutter::EncodableMap DesktopDiagnosticsMap() {
       {flutter::EncodableValue("runtime_mode"),
        flutter::EncodableValue(hysteria_running
                                   ? "official_hysteria2_process"
+                                  : sing_box_running
+                                      ? "official_sing_box_process"
                                   : amneziawg ? "official_amneziawg_service"
                                               : "legacy_fallback")},
       {flutter::EncodableValue("amneziawg_path"),
@@ -873,6 +1089,20 @@ flutter::EncodableMap DesktopDiagnosticsMap() {
        flutter::EncodableValue(WideToUtf8(GetHysteria2LogPath()))},
       {flutter::EncodableValue("hysteria2_log_tail"),
        flutter::EncodableValue(ReadTailUtf8File(GetHysteria2LogPath()))},
+      {flutter::EncodableValue("sing_box_path"),
+       flutter::EncodableValue(sing_box ? WideToUtf8(*sing_box) : "")},
+      {flutter::EncodableValue("sing_box_exists"),
+       flutter::EncodableValue(sing_box.has_value())},
+      {flutter::EncodableValue("sing_box_running"),
+       flutter::EncodableValue(sing_box_running)},
+      {flutter::EncodableValue("sing_box_pid"),
+       flutter::EncodableValue(static_cast<int64_t>(g_sing_box_process_id))},
+      {flutter::EncodableValue("sing_box_config_path"),
+       flutter::EncodableValue(WideToUtf8(GetSingBoxConfigPath()))},
+      {flutter::EncodableValue("sing_box_log_path"),
+       flutter::EncodableValue(WideToUtf8(GetSingBoxLogPath()))},
+      {flutter::EncodableValue("sing_box_log_tail"),
+       flutter::EncodableValue(ReadTailUtf8File(GetSingBoxLogPath()))},
       {flutter::EncodableValue("official_service_name"),
        flutter::EncodableValue(WideToUtf8(kOfficialServiceName))},
       {flutter::EncodableValue("service_command"),
@@ -918,6 +1148,10 @@ void HandleConnectAmneziaWg(
 
   if (const auto error = StopHysteria2Process()) {
     result->Error("WINDOWS_HYSTERIA2_STOP_FAILED", *error);
+    return;
+  }
+  if (const auto error = StopSingBoxProcess()) {
+    result->Error("WINDOWS_SING_BOX_STOP_FAILED", *error);
     return;
   }
 
@@ -1008,6 +1242,10 @@ void HandleConnectHysteria2(
     result->Error("WINDOWS_HYSTERIA2_STOP_FAILED", *error);
     return;
   }
+  if (const auto error = StopSingBoxProcess()) {
+    result->Error("WINDOWS_SING_BOX_STOP_FAILED", *error);
+    return;
+  }
   const auto amneziawg = ResolveAmneziaWgPath();
   if (amneziawg) {
     if (const auto error = UninstallOfficialTunnel(*amneziawg)) {
@@ -1034,10 +1272,72 @@ void HandleConnectHysteria2(
   result->Success(flutter::EncodableValue(true));
 }
 
+void HandleConnectVless(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto config = GetStringArg(call.arguments(), "config");
+  if (!config || config->empty()) {
+    result->Error("INVALID_CONFIG", "VLESS sing-box config is empty");
+    return;
+  }
+  if (!IsRunningAsAdmin()) {
+    result->Error(
+        "WINDOWS_ADMIN_REQUIRED",
+        "Run GRANI as administrator to start the Windows VLESS TUN");
+    return;
+  }
+
+  const auto sing_box = ResolveSingBoxPath();
+  if (!sing_box) {
+    result->Error(
+        kMissingSingBoxCode,
+        "Official sing-box Windows runtime is not bundled. Package "
+        "sing-box.exe next to mobile_app.exe or set GRANI_SING_BOX_EXE.");
+    return;
+  }
+
+  if (const auto error = StopHysteria2Process()) {
+    result->Error("WINDOWS_HYSTERIA2_STOP_FAILED", *error);
+    return;
+  }
+  if (const auto error = StopSingBoxProcess()) {
+    result->Error("WINDOWS_SING_BOX_STOP_FAILED", *error);
+    return;
+  }
+  const auto amneziawg = ResolveAmneziaWgPath();
+  if (amneziawg) {
+    if (const auto error = UninstallOfficialTunnel(*amneziawg)) {
+      result->Error("WINDOWS_AWG_STOP_FAILED", *error);
+      return;
+    }
+  }
+  StopLegacyTunnelService();
+
+  const std::wstring config_path = GetSingBoxConfigPath();
+  if (!WriteUtf8File(config_path, *config)) {
+    result->Error("CONFIG_WRITE_FAILED", "Failed to write VLESS config");
+    return;
+  }
+  if (const auto error = StartSingBoxProcess(*sing_box, config_path)) {
+    DeleteFileW(config_path.c_str());
+    result->Error("WINDOWS_SING_BOX_START_FAILED", *error);
+    return;
+  }
+
+  g_connected = true;
+  g_rx_bytes = 0;
+  g_tx_bytes = 0;
+  result->Success(flutter::EncodableValue(true));
+}
+
 void HandleDisconnectAmneziaWg(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   if (const auto error = StopHysteria2Process()) {
     result->Error("WINDOWS_HYSTERIA2_STOP_FAILED", *error);
+    return;
+  }
+  if (const auto error = StopSingBoxProcess()) {
+    result->Error("WINDOWS_SING_BOX_STOP_FAILED", *error);
     return;
   }
   const auto amneziawg = ResolveAmneziaWgPath();
@@ -1079,6 +1379,10 @@ void RegisterGraniVpnChannel(flutter::BinaryMessenger* messenger) {
         }
         if (method == "connectHysteria2") {
           HandleConnectHysteria2(call, std::move(result));
+          return;
+        }
+        if (method == "connectVless") {
+          HandleConnectVless(call, std::move(result));
           return;
         }
         if (method == "disconnectAmneziaWg" || method == "disconnect") {
