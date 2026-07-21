@@ -185,8 +185,10 @@ jobs:
             find ~/Library/Developer/Xcode/DerivedData -path '*/SourcePackages/checkouts/*' -maxdepth 1 -type d -print || true
             exit 1
           fi
-          mkdir -p "$bridge_dir/.tmp/patchtmp"
-          TMPDIR="$bridge_dir/.tmp/patchtmp" make -C "$bridge_dir" PLATFORM_NAME=macosx
+          bridge_temp="$RUNNER_TEMP/wireguardkitgo-temp"
+          rm -rf "$bridge_temp"
+          mkdir -p "$bridge_temp" "$bridge_dir/out"
+          TMPDIR="$RUNNER_TEMP" make -C "$bridge_dir" PLATFORM_NAME=macosx CONFIGURATION_TEMP_DIR="$bridge_temp" CONFIGURATION_BUILD_DIR="$bridge_dir/out"
           test -f "$bridge_dir/out/libwg-go.a"
           ls -lh "$bridge_dir/out/libwg-go.a"
 
