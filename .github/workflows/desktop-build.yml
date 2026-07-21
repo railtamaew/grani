@@ -149,6 +149,11 @@ jobs:
           channel: 'stable'
           cache: true
 
+      - name: Setup Go for WireGuardKitGo
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+
       - name: Install dependencies
         run: flutter pub get
 
