@@ -176,13 +176,15 @@ jobs:
         run: |
           set -euxo pipefail
           go version
+          flutter build macos --config-only
           xcodebuild -resolvePackageDependencies \
             -workspace macos/Runner.xcworkspace \
-            -scheme Runner
-          bridge_dir="$(find ~/Library/Developer/Xcode/DerivedData -path '*/SourcePackages/checkouts/amneziawg-apple/Sources/WireGuardKitGo' -type d | head -n 1)"
-          if [ -z "$bridge_dir" ]; then
+            -scheme Runner \
+            -derivedDataPath build/macos
+          bridge_dir="$PWD/build/macos/SourcePackages/checkouts/amneziawg-apple/Sources/WireGuardKitGo"
+          if [ ! -d "$bridge_dir" ]; then
             echo "amneziawg-apple WireGuardKitGo checkout was not found"
-            find ~/Library/Developer/Xcode/DerivedData -path '*/SourcePackages/checkouts/*' -maxdepth 1 -type d -print || true
+            find "$PWD/build/macos/SourcePackages/checkouts" -path '*/Sources/WireGuardKitGo' -type d -print || true
             exit 1
           fi
           bridge_temp="$RUNNER_TEMP/wireguardkitgo-temp"
