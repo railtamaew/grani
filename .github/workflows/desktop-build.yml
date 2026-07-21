@@ -188,7 +188,30 @@ jobs:
           bridge_temp="$RUNNER_TEMP/wireguardkitgo-temp"
           rm -rf "$bridge_temp"
           mkdir -p "$bridge_temp" "$bridge_dir/out"
-          TMPDIR="$RUNNER_TEMP" make -C "$bridge_dir" PLATFORM_NAME=macosx CONFIGURATION_TEMP_DIR="$bridge_temp" CONFIGURATION_BUILD_DIR="$bridge_dir/out"
+          real_goroot="$(go env GOROOT)"
+          prepared_goroot="$bridge_temp/wireguard-go-bridge/goroot"
+          mkdir -p "$prepared_goroot"
+          rsync -a --delete --exclude=pkg/obj/go-build "$real_goroot/" "$prepared_goroot/"
+          PREPARED_GOROOT="$prepared_goroot" python3 - <<WGOPREP
+          from pathlib import Path
+          import os
+          root = Path(os.environ["PREPARED_GOROOT"])
+          replacements = [
+              ("src/runtime/sys_darwin.go", "libc_mach_absolute_time", "libc_mach_continuous_time"),
+              ("src/runtime/sys_darwin_amd64.s", "CALL\tlibc_mach_absolute_time(SB)", "CALL\tlibc_mach_continuous_time(SB)"),
+              ("src/runtime/sys_darwin_arm64.s", "BL\tlibc_mach_absolute_time(SB)", "BL\tlibc_mach_continuous_time(SB)"),
+          ]
+          for rel, old_value, new_value in replacements:
+              runtime_path = root / rel
+              value = runtime_path.read_text()
+              if new_value not in value:
+                  if old_value not in value:
+                      raise SystemExit(f"{old_value} not found in {runtime_path}")
+                  value = value.replace(old_value, new_value, 1)
+                  runtime_path.write_text(value)
+          (root / ".prepared").touch()
+          WGOPREP
+          make -C "$bridge_dir" PLATFORM_NAME=macosx CONFIGURATION_TEMP_DIR="$bridge_temp" CONFIGURATION_BUILD_DIR="$bridge_dir/out"
           test -f "$bridge_dir/out/libwg-go.a"
           ls -lh "$bridge_dir/out/libwg-go.a"
 
