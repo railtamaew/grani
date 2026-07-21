@@ -218,30 +218,38 @@ jobs:
           ls -lh "$bridge_dir/out/libwg-go.a"
 
       - name: Build macOS
-        run: |
-          set -euxo pipefail
-          build_name="$(awk '/^version:/ {print $2; exit}' pubspec.yaml | cut -d+ -f1)"
-          build_number="$(awk -F+ '/^version:/ {print $2; exit}' pubspec.yaml | tr -dc '0-9')"
-          : "${build_name:=1.0.0}"
-          : "${build_number:=1}"
-          export FLUTTER_BUILD_NAME="$build_name"
-          export FLUTTER_BUILD_NUMBER="$build_number"
-          flutter build macos --build-name "$build_name" --build-number "$build_number"
+        run: flutter build macos
 
       - name: Package macOS app
         working-directory: mobile-app
         run: |
           set -euxo pipefail
           release_dir="$PWD/build/macos/Build/Products/Release"
-          app_path="$release_dir/GrANI.app"
-          if [ ! -d "$app_path" ]; then
-            app_path="$(find "$release_dir" -maxdepth 1 -name '*.app' -type d | head -n 1)"
-          fi
-          test -n "$app_path"
-          test -d "$app_path"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app_path/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$app_path/Contents/Info.plist"
-          find "$app_path/Contents/PlugIns" -name Info.plist -print -exec /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" {} \; -exec /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" {} \; || true
+          source_app="$(find "$release_dir" -maxdepth 1 -name '*.app' -type d | head -n 1)"
+          test -n "$source_app"
+          test -d "$source_app"
+
+          package_dir="$PWD/build/macos/package"
+          rm -rf "$package_dir"
+          mkdir -p "$package_dir"
+          ditto "$source_app" "$package_dir/GrANI.app"
+          app_path="$package_dir/GrANI.app"
+
+          parent_short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Contents/Info.plist")"
+          parent_build_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_path/Contents/Info.plist")"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleName GrANI' "$app_path/Contents/Info.plist" || true
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName GrANI' "$app_path/Contents/Info.plist" || /usr/libexec/PlistBuddy -c 'Add :CFBundleDisplayName string GrANI' "$app_path/Contents/Info.plist"
+
+          while IFS= read -r extension_info; do
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $parent_short_version" "$extension_info"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $parent_build_version" "$extension_info"
+          done < <(find "$app_path/Contents/PlugIns" -name Info.plist -print)
+
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app_path/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_path/Contents/Info.plist"
+          find "$app_path/Contents/PlugIns" -name Info.plist -print -exec /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' {} \; -exec /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' {} \; || true
+
           ditto -c -k --sequesterRsrc --keepParent "$app_path" "$PWD/build/macos/grani-macos-release.zip"
           ls -lh "$PWD/build/macos/grani-macos-release.zip"
 
