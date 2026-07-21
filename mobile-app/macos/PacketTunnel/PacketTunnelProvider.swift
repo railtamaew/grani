@@ -28,7 +28,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     do {
       let tunnelConfiguration = try TunnelConfiguration(
         fromWgQuickConfig: wgQuickConfig,
-        called: tunnelProtocol.localizedDescription ?? "GRANI VPN"
+        called: tunnelProtocol.serverAddress ?? "GRANI VPN"
       )
       adapter.start(tunnelConfiguration: tunnelConfiguration) { error in
         if let error {
