@@ -4,11 +4,13 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<key>com.apple.developer.networking.networkextension</key>
 	<array>
-		<string>packet-tunnel</string>
+		<string>packet-tunnel-provider</string>
 	</array>
 </dict>
 </plist>

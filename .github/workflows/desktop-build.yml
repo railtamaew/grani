@@ -166,6 +166,24 @@ jobs:
             exit 1
           }
 
+      - name: Prepare AmneziaWG Apple bridge
+        working-directory: mobile-app
+        run: |
+          set -euxo pipefail
+          go version
+          xcodebuild -resolvePackageDependencies \
+            -workspace macos/Runner.xcworkspace \
+            -scheme Runner
+          bridge_dir="$(find ~/Library/Developer/Xcode/DerivedData -path '*/SourcePackages/checkouts/amneziawg-apple/Sources/WireGuardKitGo' -type d | head -n 1)"
+          if [ -z "$bridge_dir" ]; then
+            echo "amneziawg-apple WireGuardKitGo checkout was not found"
+            find ~/Library/Developer/Xcode/DerivedData -path '*/SourcePackages/checkouts/*' -maxdepth 1 -type d -print || true
+            exit 1
+          fi
+          make -C "$bridge_dir" PLATFORM_NAME=macosx
+          test -f "$bridge_dir/out/libwg-go.a"
+          ls -lh "$bridge_dir/out/libwg-go.a"
+
       - name: Build macOS
         run: flutter build macos
 
