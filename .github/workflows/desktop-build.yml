@@ -218,10 +218,35 @@ jobs:
           ls -lh "$bridge_dir/out/libwg-go.a"
 
       - name: Build macOS
-        run: flutter build macos
+        run: |
+          set -euxo pipefail
+          build_name="$(awk '/^version:/ {print $2; exit}' pubspec.yaml | cut -d+ -f1)"
+          build_number="$(awk -F+ '/^version:/ {print $2; exit}' pubspec.yaml | tr -dc '0-9')"
+          : "${build_name:=1.0.0}"
+          : "${build_number:=1}"
+          export FLUTTER_BUILD_NAME="$build_name"
+          export FLUTTER_BUILD_NUMBER="$build_number"
+          flutter build macos --build-name "$build_name" --build-number "$build_number"
+
+      - name: Package macOS app
+        working-directory: mobile-app
+        run: |
+          set -euxo pipefail
+          release_dir="$PWD/build/macos/Build/Products/Release"
+          app_path="$release_dir/GrANI.app"
+          if [ ! -d "$app_path" ]; then
+            app_path="$(find "$release_dir" -maxdepth 1 -name '*.app' -type d | head -n 1)"
+          fi
+          test -n "$app_path"
+          test -d "$app_path"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app_path/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$app_path/Contents/Info.plist"
+          find "$app_path/Contents/PlugIns" -name Info.plist -print -exec /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" {} \; -exec /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" {} \; || true
+          ditto -c -k --sequesterRsrc --keepParent "$app_path" "$PWD/build/macos/grani-macos-release.zip"
+          ls -lh "$PWD/build/macos/grani-macos-release.zip"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-release
-          path: mobile-app/build/macos/Build/Products/Release/
+          path: mobile-app/build/macos/grani-macos-release.zip
