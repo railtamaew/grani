@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -57,6 +58,172 @@ bool get _isMobileTarget =>
     !kIsWeb &&
     (defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.iOS);
+
+bool get _isWindowsTarget =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+
+const Duration _windowsStartupStepTimeout = Duration(seconds: 8);
+
+void _writeWindowsStartupTrace(
+  String message, [
+  Object? error,
+  StackTrace? stackTrace,
+]) {
+  if (!_isWindowsTarget) return;
+  try {
+    final localAppData = Platform.environment['LOCALAPPDATA'];
+    if (localAppData == null || localAppData.isEmpty) return;
+    final directory = Directory('$localAppData\\GRANI');
+    directory.createSync(recursive: true);
+    final safeMessage = message.replaceAll(RegExp(r'[\r\n]+'), ' ');
+    final rawError = error?.toString().replaceAll(RegExp(r'[\r\n]+'), ' ');
+    final safeError = rawError != null && rawError.length > 1000
+        ? rawError.substring(0, 1000)
+        : rawError;
+    final rawStack = stackTrace?.toString() ?? '';
+    final normalizedStack = rawStack.replaceAll(RegExp(r'[\r\n]+'), ' ');
+    final safeStack = normalizedStack.length > 4000
+        ? normalizedStack.substring(0, 4000)
+        : normalizedStack;
+    File('${directory.path}\\startup.log').writeAsStringSync(
+      '${DateTime.now().toIso8601String()} $safeMessage'
+      '${safeError == null ? '' : ' error=$safeError'}'
+      '${safeStack.isEmpty ? '' : ' stack=$safeStack'}\n',
+      mode: FileMode.append,
+      flush: true,
+    );
+  } catch (_) {
+    // Startup diagnostics must never block application startup.
+  }
+}
+
+Future<bool> _runStartupStep(
+  String name,
+  Future<void> Function() action,
+) async {
+  if (!_isWindowsTarget) {
+    await action();
+    return true;
+  }
+
+  _writeWindowsStartupTrace('step=$name state=begin');
+  try {
+    await action().timeout(_windowsStartupStepTimeout);
+    _writeWindowsStartupTrace('step=$name state=ok');
+    return true;
+  } on TimeoutException catch (error, stackTrace) {
+    _writeWindowsStartupTrace(
+      'step=$name state=timeout',
+      error,
+      stackTrace,
+    );
+    return false;
+  } catch (error, stackTrace) {
+    _writeWindowsStartupTrace(
+      'step=$name state=error',
+      error,
+      stackTrace,
+    );
+    return false;
+  }
+}
+
+class _WindowsStartupApp extends StatelessWidget {
+  const _WindowsStartupApp();
+
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: Color(0xFFF7F9FA),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'GRANI',
+                style: TextStyle(
+                  color: Color(0xFF0A4F5C),
+                  fontSize: 34,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 4,
+                ),
+              ),
+              SizedBox(height: 24),
+              CircularProgressIndicator(color: Color(0xFFFF6A00)),
+              SizedBox(height: 18),
+              Text(
+                'Запуск приложения…',
+                style: TextStyle(
+                  color: Color(0xFF314A55),
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StartupFailureApp extends StatelessWidget {
+  const _StartupFailureApp({required this.error});
+
+  final String error;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: const Color(0xFFF7F9FA),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.error_outline,
+                  color: Color(0xFFFF6A00),
+                  size: 52,
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Не удалось завершить запуск GRANI',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFF17313D),
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Диагностика сохранена в '
+                  '%LOCALAPPDATA%\\GRANI\\startup.log',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Color(0xFF526873)),
+                ),
+                const SizedBox(height: 12),
+                SelectableText(
+                  error,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF7A3131),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 Future<void> _disconnectVpnAfterAuthLoss() async {
   const source = 'auth_logout_callback';
@@ -173,114 +340,126 @@ VpnService _createVpnServiceInternal(AuthService auth) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final perf = PerfLogger();
-  perf.start('app_startup');
-  if (_isMobileTarget) {
-    perf.start('firebase_core_init');
-    await Firebase.initializeApp();
-    perf.stop('firebase_core_init');
-  }
 
-  // Инициализация AppConfig (загрузка версии из package_info)
-  perf.start('app_config_init');
-  await AppConfig.init();
-  perf.stop('app_config_init', details: {
-    'version': AppConfig.getFullVersion(),
-  });
-
-  // Инициализация core компонентов: один экземпляр SharedPreferences, параллельно Storage + Cache, затем ApiClient
-  perf.start('core_init');
-  await _initializeCoreComponents();
-  await InstallAttributionService.instance.initialize();
-  await NotificationJournalService.instance.ensureLoaded();
-  perf.stop('core_init');
-
-  // Единый singleton AuthService: создаём один раз, ждём загрузку токенов, регистрируем в GetIt
-  perf.start('auth_init');
-  final authService = AuthService();
-  await authService.waitForTokenLoad();
-  try {
-    GetIt.instance.registerSingleton<AuthService>(authService);
-  } catch (e) {
-    GetIt.instance.unregister<AuthService>();
-    GetIt.instance.registerSingleton<AuthService>(authService);
-  }
-  ApiClient().setTokenProvider(() => authService.token);
-  ApiClient().setRefreshTokenProvider(authService.refreshAccessToken);
-  authService.setOnLogoutCallback(() {
-    unawaited(_disconnectVpnAfterAuthLoss());
-  });
-  perf.stop('auth_init');
-
-  final localeController = LocaleController();
-  await localeController.init();
-  LocalizedMessages.bind(localeController);
-  // Синхронизация языка с бэкендом/FCM — только из UI выбора языка (см. LanguageSelectorBottomSheet),
-  // без глобального listener на LocaleController (избегаем лишних запросов при любом notify).
-
-  // Push/FCM синхронизируем после первого кадра, чтобы не держать старт UI.
-
-  // Глобальный обработчик ошибок Flutter
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
-    Logger().error('Flutter Error: ${details.exception}', 'FlutterError',
-        details.exception, details.stack);
+    Logger().error(
+      'Flutter Error: ${details.exception}',
+      'FlutterError',
+      details.exception,
+      details.stack,
+    );
+    _writeWindowsStartupTrace(
+      'flutter_error',
+      details.exception,
+      details.stack,
+    );
   };
 
-  if (_isMobileTarget) {
-    // Статус-бар и навбар = фон приложения на всех экранах (градиент: верх #FFFFFF, низ #F7F9FA)
-    SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.edgeToEdge,
-    );
-    SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
-        statusBarColor:
-            Color(0xFFFFFFFF), // верх градиента (как у стартового экрана)
-        statusBarIconBrightness: Brightness.dark,
-        statusBarBrightness: Brightness.light,
-        systemNavigationBarColor: Color(0xFFF7F9FA), // низ градиента
-        systemNavigationBarIconBrightness: Brightness.dark,
-        systemNavigationBarDividerColor: Colors.transparent,
-      ),
-    );
-
-    // Только портрет: вёрстка рассчитана на книжную ориентацию (см. Home/Trial).
-    await SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-    ]);
+  if (_isWindowsTarget) {
+    _writeWindowsStartupTrace('app_start');
+    runApp(const _WindowsStartupApp());
   }
 
-  // Предзагрузка изображений в фоне (не блокирует запуск)
-  _precacheImages();
-
+  final perf = PerfLogger();
+  perf.start('app_startup');
   try {
+    if (_isMobileTarget) {
+      perf.start('firebase_core_init');
+      await Firebase.initializeApp();
+      perf.stop('firebase_core_init');
+    }
+
+    // Инициализация AppConfig (загрузка версии из package_info).
+    perf.start('app_config_init');
+    await _runStartupStep('app_config_init', AppConfig.init);
+    perf.stop('app_config_init', details: {
+      'version': AppConfig.getFullVersion(),
+    });
+
+    // Core components use the same SharedPreferences instance. On Windows a
+    // failed plugin must not leave the native window permanently blank.
+    perf.start('core_init');
+    final coreReady = await _runStartupStep('core_init', () async {
+      await _initializeCoreComponents();
+      await InstallAttributionService.instance.initialize();
+    });
+    if (coreReady) {
+      await _runStartupStep(
+        'notification_journal_init',
+        NotificationJournalService.instance.ensureLoaded,
+      );
+    }
+    perf.stop('core_init');
+
+    // Единый singleton AuthService: создаём один раз, ждём загрузку токенов,
+    // но на Windows ограничиваем ожидание, чтобы UI всё равно открылся.
+    perf.start('auth_init');
+    final authService = AuthService();
+    await _runStartupStep('auth_token_load', authService.waitForTokenLoad);
+    try {
+      GetIt.instance.registerSingleton<AuthService>(authService);
+    } catch (e) {
+      GetIt.instance.unregister<AuthService>();
+      GetIt.instance.registerSingleton<AuthService>(authService);
+    }
+    ApiClient().setTokenProvider(() => authService.token);
+    ApiClient().setRefreshTokenProvider(authService.refreshAccessToken);
+    authService.setOnLogoutCallback(() {
+      unawaited(_disconnectVpnAfterAuthLoss());
+    });
+    perf.stop('auth_init');
+
+    final localeController = LocaleController();
+    await _runStartupStep('locale_init', localeController.init);
+    LocalizedMessages.bind(localeController);
+    // Синхронизация языка с бэкендом/FCM — только из UI выбора языка (см. LanguageSelectorBottomSheet),
+    // без глобального listener на LocaleController (избегаем лишних запросов при любом notify).
+
+    // Push/FCM синхронизируем после первого кадра, чтобы не держать старт UI.
+
+    if (_isMobileTarget) {
+      // Статус-бар и навбар = фон приложения на всех экранах (градиент: верх #FFFFFF, низ #F7F9FA)
+      SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.edgeToEdge,
+      );
+      SystemChrome.setSystemUIOverlayStyle(
+        const SystemUiOverlayStyle(
+          statusBarColor:
+              Color(0xFFFFFFFF), // верх градиента (как у стартового экрана)
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+          systemNavigationBarColor: Color(0xFFF7F9FA), // низ градиента
+          systemNavigationBarIconBrightness: Brightness.dark,
+          systemNavigationBarDividerColor: Colors.transparent,
+        ),
+      );
+
+      // Только портрет: вёрстка рассчитана на книжную ориентацию (см. Home/Trial).
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+      ]);
+    }
+
+    // Предзагрузка изображений в фоне (не блокирует запуск).
+    _precacheImages();
+
     runApp(
-        GraniApp(authService: authService, localeController: localeController));
+      GraniApp(
+        authService: authService,
+        localeController: localeController,
+      ),
+    );
+    _writeWindowsStartupTrace('ui_started');
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _writeWindowsStartupTrace('first_frame');
       perf.stop('app_startup');
       _syncPushAfterFirstFrame(authService);
     });
   } catch (e, stack) {
     Logger().error('Fatal error during app startup', 'main', e, stack);
-    // Показываем простой экран ошибки
-    runApp(
-      MaterialApp(
-        scaffoldMessengerKey: appScaffoldMessengerKey,
-        locale: const Locale('en'),
-        supportedLocales: const [Locale('en'), Locale('ru')],
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          GlobalMaterialLocalizations.delegate,
-          GlobalWidgetsLocalizations.delegate,
-          GlobalCupertinoLocalizations.delegate,
-        ],
-        home: Scaffold(
-          body: Center(
-            child: Text('Startup error: $e'),
-          ),
-        ),
-      ),
-    );
+    _writeWindowsStartupTrace('startup_fatal', e, stack);
+    runApp(_StartupFailureApp(error: e.toString()));
   }
 }
 
