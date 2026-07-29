@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -36,6 +37,7 @@ class CleanAmneziaHomeScreen extends StatefulWidget {
 class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
     with WidgetsBindingObserver {
   late final SimpleVpnController _controller;
+  Timer? _nativeUiSyncTimer;
   bool _quickTileActionInFlight = false;
   bool _subscriptionRedirectScheduled = false;
 
@@ -50,13 +52,20 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
       ensureDeviceRegistered: () async {
         final token = authService.token;
         if (token == null || token.isEmpty) return;
-        await vpnService.ensureDeviceRegistered(token);
+        try {
+          await vpnService.ensureDeviceRegistered(token);
+        } on DeviceLimitException catch (e) {
+          authService.setPendingDeviceLimit(e);
+          rethrow;
+        }
       },
+      onDeviceLimit: authService.setPendingDeviceLimit,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _controller.loadOptions();
       _controller.syncNativeState();
+      _startNativeUiSyncTimer();
       _consumeQuickTileAction();
     });
   }
@@ -64,6 +73,7 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _stopNativeUiSyncTimer();
     _controller.dispose();
     super.dispose();
   }
@@ -72,8 +82,25 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _controller.syncNativeState();
+      _startNativeUiSyncTimer();
       _consumeQuickTileAction();
+    } else {
+      _stopNativeUiSyncTimer();
     }
+  }
+
+  void _startNativeUiSyncTimer() {
+    _nativeUiSyncTimer?.cancel();
+    _nativeUiSyncTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (!mounted) return;
+      unawaited(_controller.syncNativeUiState(source: 'home_foreground_timer'));
+    });
+    unawaited(_controller.syncNativeUiState(source: 'home_foreground_start'));
+  }
+
+  void _stopNativeUiSyncTimer() {
+    _nativeUiSyncTimer?.cancel();
+    _nativeUiSyncTimer = null;
   }
 
   void _scheduleSubscriptionRedirect() {
@@ -331,7 +358,7 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
             safeBottom -
             GraniTheme.vpnCardBottomMargin * scaleY -
             estimatedButtonGroupHeight;
-        final titleBlockHeight = (flowBadge == null ? 88 : 110) * scaleY;
+        final titleBlockHeight = (flowBadge == null ? 88 : 118) * scaleY;
         final titleBlockTop = math.max(
           minTitleBlockTop,
           math.min(
@@ -454,8 +481,8 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
                                   style: TextStyle(
                                     fontFamily: 'Montserrat',
                                     fontWeight: FontWeight.w300,
-                                    fontSize: 16 * scaleX,
-                                    height: 15.52 / 16,
+                                    fontSize: 15 * scaleX,
+                                    height: 1.12,
                                     letterSpacing: 0,
                                     color: const Color(0xFF192F3F),
                                   ),
@@ -519,7 +546,8 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
                                           ''),
                                       style: TextStyle(fontSize: 14 * scaleX),
                                     ),
-                                    label: _controller.optionsLoading
+                                    label: _controller.optionsLoading &&
+                                            _controller.selectedServer == null
                                         ? 'Загрузка'
                                         : _localizedServerLabel(
                                             _controller.selectedServer,

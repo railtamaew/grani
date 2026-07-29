@@ -25,6 +25,7 @@ class GraniAwgNotificationService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        running = true
         Log.d(TAG, "created")
     }
 
@@ -37,7 +38,10 @@ class GraniAwgNotificationService : Service() {
             return START_NOT_STICKY
         }
 
-        if (!NativeVpnRuntimeState.isAwgLikelyActive(applicationContext)) {
+        if (
+            !NativeVpnRuntimeState.isAwgLikelyActive(applicationContext) &&
+            !NativeVpnRuntimeState.isAwgStartupInProgress(applicationContext)
+        ) {
             Log.i(TAG, "start ignored: AWG is not active/expected")
             stopSelf()
             return START_NOT_STICKY
@@ -69,6 +73,7 @@ class GraniAwgNotificationService : Service() {
             stopForegroundCompat()
         }
         super.onDestroy()
+        running = false
         Log.d(TAG, "destroyed")
     }
 
@@ -130,9 +135,20 @@ class GraniAwgNotificationService : Service() {
             Notification.Builder(this)
         }
 
+        val snapshot = NativeVpnRuntimeState.getRuntimeSnapshot(applicationContext)
+        val text = when (snapshot.status) {
+            NativeVpnRuntimeState.RuntimeStatus.CONNECTING -> getString(R.string.vpn_notification_connecting)
+            NativeVpnRuntimeState.RuntimeStatus.DISCONNECTING -> getString(R.string.vpn_notification_disconnecting)
+            NativeVpnRuntimeState.RuntimeStatus.ERROR -> getString(R.string.vpn_notification_error)
+            NativeVpnRuntimeState.RuntimeStatus.LOCAL_UP,
+            NativeVpnRuntimeState.RuntimeStatus.VERIFIED,
+            NativeVpnRuntimeState.RuntimeStatus.CONNECTED,
+            NativeVpnRuntimeState.RuntimeStatus.OFF -> getString(R.string.vpn_notification_connected)
+        }
+
         return builder
             .setContentTitle(getString(R.string.vpn_notification_title))
-            .setContentText(getString(R.string.vpn_notification_connected))
+            .setContentText(text)
             .setSmallIcon(R.drawable.ic_notification_g)
             .setOngoing(true)
             .setShowWhen(false)
@@ -145,6 +161,7 @@ class GraniAwgNotificationService : Service() {
         private const val NOTIFICATION_ID = 1002
         private const val ACTION_START = "com.granivpn.mobile.action.START_AWG_NOTIFICATION"
         private const val ACTION_STOP = "com.granivpn.mobile.action.STOP_AWG_NOTIFICATION"
+        @Volatile private var running = false
 
         fun start(context: Context) {
             val intent = Intent(context.applicationContext, GraniAwgNotificationService::class.java).apply {
@@ -157,6 +174,10 @@ class GraniAwgNotificationService : Service() {
             val appContext = context.applicationContext
             NativeVpnRuntimeState.markAwgExpectedUp(appContext, false)
             cancelNotification(appContext)
+            if (!running) {
+                Log.i(TAG, "stop skipped: foreground holder already stopped")
+                return
+            }
             try {
                 val intent = Intent(appContext, GraniAwgNotificationService::class.java).apply {
                     action = ACTION_STOP

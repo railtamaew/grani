@@ -19,6 +19,8 @@ import android.service.quicksettings.TileService
 import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.UUID
 
 @RequiresApi(Build.VERSION_CODES.N)
 class QuickTileService : TileService() {
@@ -33,11 +35,14 @@ class QuickTileService : TileService() {
         const val QUICK_TILE_ACTION_TOGGLE = "toggle"
         private const val TAG = "QuickTileService"
         private const val CLICK_DEBOUNCE_MS = 2000L
+        private const val REQUEST_LISTENING_THROTTLE_MS = 1500L
         private const val QUICK_TILE_NOTICE_CHANNEL_ID = "grani_quick_tile"
         private const val QUICK_TILE_NOTICE_ID = 4207
 
         private val tileListeningLock = Any()
+        private val tileActionInFlight = AtomicBoolean(false)
         @Volatile private var listeningInstance: QuickTileService? = null
+        @Volatile private var lastRequestListeningStateMs = 0L
         private val mainHandler = Handler(Looper.getMainLooper())
 
         /**
@@ -50,9 +55,22 @@ class QuickTileService : TileService() {
         fun notifyVpnStateChanged(context: Context) {
             val app = context.applicationContext
             mainHandler.post {
-                synchronized(tileListeningLock) {
-                    listeningInstance?.updateTileState()
+                val instance = synchronized(tileListeningLock) {
+                    listeningInstance
                 }
+                instance?.updateTileState()
+
+                val now = System.currentTimeMillis()
+                val shouldRequestListeningState = synchronized(tileListeningLock) {
+                    if (now - lastRequestListeningStateMs >= REQUEST_LISTENING_THROTTLE_MS) {
+                        lastRequestListeningStateMs = now
+                        true
+                    } else {
+                        false
+                    }
+                }
+                if (!shouldRequestListeningState) return@post
+
                 try {
                     TileService.requestListeningState(
                         app,
@@ -160,10 +178,28 @@ class QuickTileService : TileService() {
         if (now - lastClickMs < CLICK_DEBOUNCE_MS) return
         lastClickMs = now
 
-        setTilePending()
+        val snapshot = NativeVpnRuntimeState.getRuntimeSnapshot(applicationContext)
+        if (
+            snapshot.status == NativeVpnRuntimeState.RuntimeStatus.CONNECTING ||
+            snapshot.status == NativeVpnRuntimeState.RuntimeStatus.DISCONNECTING
+        ) {
+            Log.i(TAG, "quick_tile_click: ignored transient status=${snapshot.status}")
+            updateTileState()
+                return
+        }
 
-        val running = NativeVpnRuntimeState.isAnyGraniVpnLikelyActive(applicationContext)
+        val running =
+            snapshot.status == NativeVpnRuntimeState.RuntimeStatus.CONNECTED ||
+                snapshot.status == NativeVpnRuntimeState.RuntimeStatus.LOCAL_UP ||
+                snapshot.status == NativeVpnRuntimeState.RuntimeStatus.VERIFIED ||
+                NativeVpnRuntimeState.isAnyGraniVpnLikelyActive(applicationContext)
+
         if (running) {
+            if (!beginTileAction("disconnect")) {
+                updateTileState()
+                return
+            }
+            setTilePending(R.string.quick_tile_state_disconnecting)
             Log.i(TAG, "quick_tile_click: disconnect in native background")
             Thread {
                 try {
@@ -175,6 +211,7 @@ class QuickTileService : TileService() {
                 } catch (e: Exception) {
                     Log.w(TAG, "quick_tile_disconnect_failed", e)
                 } finally {
+                    finishTileAction("disconnect")
                     notifyVpnStateChanged(applicationContext)
                 }
             }.start()
@@ -182,19 +219,24 @@ class QuickTileService : TileService() {
         }
 
         if (!running && !VpnPlugin.isAllowTileConnect(applicationContext)) {
+            Log.i(
+                TAG,
+                "quick_tile_click: blocked allow_tile_connect=false status=${snapshot.status}"
+            )
             showQuickTileNotice(
                 this,
-                getString(R.string.quick_tile_subscription_required),
-                routeToSubscription = true
+                getString(R.string.quick_tile_access_not_ready),
+                routeToSubscription = false
             )
             updateTileState()
-            openMainActivity(routeToSubscription = true)
+            openMainActivity(routeToSubscription = false)
             return
         }
 
         val lastConfig = VpnPlugin.loadLastConfig(applicationContext)
         if (lastConfig == null || lastConfig.config.isBlank()) {
-            showQuickTileNotice(this, getString(R.string.quick_tile_no_config))
+            Log.i(TAG, "quick_tile_click: blocked missing_last_config")
+            showQuickTileNotice(this, getString(R.string.quick_tile_missing_config))
             updateTileState()
             openMainActivity(routeToSubscription = false, quickTileToggle = true)
             return
@@ -202,59 +244,152 @@ class QuickTileService : TileService() {
 
         val permissionIntent = VpnService.prepare(this)
         if (permissionIntent != null) {
+            Log.i(
+                TAG,
+                "quick_tile_click: blocked vpn_permission_required protocol=${lastConfig.protocol}"
+            )
+            showQuickTileNotice(
+                this,
+                getString(R.string.quick_tile_permission_required),
+                routeToSubscription = false
+            )
             updateTileState()
-            val toggleIntent = Intent(this, QuickTileToggleActivity::class.java)
-            toggleIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(toggleIntent)
+            openMainActivity(routeToSubscription = false)
             return
         }
 
+        if (!beginTileAction("connect")) {
+            updateTileState()
+            return
+        }
+        setTilePending(R.string.quick_tile_state_connecting)
         Log.i(TAG, "quick_tile_click: connect cached config in native background")
-        startCachedConfig(lastConfig.config, lastConfig.protocol, lastConfig.mtu)
+        val sessionId = newQuickTileSessionId()
+        startCachedConfig(lastConfig.config, lastConfig.protocol, lastConfig.mtu, sessionId)
     }
 
-    private fun startCachedConfig(config: String, protocol: String?, mtu: Int) {
+    private fun startCachedConfig(
+        config: String,
+        protocol: String?,
+        mtu: Int,
+        sessionId: String,
+    ) {
         Thread {
             try {
-                VpnRuntimeCoordinator.connect(
+                val result = VpnRuntimeCoordinator.connect(
                     applicationContext,
                     config,
                     protocol,
                     mtu,
                     source = "quick_tile_cached",
+                    connectionSessionId = sessionId,
+                    awaitReady = true,
                 )
+                if (!result.started) {
+                    throw IllegalStateException(
+                        "cached_config_start_failed_${result.backend}_" +
+                            "${result.status?.name?.lowercase() ?: "unknown"}" +
+                            (result.error?.let { "_$it" } ?: "")
+                    )
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "quick_tile_connect_failed", e)
+                ProtocolRuntimeContract.markError(
+                    applicationContext,
+                    backend = null,
+                    protocol = protocol,
+                    sessionId = sessionId,
+                    source = "quick_tile_cached",
+                    error = e.message ?: "quick_tile_connect_failed",
+                )
                 mainHandler.post {
                     showQuickTileNotice(
                         this,
-                        getString(R.string.quick_tile_no_config)
+                        getString(R.string.quick_tile_connect_failed)
                     )
                 }
             } finally {
+                finishTileAction("connect")
                 notifyVpnStateChanged(applicationContext)
             }
         }.start()
     }
 
-    private fun setTilePending() {
+    private fun newQuickTileSessionId(): String {
+        return "qt-${UUID.randomUUID()}"
+    }
+
+    private fun beginTileAction(action: String): Boolean {
+        val started = tileActionInFlight.compareAndSet(false, true)
+        if (!started) {
+            Log.i(TAG, "quick_tile_click: ignored action_in_flight action=$action")
+        }
+        return started
+    }
+
+    private fun finishTileAction(action: String) {
+        tileActionInFlight.set(false)
+        Log.i(TAG, "quick_tile_click: action_finished action=$action")
+    }
+
+    private fun setTilePending(subtitleRes: Int) {
         val tile = qsTile ?: return
         // Отображаем промежуточное состояние «подключение/отключение».
-        tile.state = Tile.STATE_ACTIVE
+        tile.state = Tile.STATE_UNAVAILABLE
         tile.label = getString(R.string.quick_tile_label)
+        setTileSubtitleCompat(tile, getString(subtitleRes))
         tile.updateTile()
     }
 
     private fun updateTileState() {
         val tile = qsTile ?: return
         tile.label = getString(R.string.quick_tile_label)
-        val running = NativeVpnRuntimeState.isAnyGraniVpnLikelyActive(applicationContext)
-        if (running) {
-            NativeVpnRuntimeState.reconcileAwgNotification(applicationContext, "quick_tile_update")
+        // Tile rendering must stay read-only. Running the runtime watchdog here
+        // can restart foreground notifications while SystemUI is listening to
+        // the tile, creating a notification/tile feedback loop.
+        val snapshot = NativeVpnRuntimeState.getRuntimeSnapshot(applicationContext)
+        val model = VpnLifecycleUiPolicy.modelFor(
+            snapshot.status,
+            graniLikelyActive = snapshot.graniLikelyActive,
+            systemVpnActive = snapshot.systemVpnActive,
+        )
+        when (model.tileState) {
+            VpnLifecycleUiPolicy.TileVisualState.ACTIVE -> {
+                tile.state = Tile.STATE_ACTIVE
+                tile.icon = iconOn
+            }
+            VpnLifecycleUiPolicy.TileVisualState.UNAVAILABLE -> {
+                tile.state = Tile.STATE_UNAVAILABLE
+                tile.icon = iconOff
+            }
+            VpnLifecycleUiPolicy.TileVisualState.INACTIVE -> {
+                tile.state = Tile.STATE_INACTIVE
+                tile.icon = iconOff
+            }
         }
-        tile.state = if (running) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        tile.icon = if (running) iconOn else iconOff
+        setTileSubtitleCompat(tile, getTileSubtitle(model.tileSubtitle))
         tile.updateTile()
+    }
+
+    private fun getTileSubtitle(subtitle: VpnLifecycleUiPolicy.TileSubtitle): String {
+        return when (subtitle) {
+            VpnLifecycleUiPolicy.TileSubtitle.CONNECTED ->
+                getString(R.string.quick_tile_state_connected)
+            VpnLifecycleUiPolicy.TileSubtitle.CONNECTING ->
+                getString(R.string.quick_tile_state_connecting)
+            VpnLifecycleUiPolicy.TileSubtitle.DISCONNECTING ->
+                getString(R.string.quick_tile_state_disconnecting)
+            VpnLifecycleUiPolicy.TileSubtitle.ERROR ->
+                getString(R.string.quick_tile_state_error)
+            VpnLifecycleUiPolicy.TileSubtitle.OFF ->
+                getString(R.string.quick_tile_state_off)
+        }
+    }
+
+    private fun setTileSubtitleCompat(tile: Tile, subtitle: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            tile.subtitle = subtitle
+        }
     }
 
     private fun openMainActivity(
@@ -267,7 +402,17 @@ class QuickTileService : TileService() {
             putExtra(EXTRA_INITIAL_ROUTE, if (routeToSubscription) "/subscription" else "/main")
             if (quickTileToggle) putExtra(EXTRA_QUICK_TILE_ACTION, QUICK_TILE_ACTION_TOGGLE)
         }
-        @Suppress("DEPRECATION")
-        startActivityAndCollapse(intent)
+        if (Build.VERSION.SDK_INT >= 34) {
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                if (quickTileToggle) 2 else if (routeToSubscription) 1 else 0,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            startActivityAndCollapse(pendingIntent)
+        } else {
+            @Suppress("DEPRECATION")
+            startActivityAndCollapse(intent)
+        }
     }
 }

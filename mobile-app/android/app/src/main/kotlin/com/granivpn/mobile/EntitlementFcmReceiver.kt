@@ -13,7 +13,8 @@ import com.google.firebase.messaging.RemoteMessage
 
 /**
  * Параллельно [io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingReceiver]:
- * при data payload `grani_action=stop_vpn` сразу останавливает VPN без ожидания Flutter engine.
+ * при stop-событиях сразу останавливает VPN без ожидания Flutter engine, а при grant/payment
+ * событиях подтягивает `/auth/me`, чтобы меню и quick tile не жили со старой датой.
  *
  * Контракт ключей — `EntitlementPushContract` (Dart) и `services/notification_service.py` на бэкенде.
  */
@@ -27,7 +28,15 @@ class EntitlementFcmReceiver : BroadcastReceiver() {
                 return
             }
             val action = data[ACTION_KEY]?.trim()
+            val event = data[EVENT_KEY]?.trim()
             if (action != STOP_VPN) {
+                if (event != null && ACCESS_REFRESH_EVENTS.contains(event)) {
+                    Log.i(TAG, "FCM entitlement: refresh access (event=$event)")
+                    EntitlementAuthSyncBridge.notifyAuthRefreshAfterEntitlementChange(
+                        context,
+                        traceSource = "fcm_native_access:$event",
+                    )
+                }
                 return
             }
             val reason = data[REASON_KEY]?.trim()?.takeIf { it.isNotEmpty() }
@@ -53,7 +62,7 @@ class EntitlementFcmReceiver : BroadcastReceiver() {
                 connectionSessionId = null,
             )
             QuickTileService.notifyVpnStateChanged(context.applicationContext)
-            showStopNotification(context.applicationContext, msg)
+            showStopNotification(context.applicationContext, msg, reason, event)
             EntitlementAuthSyncBridge.notifyAuthRefreshAfterEntitlementStop(
                 context,
                 traceSource = "fcm_native_stop:$reason",
@@ -63,7 +72,12 @@ class EntitlementFcmReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun showStopNotification(context: Context, msg: RemoteMessage) {
+    private fun showStopNotification(
+        context: Context,
+        msg: RemoteMessage,
+        reason: String?,
+        event: String?,
+    ) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(
@@ -83,10 +97,11 @@ class EntitlementFcmReceiver : BroadcastReceiver() {
             openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val fallback = fallbackStopText(reason, event)
         val title = msg.notification?.title?.takeIf { it.isNotBlank() }
-            ?: "Подписка истекла"
+            ?: fallback.first
         val body = msg.notification?.body?.takeIf { it.isNotBlank() }
-            ?: "Продлите подписку в приложении GRANI"
+            ?: fallback.second
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(context, CHANNEL_ID)
         } else {
@@ -103,13 +118,36 @@ class EntitlementFcmReceiver : BroadcastReceiver() {
         manager.notify(NOTIFICATION_ID, notification)
     }
 
+    private fun fallbackStopText(reason: String?, event: String?): Pair<String, String> {
+        return when {
+            reason == "device_limit" || event == "device_limit_exceeded" || event == "device_limit" ->
+                "Превышен лимит устройств" to
+                    "Удалите лишнее устройство, чтобы продолжить пользоваться VPN."
+
+            reason == "device_revoked" || event == "device_revoked" ->
+                "Устройство удалено" to
+                    "Это устройство удалено из аккаунта GRANI."
+
+            else ->
+                "Подписка истекла" to
+                    "Продлите подписку в приложении GRANI"
+        }
+    }
+
     companion object {
         private const val TAG = "EntitlementFcmRcvr"
         private const val CHANNEL_ID = "grani_notifications"
         private const val NOTIFICATION_ID = 1004
         const val ACTION_KEY = "grani_action"
+        const val EVENT_KEY = "event"
         const val REASON_KEY = "reason"
         const val STOP_VPN = "stop_vpn"
+        private val ACCESS_REFRESH_EVENTS = setOf(
+            "payment_completed",
+            "subscription_activated",
+            "trial_activated",
+            "access_changed",
+        )
         private val ALLOWED_STOP_REASONS = setOf(
             "subscription_expired",
             "subscription_revoked",
@@ -118,6 +156,7 @@ class EntitlementFcmReceiver : BroadcastReceiver() {
             "logout",
             "auth_lost",
             "device_limit",
+            "device_limit_exceeded",
             "device_revoked",
         )
     }

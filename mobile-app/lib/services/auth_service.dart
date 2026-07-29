@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -114,6 +115,23 @@ String _localizedVerifyCodeApiMessage(String? raw) {
   return s;
 }
 
+String _verifyCodeTransportErrorMessage() {
+  return LocalizedMessages.currentLanguageCode == 'ru'
+      ? 'Не удалось проверить код, попробуйте ещё раз.'
+      : 'Could not verify the code. Please try again.';
+}
+
+bool _isVerifyCodeTransportRetryable(DioException error) {
+  if (error.response != null) return false;
+  if (error.type == DioExceptionType.receiveTimeout ||
+      error.type == DioExceptionType.connectionTimeout ||
+      error.type == DioExceptionType.sendTimeout ||
+      error.type == DioExceptionType.connectionError) {
+    return true;
+  }
+  return error.error.toString().contains('SocketException');
+}
+
 /// Результат авторизации через Google OAuth.
 class GoogleSignInResult {
   final GoogleSignInStatus status;
@@ -152,6 +170,12 @@ enum UserStatus {
   subActive,
 }
 
+enum GooglePlayPreflightStatus {
+  allowed,
+  differentGraniAccount,
+  unavailable,
+}
+
 class AuthService extends ChangeNotifier {
   User? _user;
   String? _token;
@@ -172,6 +196,8 @@ class AuthService extends ChangeNotifier {
   // Pending-ошибка лимита устройств, чтобы показать DeviceLimitScreen после авторизации.
   List<dynamic> _pendingDeviceLimitDevices = const [];
   String? _pendingDeviceLimitMessage;
+  int? _pendingDeviceLimitLimit;
+  int? _pendingDeviceLimitCurrentCount;
   int _pendingDeviceLimitRevision = 0;
   int? _maxDevices;
   VoidCallback? _onLogoutCallback;
@@ -257,6 +283,7 @@ class AuthService extends ChangeNotifier {
   }
 
   final StorageService _storage = StorageService();
+  final FirebaseAnalytics _firebaseAnalytics = FirebaseAnalytics.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: ['email', 'profile'],
     serverClientId: AppConfig.googleOAuthWebClientId,
@@ -347,6 +374,10 @@ class AuthService extends ChangeNotifier {
 
   String? get pendingDeviceLimitMessage => _pendingDeviceLimitMessage;
 
+  int? get pendingDeviceLimitLimit => _pendingDeviceLimitLimit;
+
+  int? get pendingDeviceLimitCurrentCount => _pendingDeviceLimitCurrentCount;
+
   /// Увеличивается при каждом [setPendingDeviceLimit] — удобно для [Selector] с узким shouldRebuild.
   int get pendingDeviceLimitRevision => _pendingDeviceLimitRevision;
 
@@ -358,6 +389,8 @@ class AuthService extends ChangeNotifier {
   void setPendingDeviceLimit(DeviceLimitException e) {
     _pendingDeviceLimitMessage = e.message;
     _pendingDeviceLimitDevices = List<dynamic>.from(e.devices);
+    _pendingDeviceLimitLimit = e.limit;
+    _pendingDeviceLimitCurrentCount = e.currentCount;
     _pendingDeviceLimitRevision++;
     notifyListeners();
   }
@@ -365,6 +398,8 @@ class AuthService extends ChangeNotifier {
   void clearPendingDeviceLimit() {
     _pendingDeviceLimitMessage = null;
     _pendingDeviceLimitDevices = const [];
+    _pendingDeviceLimitLimit = null;
+    _pendingDeviceLimitCurrentCount = null;
     notifyListeners();
   }
 
@@ -838,6 +873,54 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// Проверка владельца текущей Play-подписки до запуска смены тарифа.
+  /// Ошибка проверки блокирует Billing UI, чтобы не списать деньги до того,
+  /// как backend подтвердит привязку покупки к текущему GRANI-аккаунту.
+  Future<GooglePlayPreflightStatus> preflightGooglePlaySubscriptionChange({
+    required String currentPurchaseToken,
+    required String targetProductId,
+  }) async {
+    if (!isAuthenticated || _token == null) {
+      return GooglePlayPreflightStatus.unavailable;
+    }
+    final valid = await ensureValidToken();
+    if (!valid) return GooglePlayPreflightStatus.unavailable;
+    try {
+      final ht = await NetworkTimeouts.paymentsGooglePlayVerify();
+      final response = await _postViaApiClient(
+        '/payments/google-play/preflight',
+        {
+          'current_purchase_token': currentPurchaseToken,
+          'target_product_id': targetProductId,
+        },
+        extraHeaders: {'Authorization': 'Bearer $_token'},
+        connectTimeout: ht.connect,
+        sendTimeout: ht.send,
+        receiveTimeout: ht.receive,
+      );
+      final body = _normalizeMap(response.data);
+      if (response.statusCode == 200 && body?['allowed'] == true) {
+        return GooglePlayPreflightStatus.allowed;
+      }
+      if (response.statusCode == 200 &&
+          body?['reason'] == 'purchase_owned_by_another_grani_account') {
+        return GooglePlayPreflightStatus.differentGraniAccount;
+      }
+      debugPrint(
+        '[billing] preflight unavailable status=${response.statusCode}',
+      );
+      return GooglePlayPreflightStatus.unavailable;
+    } on DioException catch (e) {
+      debugPrint(
+        '[billing] preflight error status=${e.response?.statusCode} type=${e.type}',
+      );
+      return GooglePlayPreflightStatus.unavailable;
+    } catch (e) {
+      debugPrint('[billing] preflight error: $e');
+      return GooglePlayPreflightStatus.unavailable;
+    }
+  }
+
   /// Верификация покупки Google Play на бэкенде. Вызывать после успешного buy().
   /// Возвращает true при успехе.
   Future<bool> verifyGooglePlayPurchase({
@@ -882,7 +965,7 @@ class AuthService extends ChangeNotifier {
         debugPrint(
           'AuthService: verifyGooglePlayPurchase HTTP ${response.statusCode} data=${response.data}',
         );
-        if (response.statusCode == 400) {
+        if (response.statusCode == 400 || response.statusCode == 409) {
           await clearPendingGooglePlayVerification();
         }
       }
@@ -893,7 +976,7 @@ class AuthService extends ChangeNotifier {
         'status=${e.response?.statusCode} type=${e.type} data=${e.response?.data}',
       );
       final status = e.response?.statusCode;
-      if (status == 400) {
+      if (status == 400 || status == 409) {
         await clearPendingGooglePlayVerification();
       } else if (_isTransientBillingNetworkError(e)) {
         await savePendingGooglePlayVerification(
@@ -980,6 +1063,20 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  Future<void> _syncFirebaseAnalyticsUserId(String? userId) async {
+    final normalized = userId?.trim();
+    final analyticsUserId =
+        normalized == null || normalized.isEmpty ? null : normalized;
+    try {
+      await _firebaseAnalytics.setUserId(id: analyticsUserId);
+      debugPrint(
+        'AuthService.analytics: Firebase user_id ${analyticsUserId == null ? "cleared" : "set"}',
+      );
+    } catch (e) {
+      debugPrint('AuthService.analytics: failed to sync Firebase user_id: $e');
+    }
+  }
+
   Future<void> _loadToken() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1037,11 +1134,13 @@ class AuthService extends ChangeNotifier {
         );
       }
 
+      await _syncFirebaseAnalyticsUserId(_user?.id);
       notifyListeners();
     } catch (e, stackTrace) {
       debugPrint('AuthService._loadToken: ошибка загрузки токенов: $e');
       debugPrint('AuthService._loadToken: stackTrace: $stackTrace');
       // Продолжаем без токена.
+      await _syncFirebaseAnalyticsUserId(null);
       notifyListeners();
     } finally {
       if (!_tokenLoadCompleter.isCompleted) {
@@ -1127,6 +1226,7 @@ class AuthService extends ChangeNotifier {
         _hasActiveSubscription = hasActiveSubscription;
         await prefs.setBool('has_active_subscription', hasActiveSubscription);
       }
+      await _syncFirebaseAnalyticsUserId(userId ?? _user?.id);
       debugPrint('AuthService._saveToken: успешно сохранено');
     } catch (e, st) {
       debugPrint('AuthService._saveToken: исключение при сохранении: $e');
@@ -1162,6 +1262,7 @@ class AuthService extends ChangeNotifier {
     _maxDevices = null;
     _authCodeRequestId = null;
     _networkWarmupDone = false;
+    await _syncFirebaseAnalyticsUserId(null);
   }
 
   void _setError(String? message) {
@@ -1229,9 +1330,7 @@ class AuthService extends ChangeNotifier {
     if (_token == null) return true;
 
     // Если дата истечения не вычислена, пробуем декодировать из токена.
-    if (_tokenExpiresAt == null) {
-      _tokenExpiresAt = _decodeJwtExpiry(_token!);
-    }
+    _tokenExpiresAt ??= _decodeJwtExpiry(_token!);
 
     if (_tokenExpiresAt == null) {
       // Не удалось определить exp, считаем токен валидным (не ломаем рабочую сессию).
@@ -1442,7 +1541,9 @@ class AuthService extends ChangeNotifier {
 
   /// Авторизация через Google OAuth.
   /// Возвращает результат с нормализованным статусом (success/canceled/error).
-  Future<GoogleSignInResult> signInWithGoogle() async {
+  Future<GoogleSignInResult> signInWithGoogle({
+    void Function()? onGoogleAccountSelected,
+  }) async {
     final authTotalSw = Stopwatch()..start();
     _isLoading = true;
     _setError(null);
@@ -1479,6 +1580,12 @@ class AuthService extends ChangeNotifier {
         return GoogleSignInResult(
           status: GoogleSignInStatus.canceled,
         );
+      }
+
+      try {
+        onGoogleAccountSelected?.call();
+      } catch (e) {
+        debugPrint('Google OAuth: onGoogleAccountSelected failed: $e');
       }
 
       final tokenSw = Stopwatch()..start();
@@ -2107,7 +2214,11 @@ class AuthService extends ChangeNotifier {
     });
   }
 
-  Future<bool> _verifyCodeBody(String email, String normalizedCode) async {
+  Future<bool> _verifyCodeBody(
+    String email,
+    String normalizedCode, {
+    bool allowTransportRetry = true,
+  }) async {
     final cancelToken = _newEmailAuthHttpCancelToken();
     final verifySw = Stopwatch()..start();
     _logAuthTiming('email_verify_start', {'email': email});
@@ -2140,7 +2251,8 @@ class AuthService extends ChangeNotifier {
       await ensureNetworkReady();
 
       final t = await NetworkTimeouts.authVerifyCode();
-      // Один POST без повтора: повтор инвалидирует одноразовый код на сервере.
+      // Повторяем только transport-сбой без ответа сервера. invalid_code и
+      // любые HTTP-ответы не повторяем, чтобы не расходовать одноразовый код.
       final response = await _postViaApiClient(
         '/auth/verify-code',
         requestData,
@@ -2245,6 +2357,25 @@ class AuthService extends ChangeNotifier {
         return false;
       }
     } on DioException catch (e) {
+      if (e.type != DioExceptionType.cancel &&
+          allowTransportRetry &&
+          _isVerifyCodeTransportRetryable(e)) {
+        final waitMs = 700 + Random().nextInt(501);
+        debugPrint(
+          'Email Auth: verify-code transport retry '
+          'type=${e.type} wait_ms=$waitMs',
+        );
+        _logAuthTiming('email_verify_transport_retry', {
+          'wait_ms': waitMs,
+          'error_type': e.type.toString(),
+        });
+        await Future<void>.delayed(Duration(milliseconds: waitMs));
+        return _verifyCodeBody(
+          email,
+          normalizedCode,
+          allowTransportRetry: false,
+        );
+      }
       verifySw.stop();
       _logAuthTiming('email_verify_done', {
         'total_ms': verifySw.elapsedMilliseconds,
@@ -2291,15 +2422,15 @@ class AuthService extends ChangeNotifier {
           errorMessage = _localizedVerifyCodeApiMessage(detail);
         }
       } else if (e.type == DioExceptionType.receiveTimeout) {
-        debugPrint('Email Auth: receiveTimeout verify-code (без автоповтора)');
-        errorMessage = LocalizedMessages.verifyCodeReceiveTimeoutNoRetry;
+        debugPrint('Email Auth: receiveTimeout verify-code after retry');
+        errorMessage = _verifyCodeTransportErrorMessage();
       } else if (e.type == DioExceptionType.connectionTimeout ||
           e.type == DioExceptionType.sendTimeout) {
         debugPrint('Email Auth: connect/send timeout verify-code');
-        errorMessage = LocalizedMessages.timeoutGeneric;
+        errorMessage = _verifyCodeTransportErrorMessage();
       } else if (e.type == DioExceptionType.connectionError) {
         debugPrint('Email Auth: ошибка соединения');
-        errorMessage = LocalizedMessages.connectionError;
+        errorMessage = _verifyCodeTransportErrorMessage();
       }
 
       debugPrint('Email Auth: итоговая ошибка проверки кода: $errorMessage');

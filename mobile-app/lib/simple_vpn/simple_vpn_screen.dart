@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import 'simple_vpn_controller.dart';
 
 class SimpleVpnScreen extends StatefulWidget {
@@ -29,20 +30,21 @@ class _SimpleVpnScreenState extends State<SimpleVpnScreen> {
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, _) {
+        final l10n = context.l10n;
         final state = _controller.state;
         final isConnected = state == SimpleVpnState.connected;
         final isBusy = _controller.isBusy;
         final buttonText = isConnected
-            ? 'Отключить'
+            ? l10n.btnVpnCancel
             : isBusy
-                ? 'Подключаем...'
-                : 'Подключить';
+                ? l10n.btnVpnConnecting
+                : l10n.btnVpnConnect;
         final statusText = switch (state) {
-          SimpleVpnState.connected => 'Подключено',
-          SimpleVpnState.connecting => 'Подключение',
-          SimpleVpnState.disconnecting => 'Отключение',
-          SimpleVpnState.error => 'Ошибка подключения',
-          SimpleVpnState.disconnected => 'Отключено',
+          SimpleVpnState.connected => l10n.trialUiConnectedTitle,
+          SimpleVpnState.connecting => l10n.trialUiConnectingTitle,
+          SimpleVpnState.disconnecting => l10n.trialUiDisconnectingTitle,
+          SimpleVpnState.error => l10n.homeConnectionFailedTitle,
+          SimpleVpnState.disconnected => l10n.homeReadyTitle,
         };
 
         return Scaffold(

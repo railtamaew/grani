@@ -55,9 +55,21 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme" />
               
-            <intent-filter android:autoVerify="true">
+            <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+
+            <!-- Verified GRANI App Links. Keep the verified surface intentionally
+                 narrow: only /open and its documented child routes. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="granilink.com"
+                    android:pathPrefix="/open" />
             </intent-filter>
             
             <!-- Intent-filter для Google OAuth callback (scheme: debug=.debug, release=com.granivpn.mobile) -->
@@ -83,6 +95,9 @@
         <meta-data
             android:name="io.flutter.embedding.android.EnableImpeller"
             android:value="false" />
+        <meta-data
+            android:name="asset_statements"
+            android:resource="@string/asset_statements" />
 
         <!-- VPN Service -->
         <service
@@ -149,6 +164,5 @@
 
     </application>
 </manifest>
-
 
 

@@ -19,17 +19,36 @@ class PendingDeviceLimitListener extends StatefulWidget {
       _PendingDeviceLimitListenerState();
 }
 
-class _PendingDeviceLimitListenerState extends State<PendingDeviceLimitListener> {
+class _PendingDeviceLimitListenerState
+    extends State<PendingDeviceLimitListener> {
   AuthService? _auth;
   bool _modalInFlight = false;
+  bool _modalScheduled = false;
+  int _handledRevision = -1;
 
   void _onAuthChanged() {
     if (!mounted) return;
     final auth = _auth;
     if (auth == null || !auth.hasPendingDeviceLimit) return;
     if (_modalInFlight) return;
-    _modalInFlight = true;
-    unawaited(_runPendingDeviceLimitFlow());
+    if (_modalScheduled) return;
+    final revision = auth.pendingDeviceLimitRevision;
+    if (revision == _handledRevision) return;
+    _modalScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _modalScheduled = false;
+      final latestAuth = _auth;
+      if (latestAuth == null || !latestAuth.hasPendingDeviceLimit) return;
+      final latestRevision = latestAuth.pendingDeviceLimitRevision;
+      if (latestRevision == _handledRevision) return;
+      _handledRevision = latestRevision;
+      _modalInFlight = true;
+      debugPrint(
+        'PendingDeviceLimitListener: opening modal revision=$latestRevision',
+      );
+      unawaited(_runPendingDeviceLimitFlow());
+    });
   }
 
   Future<void> _runPendingDeviceLimitFlow() async {
@@ -42,8 +61,14 @@ class _PendingDeviceLimitListenerState extends State<PendingDeviceLimitListener>
         authService: authService,
         vpnService: vpnService,
       );
+    } catch (e, st) {
+      _handledRevision = -1;
+      debugPrint('PendingDeviceLimitListener: modal failed: $e\n$st');
     } finally {
-      if (mounted) _modalInFlight = false;
+      if (mounted) {
+        _modalInFlight = false;
+        _onAuthChanged();
+      }
     }
   }
 

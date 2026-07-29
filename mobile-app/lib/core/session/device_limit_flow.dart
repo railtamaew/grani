@@ -1,11 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
-import '../../screens/device_limit_screen.dart' show DeviceLimitResult, showDeviceLimitModal;
+import '../../screens/device_limit_screen.dart'
+    show DeviceLimitResult, showDeviceLimitModal;
 import '../../services/auth_service.dart';
 import '../../services/native_vpn_service.dart' show DeviceLimitException;
+import '../../services/push_notification_service.dart';
 import '../../services/vpn_service.dart';
 import '../../use_cases/connect_vpn_use_case.dart';
+
+void _syncPushDeviceBinding() {
+  unawaited(PushNotificationService().resendTokenIfNeeded());
+}
 
 Future<List<dynamic>> _fetchDevicesSafe(VpnService vpnService) async {
   try {
@@ -46,7 +54,11 @@ Future<bool> registerDeviceUntilOkWithModal({
 }) async {
   for (var regAttempts = 1; regAttempts <= maxRegisterAttempts; regAttempts++) {
     try {
-      await vpnService.ensureDeviceRegistered(token);
+      await vpnService.ensureDeviceRegistered(
+        token,
+        force: authService.hasPendingDeviceLimit,
+      );
+      _syncPushDeviceBinding();
       authService.clearPendingDeviceLimit();
       return true;
     } on DeviceLimitException catch (e) {
@@ -55,13 +67,15 @@ Future<bool> registerDeviceUntilOkWithModal({
         return false;
       }
       if (!context.mounted) return false;
-      final devices =
-          e.devices.isNotEmpty ? e.devices : await _fetchDevicesSafe(vpnService);
+      final devices = e.devices.isNotEmpty
+          ? e.devices
+          : await _fetchDevicesSafe(vpnService);
       if (!context.mounted) return false;
       final result = await showDeviceLimitModal(
         context,
         initialDevices: devices,
-        maxDevices: authService.maxDevices,
+        maxDevices: e.limit ?? authService.maxDevices,
+        initialDeviceCount: e.currentCount,
       );
       if (!context.mounted) return false;
       if (result == DeviceLimitResult.loggedOutCurrentDevice) {
@@ -72,7 +86,8 @@ Future<bool> registerDeviceUntilOkWithModal({
       }
       if (result == DeviceLimitResult.resolved) {
         if (vpnService.isVpnSessionPotentiallyActive) {
-          await vpnService.disconnect(source: 'device_limit_resolved_pre_retry');
+          await vpnService.disconnect(
+              source: 'device_limit_resolved_pre_retry');
         }
         vpnService.resetSession();
         await vpnService.clearXrayConfigCache();
@@ -120,12 +135,15 @@ Future<void> handleConnectDeviceLimitFromUseCase({
       try {
         vpnService.resetSession();
         await vpnService.clearXrayConfigCache();
-        await vpnService.ensureDeviceRegistered(t);
+        await vpnService.ensureDeviceRegistered(t, force: true);
+        _syncPushDeviceBinding();
+        authService.clearPendingDeviceLimit();
       } on DeviceLimitException catch (e) {
         authService.setPendingDeviceLimit(e);
         return;
       } catch (e) {
-        debugPrint('handleConnectDeviceLimitFromUseCase: register after resolve: $e');
+        debugPrint(
+            'handleConnectDeviceLimitFromUseCase: register after resolve: $e');
       }
     }
     final retry = await onResolvedRetryConnect();
@@ -143,15 +161,19 @@ Future<void> handlePendingDeviceLimitAfterAuth({
 
   final devices = authService.pendingDeviceLimitDevices;
   final message = authService.pendingDeviceLimitMessage;
-  authService.clearPendingDeviceLimit();
+  final maxDevices =
+      authService.pendingDeviceLimitLimit ?? authService.maxDevices;
+  final deviceCount = authService.pendingDeviceLimitCurrentCount;
 
   final limitResult = await showDeviceLimitModal(
     context,
     initialDevices: devices,
-    maxDevices: authService.maxDevices,
+    maxDevices: maxDevices,
+    initialDeviceCount: deviceCount,
   );
 
   if (!context.mounted) return;
+  authService.clearPendingDeviceLimit();
 
   if (limitResult == DeviceLimitResult.loggedOutCurrentDevice) {
     await authService.logout();
@@ -165,11 +187,14 @@ Future<void> handlePendingDeviceLimitAfterAuth({
     if (token != null && token.isNotEmpty) {
       try {
         if (vpnService.isVpnSessionPotentiallyActive) {
-          await vpnService.disconnect(source: 'device_limit_pending_after_auth');
+          await vpnService.disconnect(
+              source: 'device_limit_pending_after_auth');
         }
         vpnService.resetSession();
         await vpnService.clearXrayConfigCache();
-        await vpnService.ensureDeviceRegistered(token);
+        await vpnService.ensureDeviceRegistered(token, force: true);
+        _syncPushDeviceBinding();
+        authService.clearPendingDeviceLimit();
       } catch (_) {}
     }
   } else {
@@ -194,7 +219,12 @@ Future<void> registerDeviceAfterLoginBackground({
   final sw = Stopwatch()..start();
   debugPrint('[device-reg] start');
   try {
-    await vpnService.ensureDeviceRegistered(token);
+    await vpnService.ensureDeviceRegistered(
+      token,
+      force: authService.hasPendingDeviceLimit,
+    );
+    _syncPushDeviceBinding();
+    authService.clearPendingDeviceLimit();
     sw.stop();
     debugPrint('[device-reg] success total_ms=${sw.elapsedMilliseconds}');
   } on DeviceLimitException catch (e) {

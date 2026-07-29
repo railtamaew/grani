@@ -16,6 +16,7 @@ import java.io.File
 import java.io.InputStreamReader
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.ArrayDeque
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -49,6 +50,10 @@ class Hysteria2ProcessWrapper(private val context: Context) {
     private var tun2socksConnection: ServiceConnection? = null
     @Volatile
     private var monitorThread: Thread? = null
+    private val outputLock = Any()
+    private val recentOutput = ArrayDeque<String>()
+    @Volatile
+    private var processExitCode: Int? = null
 
     fun start(
         vpnService: GraniVpnService,
@@ -73,7 +78,7 @@ class Hysteria2ProcessWrapper(private val context: Context) {
         try {
             startProcess(binary, configFile, onFailure)
             if (!waitForSocksPort(HY2_PORT_READY_TIMEOUT_MS)) {
-                throw IllegalStateException("Hysteria SOCKS port did not open")
+                throw IllegalStateException(buildStartupFailureReason())
             }
             val pfd = createTun(vpnService, session, effectiveMtu)
             vpnInterface = pfd
@@ -124,6 +129,20 @@ class Hysteria2ProcessWrapper(private val context: Context) {
 
     fun isRunning(): Boolean = running && process?.isAlive == true
 
+    fun isTunnelActiveOrClosing(): Boolean {
+        if (running || process?.isAlive == true) return true
+        return vpnInterface != null || tun2socksService != null || tun2socksConnection != null
+    }
+
+    fun getTunState(): String {
+        return when {
+            running && process?.isAlive == true -> "running"
+            vpnInterface != null -> "closing"
+            tun2socksService != null || tun2socksConnection != null -> "bridge_closing"
+            else -> "closed"
+        }
+    }
+
     private fun resolveBinary(): File =
         File(context.applicationInfo.nativeLibraryDir, HY2_BINARY_NAME)
 
@@ -133,10 +152,12 @@ class Hysteria2ProcessWrapper(private val context: Context) {
         pb.redirectErrorStream(true)
         val proc = pb.start()
         process = proc
+        processExitCode = null
         Thread {
             try {
                 BufferedReader(InputStreamReader(proc.inputStream)).useLines { lines ->
                     lines.forEach { line ->
+                        rememberOutput(line)
                         Log.i(TAG, "[hysteria] $line")
                     }
                 }
@@ -149,9 +170,10 @@ class Hysteria2ProcessWrapper(private val context: Context) {
         }
         Thread {
             val code = proc.waitFor()
+            processExitCode = code
             if (!stopped.get()) {
                 running = false
-                onFailure("hysteria_process_exited:$code")
+                onFailure(buildProcessExitReason(code))
             }
         }.apply {
             name = "hy2-exit-watcher"
@@ -162,6 +184,9 @@ class Hysteria2ProcessWrapper(private val context: Context) {
     private fun waitForSocksPort(timeoutMs: Long): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline && !stopped.get()) {
+            if (process?.isAlive == false) {
+                return false
+            }
             try {
                 Socket().use { socket ->
                     socket.connect(InetSocketAddress("127.0.0.1", HY2_SOCKS_PORT), 250)
@@ -172,6 +197,55 @@ class Hysteria2ProcessWrapper(private val context: Context) {
             }
         }
         return false
+    }
+
+    private fun rememberOutput(line: String) {
+        val cleaned = sanitizeProcessLine(line)
+        if (cleaned.isBlank()) return
+        synchronized(outputLock) {
+            recentOutput.addLast(cleaned)
+            while (recentOutput.size > 12) {
+                recentOutput.removeFirst()
+            }
+        }
+    }
+
+    private fun latestOutputLine(): String? {
+        return synchronized(outputLock) {
+            recentOutput.lastOrNull()
+        }
+    }
+
+    private fun buildProcessExitReason(code: Int): String {
+        val detail = latestOutputLine()
+        return if (detail.isNullOrBlank()) {
+            "hysteria_process_exited:$code"
+        } else {
+            "hysteria_process_exited:$code:$detail"
+        }
+    }
+
+    private fun buildStartupFailureReason(): String {
+        val code = processExitCode
+        val detail = latestOutputLine()
+        if (code != null) {
+            return buildProcessExitReason(code)
+        }
+        return if (detail.isNullOrBlank()) {
+            "hysteria_socks_port_not_open"
+        } else {
+            "hysteria_socks_port_not_open:$detail"
+        }
+    }
+
+    private fun sanitizeProcessLine(line: String): String {
+        val noAnsi = line.replace(Regex("\u001B\\[[;\\d]*m"), "")
+        val compact = noAnsi
+            .replace(Regex("\\s+"), " ")
+            .replace("\"auth\"\\s*:\\s*\"[^\"]+\"".toRegex(), "\"auth\":\"***\"")
+            .replace("\"password\"\\s*:\\s*\"[^\"]+\"".toRegex(), "\"password\":\"***\"")
+            .trim()
+        return compact.take(260)
     }
 
     private fun createTun(
@@ -252,23 +326,28 @@ class Hysteria2ProcessWrapper(private val context: Context) {
 
     private fun startMonitor(onFailure: (String) -> Unit) {
         monitorThread = Thread {
-            while (!stopped.get()) {
-                Thread.sleep(1200)
-                if (process?.isAlive != true) {
-                    running = false
-                    if (!stopped.get()) onFailure("hysteria_process_dead")
-                    return@Thread
+            try {
+                while (!stopped.get()) {
+                    Thread.sleep(1200)
+                    if (process?.isAlive != true) {
+                        running = false
+                        if (!stopped.get()) onFailure("hysteria_process_dead")
+                        return@Thread
+                    }
+                    val bridgeAlive = try {
+                        tun2socksService?.isTun2SocksRunning() == true
+                    } catch (_: Exception) {
+                        false
+                    }
+                    if (!bridgeAlive) {
+                        running = false
+                        if (!stopped.get()) onFailure("hy2_tun2socks_dead")
+                        return@Thread
+                    }
                 }
-                val bridgeAlive = try {
-                    tun2socksService?.isTun2SocksRunning() == true
-                } catch (_: Exception) {
-                    false
-                }
-                if (!bridgeAlive) {
-                    running = false
-                    if (!stopped.get()) onFailure("hy2_tun2socks_dead")
-                    return@Thread
-                }
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                Log.i(TAG, "hy2-health monitor interrupted; stopped=${stopped.get()}")
             }
         }.apply {
             name = "hy2-health"

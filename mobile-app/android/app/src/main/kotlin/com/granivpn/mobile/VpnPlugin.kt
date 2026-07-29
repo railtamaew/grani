@@ -118,6 +118,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
         channel = MethodChannel(binding.binaryMessenger, CHANNEL_NAME)
         channel.setMethodCallHandler(this)
         appContext = binding.applicationContext
+        VpnNativeStateEmitter.setAppContext(binding.applicationContext)
         setupVpnStateEventChannel(binding.binaryMessenger)
         VpnCircuitBreaker.clearLegacyDiskStateIfAny(binding.applicationContext)
         Log.d(TAG, "VpnPlugin attached to engine")
@@ -128,6 +129,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
     fun attachToEngine(binaryMessenger: BinaryMessenger) {
         channel = MethodChannel(binaryMessenger, CHANNEL_NAME)
         channel.setMethodCallHandler(this)
+        appContext?.let { VpnNativeStateEmitter.setAppContext(it) }
         setupVpnStateEventChannel(binaryMessenger)
         Log.d(TAG, "VpnPlugin attached to engine (direct)")
     }
@@ -161,6 +163,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
         appContext = binding.activity.applicationContext
+        VpnNativeStateEmitter.setAppContext(binding.activity.applicationContext)
         
         // Регистрируем ActivityResultLauncher для VPN разрешения
         if (activity is androidx.activity.ComponentActivity) {
@@ -378,21 +381,57 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                     appContext?.let {
                         NativeVpnRuntimeState.reconcileAwgNotification(it, "method_get_status")
                     }
-                } else {
-                    cleanupStaleAmneziaWgNotification()
                 }
                 result.success(mapOf("connected" to connected))
             }
             "disconnectAmneziaWg" -> {
+                val args = call.arguments as? Map<*, *>
+                val reason = (args?.get("reason") as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: "user"
+                val source = (args?.get("source") as? String)
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: "flutter_disconnect_amneziawg"
+                val connectionSessionId = (args?.get("connection_session_id") as? String)
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
                 Thread {
                     val ctx = appContext ?: activity?.applicationContext
                     if (ctx == null) {
                         mainHandler.post { result.error("ACTIVITY_NULL", "Context недоступен", null) }
                     } else {
+                        val awgActive = NativeVpnRuntimeState.isAwgLikelyActive(ctx) ||
+                            NativeVpnRuntimeState.isAwgStartupInProgress(ctx)
+                        if (!awgActive) {
+                            cleanupStaleAmneziaWgNotification()
+                            val snapshot = NativeVpnRuntimeState.getRuntimeSnapshot(ctx)
+                            Log.i(
+                                TAG,
+                                "disconnectAmneziaWg noop: no AWG runtime active " +
+                                    "source=$source current_backend=${snapshot.backend ?: "unknown"} " +
+                                    "current_protocol=${snapshot.protocol ?: "unknown"} status=${snapshot.status}",
+                            )
+                            ProtocolRuntimeContract.emitOutcome(
+                                ctx,
+                                action = "disconnect",
+                                success = true,
+                                backend = "amneziawg",
+                                protocol = "graniwg",
+                                sessionId = connectionSessionId ?: snapshot.sessionId,
+                                source = source,
+                                details = mapOf(
+                                    "disconnect_reason" to reason,
+                                    "disconnect_noop" to true,
+                                    "awg_active" to false,
+                                ),
+                            )
+                            mainHandler.post { result.success(true) }
+                            return@Thread
+                        }
                         val down = VpnRuntimeCoordinator.disconnect(
                             ctx,
-                            source = "flutter_disconnect_amneziawg",
-                            reason = "user",
+                            source = source,
+                            reason = reason,
+                            connectionSessionId = connectionSessionId,
                         )
                         mainHandler.post { result.success(down) }
                     }
@@ -436,6 +475,12 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
             }
             "getStatus" -> {
                 getVpnStatus(result)
+            }
+            "getRuntimeDiagnostics" -> {
+                getRuntimeDiagnostics(result)
+            }
+            "getNetworkDiagnostics" -> {
+                getNetworkDiagnostics(result)
             }
             "getTrafficStats" -> {
                 getTrafficStats(result)
@@ -751,6 +796,16 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
             startAmneziaWgConnection(config, connectionSessionId, source, result)
         } catch (e: Exception) {
             Log.e(TAG, "connectAmneziaWg: failed", e)
+            (activity?.applicationContext ?: appContext)?.let { ctx ->
+                ProtocolRuntimeContract.markError(
+                    ctx,
+                    backend = "amneziawg",
+                    protocol = "graniwg",
+                    sessionId = connectionSessionId,
+                    source = source,
+                    error = e.message ?: "connect_amneziawg_failed",
+                )
+            }
             result.error("VPN_ERROR", "Ошибка подключения AmneziaWG: ${e.message}", null)
         }
     }
@@ -785,6 +840,14 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                 mainHandler.post { result?.success(isUp) }
             } catch (e: Exception) {
                 Log.e(TAG, "startAmneziaWgConnection: failed", e)
+                ProtocolRuntimeContract.markError(
+                    ctx,
+                    backend = "amneziawg",
+                    protocol = "graniwg",
+                    sessionId = connectionSessionId,
+                    source = source,
+                    error = e.message ?: "start_amneziawg_failed",
+                )
                 mainHandler.post {
                     result?.error(
                         "VPN_ERROR",
@@ -808,6 +871,16 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
         try {
             if (activity == null) {
                 Log.e(TAG, "connectVpn: Activity недоступна")
+                appContext?.let { ctx ->
+                    ProtocolRuntimeContract.markError(
+                        ctx,
+                        backend = "native",
+                        protocol = protocol,
+                        sessionId = connectionSessionId,
+                        source = source,
+                        error = "activity_null",
+                    )
+                }
                 result.error("ACTIVITY_NULL", "Activity недоступна", null)
                 return
             }
@@ -853,6 +926,16 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
             }
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка подключения VPN: ${e.message}", e)
+            (activity?.applicationContext ?: appContext)?.let { ctx ->
+                ProtocolRuntimeContract.markError(
+                    ctx,
+                    backend = "native",
+                    protocol = protocol,
+                    sessionId = connectionSessionId,
+                    source = source,
+                    error = e.message ?: "connect_failed",
+                )
+            }
             result.error("VPN_ERROR", "Ошибка подключения VPN: ${e.message}", null)
         }
     }
@@ -873,6 +956,16 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
             
             val act = activity
             if (act == null) {
+                appContext?.let { ctx ->
+                    ProtocolRuntimeContract.markError(
+                        ctx,
+                        backend = "native",
+                        protocol = protocol,
+                        sessionId = connectionSessionId,
+                        source = source,
+                        error = "activity_null",
+                    )
+                }
                 result?.error("ACTIVITY_NULL", "Activity недоступна для установки контекста", null)
                 return
             }
@@ -895,17 +988,36 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                 var startError: String? = null
                 val statusContext = appContext ?: act.applicationContext
                 while (System.currentTimeMillis() - startTs < startTimeoutMs) {
-                    val lastError = GraniVpnService.getLastStartError()
+                    val lastError = GraniVpnService.getLastStartError(connectionSessionId)
                     if (!lastError.isNullOrBlank()) {
                         startError = lastError
                         break
+                    }
+                    val snapshot = NativeVpnRuntimeState.getRuntimeSnapshot(statusContext)
+                    val snapshotSession = snapshot.sessionId?.trim()?.takeIf { it.isNotEmpty() }
+                    val requestedSession = connectionSessionId?.trim()?.takeIf { it.isNotEmpty() }
+                    if (requestedSession != null &&
+                        snapshotSession != null &&
+                        snapshotSession != requestedSession
+                    ) {
+                        Thread.sleep(50)
+                        continue
                     }
                     if (GraniVpnService.isVpnCommitted()) {
                         isStarted = true
                         startedMode = "committed"
                         break
                     }
-                    if (NativeVpnRuntimeState.isNativeVpnLikelyActive(statusContext)) {
+                    if (snapshot.status == NativeVpnRuntimeState.RuntimeStatus.VERIFIED ||
+                        snapshot.status == NativeVpnRuntimeState.RuntimeStatus.CONNECTED
+                    ) {
+                        isStarted = true
+                        startedMode = snapshot.status.name.lowercase()
+                        break
+                    }
+                    if (snapshot.status == NativeVpnRuntimeState.RuntimeStatus.LOCAL_UP &&
+                        snapshot.nativeLikelyActive
+                    ) {
                         isStarted = true
                         startedMode = "local_up"
                         break
@@ -924,6 +1036,14 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                         Log.e(TAG, "startVpnConnection: VPN не запустился: $startError")
                         appContext?.let { context ->
                             clearLastConfig(context)
+                            ProtocolRuntimeContract.markError(
+                                context,
+                                backend = "native",
+                                protocol = protocol,
+                                sessionId = connectionSessionId,
+                                source = source,
+                                error = startError,
+                            )
                         }
                         result?.error("VPN_START_FAILED", startError, null)
                     } else {
@@ -931,6 +1051,14 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                         Log.e(TAG, "startVpnConnection: $errorMsg")
                         appContext?.let { context ->
                             clearLastConfig(context)
+                            ProtocolRuntimeContract.markError(
+                                context,
+                                backend = "native",
+                                protocol = protocol,
+                                sessionId = connectionSessionId,
+                                source = source,
+                                error = "start_timeout",
+                            )
                         }
                         result?.error("VPN_TIMEOUT", errorMsg, mapOf("timeoutMs" to startTimeoutMs))
                     }
@@ -947,6 +1075,16 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
             val errorMsg = "Ошибка запуска VPN: ${e.message}"
             Log.e(TAG, "startVpnConnection: $errorMsg", e)
             Log.e(TAG, "startVpnConnection: Stack trace: ${e.stackTraceToString()}")
+            (activity?.applicationContext ?: appContext)?.let { ctx ->
+                ProtocolRuntimeContract.markError(
+                    ctx,
+                    backend = "native",
+                    protocol = protocol,
+                    sessionId = connectionSessionId,
+                    source = source,
+                    error = e.message ?: "start_vpn_exception",
+                )
+            }
             result?.error("VPN_ERROR", errorMsg, mapOf(
                 "exception" to e.javaClass.simpleName,
                 "message" to (e.message ?: "Unknown error"),
@@ -969,9 +1107,9 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
         connectionSessionId: String? = null,
     ) {
         try {
-            val act = activity
-            if (act == null) {
-                result.error("ACTIVITY_NULL", "Activity недоступна", null)
+            val ctx = appContext ?: activity?.applicationContext
+            if (ctx == null) {
+                result.error("CONTEXT_NULL", "Context недоступен", null)
                 return
             }
             Log.i(
@@ -981,7 +1119,7 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
             Thread {
                 try {
                     val down = VpnRuntimeCoordinator.disconnect(
-                        act.applicationContext,
+                        ctx,
                         source = source ?: "flutter_method_channel",
                         reason = reason ?: "unspecified",
                         connectionSessionId = connectionSessionId,
@@ -1012,11 +1150,66 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
             if (isConnected && ctx != null) {
                 NativeVpnRuntimeState.notifyQuickTile(ctx)
             }
-            result.success(mapOf("connected" to isConnected))
+            result.success(
+                mapOf(
+                    "connected" to isConnected,
+                    "runtime" to (ctx?.let { NativeVpnRuntimeState.getDiagnosticDump(it) } ?: emptyMap<String, Any?>()),
+                )
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка получения статуса VPN: ${e.message}", e)
             result.error("VPN_ERROR", "Ошибка получения статуса VPN: ${e.message}", null)
         }
+    }
+
+    private fun getRuntimeDiagnostics(result: MethodChannel.Result) {
+        try {
+            val ctx = appContext ?: activity?.applicationContext
+            if (ctx == null) {
+                result.success(
+                    mapOf(
+                        "runtime_owner" to "unknown",
+                        "runtime_status" to "no_context",
+                    )
+                )
+                return
+            }
+            val dump = NativeVpnRuntimeState.getDiagnosticDump(ctx)
+            Log.i(TAG, "[VPN_RUNTIME] diagnostic_dump=$dump")
+            result.success(dump)
+        } catch (e: Exception) {
+            Log.e(TAG, "Ошибка получения runtime diagnostics: ${e.message}", e)
+            result.error("VPN_ERROR", "Ошибка получения runtime diagnostics: ${e.message}", null)
+        }
+    }
+
+    private fun getNetworkDiagnostics(result: MethodChannel.Result) {
+        val ctx = appContext ?: activity?.applicationContext
+        if (ctx == null) {
+            result.success(
+                mapOf(
+                    "network_type" to "unknown",
+                    "underlying_network_type" to "unknown",
+                    "underlying_network_available" to false,
+                    "internet_without_vpn_ok" to false,
+                    "underlying_internet_ok" to false,
+                    "underlying_probe_error" to "context_unavailable",
+                )
+            )
+            return
+        }
+        Thread {
+            try {
+                val dump = NetworkDiagnostics.snapshot(ctx, runInternetProbe = true)
+                Log.i(TAG, "[NETWORK_DIAG] diagnostic_dump=$dump")
+                mainHandler.post { result.success(dump) }
+            } catch (e: Exception) {
+                Log.e(TAG, "Ошибка получения network diagnostics: ${e.message}", e)
+                mainHandler.post {
+                    result.error("VPN_ERROR", "Ошибка получения network diagnostics: ${e.message}", null)
+                }
+            }
+        }.start()
     }
 
     private fun isAmneziaWgConnected(): Boolean {

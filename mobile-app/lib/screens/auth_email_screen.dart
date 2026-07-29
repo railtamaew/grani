@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../l10n/l10n.dart';
@@ -26,6 +24,7 @@ class _AuthEmailScreenState extends State<AuthEmailScreen>
   final _formCardKey = GlobalKey();
   final _sendButtonKey = GlobalKey();
   String? _errorMessage;
+  bool _isSendingCode = false;
 
   @override
   void initState() {
@@ -107,19 +106,27 @@ class _AuthEmailScreenState extends State<AuthEmailScreen>
     final authService = Provider.of<AuthService>(context, listen: false);
     final email = emailController.text.trim();
 
-    // Fire-and-forget send-code: сразу открываем экран ввода кода, не ждём HTTP-ответ (медленный SMTP / receiveTimeout).
-    unawaited(
-      authService.sendCode(email, omitGlobalLoadingState: true).then((ok) {
-        if (!mounted) return;
-        if (!ok) {
-          debugPrint(
-              'Email Auth Screen: send-code в фоне завершился с ok=false (см. lastError на экране кода / повтор)');
-        }
-      }),
-    );
+    setState(() => _isSendingCode = true);
+    var ok = false;
+    try {
+      ok = await authService.sendCode(email, omitGlobalLoadingState: true);
+    } catch (e) {
+      debugPrint('Email Auth Screen: send-code failed before code screen: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isSendingCode = false);
+      }
+    }
 
-    debugPrint(
-        'Email Auth Screen: переход на экран ввода кода (без ожидания send-code)');
+    if (!mounted) return;
+    if (!ok) {
+      setState(() {
+        _errorMessage = _sendCodeNetworkErrorText(context);
+      });
+      return;
+    }
+
+    debugPrint('Email Auth Screen: send-code ok, переход на экран ввода кода');
     Navigator.pushNamed(
       context,
       '/auth-code',
@@ -129,6 +136,14 @@ class _AuthEmailScreenState extends State<AuthEmailScreen>
         dailyRemaining: authService.dailyCodeRemaining,
       ),
     );
+  }
+
+  String _sendCodeNetworkErrorText(BuildContext context) {
+    final isRu = Localizations.localeOf(context).languageCode == 'ru';
+    if (isRu) {
+      return 'Не удалось отправить код, проверьте сеть';
+    }
+    return 'Could not send the code. Check your network and try again.';
   }
 
   @override
@@ -331,7 +346,8 @@ class _AuthEmailScreenState extends State<AuthEmailScreen>
                             // Кнопка "Отправить код" (CTA — ключ для ensureVisible при клавиатуре)
                             Consumer<AuthService>(
                               builder: (context, authService, child) {
-                                final isLoading = authService.isLoading;
+                                final isLoading =
+                                    authService.isLoading || _isSendingCode;
                                 return Material(
                                   key: _sendButtonKey,
                                   color: Colors.transparent,

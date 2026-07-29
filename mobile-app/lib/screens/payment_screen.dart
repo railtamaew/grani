@@ -3,7 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../theme.dart';
 import '../widgets/custom_widgets.dart';
-import '../services/auth_service.dart';
+import '../services/subscription_service.dart';
+import '../config/subscription_products.dart';
 import '../l10n/l10n.dart';
 
 /// Экран выбора тарифа. При появлении обновляет статус с сервера:
@@ -16,18 +17,25 @@ class PaymentScreen extends StatefulWidget {
 }
 
 class _PaymentScreenState extends State<PaymentScreen> {
-  /// Обновление статуса — только по явному действию (кнопка «Обновить»).
-  /// Авто-редирект из initState убран по плану оптимизации.
-  Future<void> _refreshAndNavigate() async {
-    if (!mounted) return;
-    final authService = Provider.of<AuthService>(context, listen: false);
-    await authService.refreshUserStatus();
-    if (!mounted) return;
-    if (authService.hasActiveSubscription ||
-        (authService.trialSecondsLeft ?? 0) > 0) {
-      Navigator.pushReplacementNamed(context, '/main');
-      return;
-    }
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || !SubscriptionService.supported) return;
+      final subscription = context.read<SubscriptionService>();
+      if (subscription.products.isEmpty && !subscription.isLoading) {
+        await subscription.initialize();
+      }
+    });
+  }
+
+  String _storePrice(BuildContext context, String productId) {
+    final subscription = context.watch<SubscriptionService>();
+    final price = subscription.priceFor(productId);
+    if (price != null && price.trim().isNotEmpty) return price;
+    return subscription.isLoading
+        ? context.l10n.tariffPriceLoading
+        : context.l10n.tariffPriceUnavailable;
   }
 
   @override
@@ -115,7 +123,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
                               // 1 Month Tariff
                               _buildTariffCard(
                                 title: l10n.paymentTariffTitleOneMonth,
-                                price: l10n.paymentTariffPriceMonthly,
+                                price: _storePrice(context,
+                                    SubscriptionProducts.extension30Days),
                                 description: l10n.paymentTariffDescMonthly,
                                 isSelected: false,
                                 onTap: () {
@@ -128,7 +137,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
                               // 6 Months Tariff
                               _buildTariffCard(
                                 title: l10n.paymentTariffTitleSixMonths,
-                                price: l10n.paymentTariffPriceSixMonth,
+                                price: _storePrice(context,
+                                    SubscriptionProducts.extension180Days),
                                 description: l10n.paymentTariffDescSixMonth,
                                 isSelected: true,
                                 isPopular: true,
@@ -142,7 +152,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
                               // 1 Year Tariff
                               _buildTariffCard(
                                 title: l10n.paymentTariffTitleOneYear,
-                                price: l10n.paymentTariffPriceYearly,
+                                price: _storePrice(context,
+                                    SubscriptionProducts.extension365Days),
                                 description: l10n.paymentTariffDescYearly,
                                 isSelected: false,
                                 onTap: () {
@@ -176,12 +187,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       ),
 
                       // Protocol Indicators
-                      Padding(
-                        padding: const EdgeInsets.all(GraniTheme.paddingLarge),
+                      const Padding(
+                        padding: EdgeInsets.all(GraniTheme.paddingLarge),
                         child: Wrap(
                           spacing: GraniTheme.paddingLarge,
                           runSpacing: GraniTheme.paddingMedium,
-                          children: const [
+                          children: [
                             ProtocolIndicator(
                               protocol: 'Xray',
                               isActive: true,

@@ -44,9 +44,8 @@ String buildWindowsHysteria2Config(SimpleVpnConfig config) {
   }
 
   final rawTls = outbound['tls'];
-  final tls = rawTls is Map
-      ? Map<String, dynamic>.from(rawTls)
-      : <String, dynamic>{};
+  final tls =
+      rawTls is Map ? Map<String, dynamic>.from(rawTls) : <String, dynamic>{};
   final sni = tls['server_name']?.toString().trim();
   final nodeIpv4 = config.server?.ipAddress.trim() ?? '';
   if (!_isIpv4(nodeIpv4)) {

@@ -7,7 +7,18 @@ void main() {
     final yaml = buildWindowsHysteria2Config(
       _config(
         raw: '''
-{"outbounds":[{"type":"hysteria2","server":"hy2-pl.granilink.com","server_port":443,"password":"secret:with-specials","tls":{"server_name":"hy2-pl.granilink.com"},"obfs":{"type":"salamander","password":"obfs-secret"}}]}
+{
+  "outbounds": [
+    {
+      "type": "hysteria2",
+      "server": "hy2-pl.granilink.com",
+      "server_port": 443,
+      "password": "secret:with-specials",
+      "tls": {"server_name": "hy2-pl.granilink.com"},
+      "obfs": {"type": "salamander", "password": "obfs-secret"}
+    }
+  ]
+}
 ''',
       ),
     );
@@ -26,8 +37,9 @@ void main() {
       () => buildWindowsHysteria2Config(
         _config(
           nodeIp: 'hy2-pl.granilink.com',
-          raw:
-              '{"outbounds":[{"type":"hysteria2","server":"hy2-pl.granilink.com","password":"secret"}]}',
+          raw: '''
+{"outbounds":[{"type":"hysteria2","server":"hy2-pl.granilink.com","password":"secret"}]}
+''',
         ),
       ),
       throwsA(isA<WindowsHysteria2ConfigException>()),

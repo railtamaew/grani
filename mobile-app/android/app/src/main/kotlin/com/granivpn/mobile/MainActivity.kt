@@ -9,6 +9,9 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import com.android.installreferrer.api.InstallReferrerClient
+import com.android.installreferrer.api.InstallReferrerStateListener
+import com.android.installreferrer.api.InstallReferrerClient.InstallReferrerResponse
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
@@ -18,9 +21,12 @@ import io.flutter.plugin.common.PluginRegistry
 
 class MainActivity: FlutterFragmentActivity() {
     private var vpnPlugin: VpnPlugin? = null
+    private var appLinksChannel: MethodChannel? = null
+    private var pendingAppLink: String? = null
     private val activityResultListeners = mutableListOf<PluginRegistry.ActivityResultListener>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        pendingAppLink = verifiedAppLink(intent)
         Log.d("ACTIVITY", "onCreate ts=${System.currentTimeMillis()} saved=${savedInstanceState != null}")
         super.onCreate(savedInstanceState)
     }
@@ -45,6 +51,10 @@ class MainActivity: FlutterFragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        verifiedAppLink(intent)?.let { link ->
+            pendingAppLink = link
+            appLinksChannel?.invokeMethod("onAppLink", link)
+        }
         Log.d(
             "ACTIVITY",
             "onNewIntent quick_tile_action=${intent.getStringExtra(QuickTileService.EXTRA_QUICK_TILE_ACTION) ?: "-"}",
@@ -59,6 +69,23 @@ class MainActivity: FlutterFragmentActivity() {
         // We register plugins manually to skip wireguard_flutter auto-registration:
         // the plugin currently crashes on FlutterFragmentActivity with ClassCastException.
         SafePluginRegistrant.registerWith(flutterEngine)
+
+        appLinksChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.granivpn.mobile/app_links",
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getInitialLink" -> {
+                        val link = pendingAppLink
+                        pendingAppLink = null
+                        result.success(link)
+                    }
+                    "getInstallReferrer" -> readInstallReferrer(result)
+                    else -> result.notImplemented()
+                }
+            }
+        }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.granivpn.mobile/notifications")
             .setMethodCallHandler { call, result ->
@@ -153,6 +180,46 @@ class MainActivity: FlutterFragmentActivity() {
                     result.notImplemented()
                 }
             }
+    }
+
+    private fun verifiedAppLink(intent: Intent?): String? {
+        val uri = intent?.data ?: return null
+        val path = uri.path ?: return null
+        if (!uri.scheme.equals("https", ignoreCase = true)) return null
+        if (!uri.host.equals("granilink.com", ignoreCase = true)) return null
+        if (path != "/open" && !path.startsWith("/open/")) return null
+        return uri.toString()
+    }
+
+    private fun readInstallReferrer(result: MethodChannel.Result) {
+        val client = InstallReferrerClient.newBuilder(applicationContext).build()
+        client.startConnection(object : InstallReferrerStateListener {
+            override fun onInstallReferrerSetupFinished(responseCode: Int) {
+                try {
+                    if (responseCode != InstallReferrerResponse.OK) {
+                        result.success(null)
+                        return
+                    }
+                    val details = client.installReferrer
+                    result.success(
+                        mapOf(
+                            "install_referrer" to details.installReferrer,
+                            "click_timestamp_seconds" to details.referrerClickTimestampSeconds,
+                            "install_timestamp_seconds" to details.installBeginTimestampSeconds,
+                        ),
+                    )
+                } catch (error: Exception) {
+                    Log.w("MainActivity", "Install Referrer unavailable", error)
+                    result.success(null)
+                } finally {
+                    client.endConnection()
+                }
+            }
+
+            override fun onInstallReferrerServiceDisconnected() {
+                // A later cold start may retry until the Dart side marks the read complete.
+            }
+        })
     }
     
     // Устаревший метод onActivityResult оставлен для обратной совместимости

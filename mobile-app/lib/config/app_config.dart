@@ -10,6 +10,31 @@ class AppConfig {
   static bool get isEmailPrimaryAuth =>
       startScreenPrimaryAuth.toLowerCase() == 'email';
 
+  /// Post-auth preparation screen between successful auth and the app shell.
+  ///
+  /// Rollback switch: build with
+  /// --dart-define=ENABLE_POST_AUTH_PREPARATION_SCREEN=false
+  /// to restore the previous direct navigation flow.
+  static const bool enablePostAuthPreparationScreen = bool.fromEnvironment(
+    'ENABLE_POST_AUTH_PREPARATION_SCREEN',
+    defaultValue: true,
+  );
+  static const Duration postAuthPreparationShowDelay =
+      Duration(milliseconds: 350);
+  static const Duration postAuthPreparationMinVisible =
+      Duration(milliseconds: 650);
+  static const Duration postAuthPreparationStepMinVisible =
+      Duration(milliseconds: 220);
+  static const Duration postAuthPreparationSoftTimeout = Duration(seconds: 15);
+  static const Duration postAuthPreparationAccountWaitTimeout =
+      Duration(seconds: 75);
+  static const Duration postAuthPreparationNetworkSoftTimeout =
+      Duration(seconds: 3);
+  static const Duration postAuthPreparationAccessSoftTimeout =
+      Duration(seconds: 4);
+  static const Duration postAuthPreparationServersSoftTimeout =
+      Duration(seconds: 6);
+
   // Use --dart-define=API_BASE_URL=... to override at build time.
   /// Основной API (Cloudflare-first) — api.granilink.com.
   static const String apiBaseUrl = String.fromEnvironment(
@@ -124,8 +149,12 @@ class AppConfig {
 
   // Версия и информация о сборке (загружается из package_info)
   static String appVersion = '1.0.4';
-  static String buildNumber = '23';
-  static String buildDate = '2026-04-27'; // Автоматически заменяется при сборке
+  static String buildNumber = '34';
+  static String buildDate = '2026-07-29'; // Автоматически заменяется при сборке
+  static const String diagnosticBuildMarker = String.fromEnvironment(
+    'GRANI_BUILD_MARKER',
+    defaultValue: 'local-dev',
+  );
 
   // Инициализация версии из package_info
   static Future<void> init() async {
@@ -133,10 +162,13 @@ class AppConfig {
       final packageInfo = await PackageInfo.fromPlatform();
       appVersion = packageInfo.version;
       buildNumber = packageInfo.buildNumber;
+      debugPrint(
+        'GRANI_BUILD_MARKER marker=$diagnosticBuildMarker version=$appVersion build=$buildNumber',
+      );
     } catch (e) {
       // Если не удалось загрузить, используем значения по умолчанию
       appVersion = '1.0.4';
-      buildNumber = '23';
+      buildNumber = '34';
     }
   }
 

@@ -1,4 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/api/api_client.dart';
 import '../core/api/endpoint_router.dart';
@@ -17,18 +22,69 @@ bool _isPaymentRequired(Object error) {
   return error is DioException && error.response?.statusCode == 402;
 }
 
+bool _isDeviceLimitError(Object error) {
+  if (error is! DioException) return false;
+  final status = error.response?.statusCode;
+  if (status != 400 && status != 402 && status != 403 && status != 409) {
+    return false;
+  }
+  final text = _payloadText(error.response?.data).toLowerCase();
+  return text.contains('device_limit_exceeded') ||
+      text.contains('device limit') ||
+      text.contains('лимит устройств') ||
+      text.contains('превышен лимит');
+}
+
+Object? _detailPayload(Object? data) {
+  if (data is Map) {
+    return data['detail'] ?? data['error'] ?? data['message'] ?? data;
+  }
+  return data;
+}
+
+String? _messageFromPayload(Object? payload) {
+  if (payload == null) return null;
+  if (payload is String && payload.trim().isNotEmpty) {
+    return payload.trim();
+  }
+  if (payload is Map) {
+    for (final key in const ['message', 'detail', 'error', 'code']) {
+      final value = payload[key];
+      final message = _messageFromPayload(value);
+      if (message != null && message.isNotEmpty) return message;
+    }
+  }
+  return null;
+}
+
+String _payloadText(Object? payload) {
+  if (payload == null) return '';
+  if (payload is Map) {
+    return payload.entries
+        .map((entry) => '${entry.key} ${_payloadText(entry.value)}')
+        .join(' ');
+  }
+  if (payload is Iterable) {
+    return payload.map(_payloadText).join(' ');
+  }
+  return payload.toString();
+}
+
 String _accessRequiredMessage(Object error) {
   if (error is DioException) {
     final data = error.response?.data;
-    if (data is Map && data['detail'] != null) return data['detail'].toString();
-    final message = error.message;
-    if (message != null && message.isNotEmpty) return message;
+    final payloadMessage = _messageFromPayload(_detailPayload(data));
+    if (payloadMessage != null && payloadMessage.isNotEmpty) {
+      return payloadMessage;
+    }
+    final dioMessage = error.message;
+    if (dioMessage != null && dioMessage.isNotEmpty) return dioMessage;
   }
   return 'Требуется активная подписка';
 }
 
 Never _rethrowAccessRequired(Object error) {
-  if (_isPaymentRequired(error)) {
+  if (_isPaymentRequired(error) || _isDeviceLimitError(error)) {
     throw SimpleVpnAccessRequiredException(_accessRequiredMessage(error));
   }
   throw error;
@@ -278,10 +334,67 @@ class SimpleVpnVerifyResult {
   }
 }
 
+class _CriticalSimpleVpnLogOutbox {
+  static const String _storageKey = 'simple_vpn_critical_log_outbox_v1';
+  static const int _maxEntries = 64;
+
+  Future<List<Map<String, dynamic>>> read() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_storageKey);
+    if (raw == null || raw.isEmpty) return <Map<String, dynamic>>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return <Map<String, dynamic>>[];
+      return decoded
+          .whereType<Map>()
+          .map((entry) => Map<String, dynamic>.from(entry))
+          .toList();
+    } catch (_) {
+      return <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<void> enqueue({
+    required String idempotencyKey,
+    required Map<String, dynamic> payload,
+  }) async {
+    final entries = await read();
+    if (entries.any(
+      (entry) => entry['idempotency_key']?.toString() == idempotencyKey,
+    )) {
+      return;
+    }
+    entries.add(<String, dynamic>{
+      'idempotency_key': idempotencyKey,
+      'payload': payload,
+      'attempts': 0,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    });
+    if (entries.length > _maxEntries) {
+      entries.removeRange(0, entries.length - _maxEntries);
+    }
+    await replace(entries);
+  }
+
+  Future<void> replace(List<Map<String, dynamic>> entries) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_storageKey, jsonEncode(entries));
+  }
+}
+
 class SimpleVpnApi {
   SimpleVpnApi({ApiClient? apiClient}) : _apiClient = apiClient ?? ApiClient();
 
   final ApiClient _apiClient;
+  final _CriticalSimpleVpnLogOutbox _criticalLogOutbox =
+      _CriticalSimpleVpnLogOutbox();
+  Future<void> _criticalOutboxSerial = Future<void>.value();
+  Timer? _criticalOutboxRetryTimer;
+
+  static const Set<String> _criticalLogEvents = <String>{
+    'vpn_data_verified',
+    'node_data_verified',
+  };
 
   static List<SimpleVpnProtocol> get displayProtocols => <SimpleVpnProtocol>[
         SimpleVpnProtocol(
@@ -299,6 +412,7 @@ class SimpleVpnApi {
       ];
 
   Future<List<SimpleVpnServer>> fetchServers() async {
+    unawaited(_flushCriticalLogOutbox());
     try {
       final response = await _apiClient.get(
         '/simple-vpn/servers',
@@ -307,13 +421,16 @@ class SimpleVpnApi {
       );
       final data = _asMap(response.data);
       final raw = data['servers'];
-      if (raw is! List) return <SimpleVpnServer>[];
-      return raw
+      if (raw is! List) {
+        throw StateError('Invalid /simple-vpn/servers response');
+      }
+      final servers = raw
           .whereType<Map>()
           .map((item) =>
               SimpleVpnServer.fromJson(Map<String, dynamic>.from(item)))
           .where((server) => server.id > 0)
           .toList(growable: false);
+      return servers;
     } catch (error) {
       _rethrowAccessRequired(error);
     }
@@ -362,7 +479,7 @@ class SimpleVpnApi {
           if (protocol != null && protocol.isNotEmpty) 'protocol': protocol,
         },
         requestKind: RequestKind.vpnControl,
-        options: Options(receiveTimeout: const Duration(seconds: 45)),
+        options: Options(receiveTimeout: const Duration(seconds: 12)),
       );
       final data = _asMap(response.data);
       return SimpleVpnConfig.fromJson(data);
@@ -436,23 +553,127 @@ class SimpleVpnApi {
     String? deviceId,
     Map<String, dynamic>? details,
   }) async {
+    final payloadDetails = Map<String, dynamic>.from(
+      details ?? const <String, dynamic>{},
+    );
+    final isCritical = _criticalLogEvents.contains(event);
+    final payload = <String, dynamic>{
+      'event': event,
+      'level': level,
+      if (sessionId != null && sessionId.isNotEmpty) 'session_id': sessionId,
+      if (deviceId != null && deviceId.isNotEmpty) 'device_id': deviceId,
+    };
+    if (isCritical) {
+      final stableSessionId = sessionId ??
+          payloadDetails['vpn_session_id']?.toString() ??
+          payloadDetails['connection_session_id']?.toString() ??
+          payloadDetails['runtime_session_id']?.toString() ??
+          'no-session';
+      final idempotencyKey =
+          '$event:${deviceId ?? 'no-device'}:$stableSessionId';
+      payloadDetails['idempotency_key'] = idempotencyKey;
+      if (payloadDetails.isNotEmpty) payload['details'] = payloadDetails;
+      try {
+        await _runCriticalOutboxSerialized(() async {
+          await _criticalLogOutbox.enqueue(
+            idempotencyKey: idempotencyKey,
+            payload: payload,
+          );
+          await _drainCriticalLogOutboxLocked();
+        });
+      } catch (error) {
+        debugPrint(
+          'SimpleVpnApi: critical log outbox failed event=$event error=$error',
+        );
+        _scheduleCriticalLogRetry(1);
+      }
+      return;
+    }
+    if (payloadDetails.isNotEmpty) payload['details'] = payloadDetails;
     try {
-      await _apiClient.post(
-        '/simple-vpn/logs',
-        data: <String, dynamic>{
-          'event': event,
-          'level': level,
-          if (sessionId != null && sessionId.isNotEmpty)
-            'session_id': sessionId,
-          if (deviceId != null && deviceId.isNotEmpty) 'device_id': deviceId,
-          if (details != null && details.isNotEmpty) 'details': details,
-        },
-        requestKind: RequestKind.logging,
-        options: Options(receiveTimeout: const Duration(seconds: 5)),
-      );
+      await _postLogPayload(payload);
     } catch (_) {
       // Logging must never control the simple VPN path.
     }
+  }
+
+  Future<void> _postLogPayload(Map<String, dynamic> payload) async {
+    await _apiClient.post(
+      '/simple-vpn/logs',
+      data: payload,
+      requestKind: RequestKind.logging,
+      options: Options(receiveTimeout: const Duration(seconds: 5)),
+    );
+  }
+
+  Future<void> _runCriticalOutboxSerialized(
+    Future<void> Function() action,
+  ) {
+    final previous = _criticalOutboxSerial;
+    final completer = Completer<void>();
+    _criticalOutboxSerial = completer.future;
+    return () async {
+      try {
+        await previous;
+      } catch (_) {
+        // A previous outbox operation must not block later retries.
+      }
+      try {
+        await action();
+      } finally {
+        completer.complete();
+      }
+    }();
+  }
+
+  Future<void> _flushCriticalLogOutbox() {
+    return _runCriticalOutboxSerialized(_drainCriticalLogOutboxLocked);
+  }
+
+  Future<void> _drainCriticalLogOutboxLocked() async {
+    final entries = await _criticalLogOutbox.read();
+    while (entries.isNotEmpty) {
+      final entry = entries.first;
+      final rawPayload = entry['payload'];
+      if (rawPayload is! Map) {
+        entries.removeAt(0);
+        await _criticalLogOutbox.replace(entries);
+        continue;
+      }
+      try {
+        await _postLogPayload(Map<String, dynamic>.from(rawPayload));
+        entries.removeAt(0);
+        await _criticalLogOutbox.replace(entries);
+        _criticalOutboxRetryTimer?.cancel();
+        _criticalOutboxRetryTimer = null;
+      } catch (error) {
+        final attempts = ((entry['attempts'] as num?)?.toInt() ?? 0) + 1;
+        entry['attempts'] = attempts;
+        entry['last_error_at'] = DateTime.now().toUtc().toIso8601String();
+        await _criticalLogOutbox.replace(entries);
+        debugPrint(
+          'SimpleVpnApi: critical log delivery deferred '
+          'key=${entry['idempotency_key']} attempt=$attempts error=$error',
+        );
+        _scheduleCriticalLogRetry(attempts);
+        return;
+      }
+    }
+  }
+
+  void _scheduleCriticalLogRetry(int attempt) {
+    if (_criticalOutboxRetryTimer?.isActive ?? false) return;
+    final seconds = attempt <= 1
+        ? 5
+        : attempt == 2
+            ? 15
+            : attempt == 3
+                ? 30
+                : 60;
+    _criticalOutboxRetryTimer = Timer(Duration(seconds: seconds), () {
+      _criticalOutboxRetryTimer = null;
+      unawaited(_flushCriticalLogOutbox());
+    });
   }
 
   Map<String, dynamic> _asMap(dynamic data) {

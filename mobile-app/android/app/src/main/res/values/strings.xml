@@ -1,12 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">GRANI</string>
+    <string name="asset_statements" translatable="false">[{"include":"https://granilink.com/.well-known/assetlinks.json"}]</string>
     <string name="quick_tile_label">GRANI</string>
-    <string name="quick_tile_no_config">Connect in the app first</string>
+    <string name="quick_tile_no_config">Open GRANI to connect for the first time</string>
+    <string name="quick_tile_access_not_ready">Open GRANI to refresh your account access</string>
+    <string name="quick_tile_missing_config">Open GRANI to connect once before using Quick Tile</string>
+    <string name="quick_tile_permission_required">Open GRANI to allow VPN permission</string>
+    <string name="quick_tile_connect_failed">Could not connect. Open GRANI and try again.</string>
     <string name="quick_tile_subscription_required">An active subscription is required. Subscribe in the app.</string>
     <string name="vpn_notification_channel_name">GRANI VPN</string>
     <string name="vpn_notification_title">GRANI</string>
+    <string name="vpn_notification_connecting">Connecting…</string>
     <string name="vpn_notification_connected">VPN connected</string>
+    <string name="vpn_notification_disconnecting">Disconnecting…</string>
+    <string name="vpn_notification_error">VPN connection failed</string>
     <string name="vpn_notification_recovering">Recovering…</string>
     <string name="vpn_notification_reconnecting">Reconnecting network…</string>
+    <string name="quick_tile_state_connecting">Connecting…</string>
+    <string name="quick_tile_state_connected">Connected</string>
+    <string name="quick_tile_state_disconnecting">Disconnecting…</string>
+    <string name="quick_tile_state_error">Error</string>
+    <string name="quick_tile_state_off">Off</string>
 </resources>

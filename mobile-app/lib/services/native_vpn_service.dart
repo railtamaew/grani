@@ -44,27 +44,6 @@ class NativeVpnService {
         'getTrafficStats': _getTrafficStatsCallCount,
       };
 
-  static Future<Map<String, dynamic>> getDesktopVpnDiagnostics() async {
-    if (!_supportsNativeVpnChannel) {
-      return <String, dynamic>{
-        'platform': defaultTargetPlatform.name,
-        'supported': false,
-      };
-    }
-    try {
-      final result = await _channel
-          .invokeMethod<Map<dynamic, dynamic>>('getDesktopVpnDiagnostics');
-      return result == null
-          ? <String, dynamic>{}
-          : result.map((key, value) => MapEntry(key.toString(), value));
-    } catch (e) {
-      return <String, dynamic>{
-        'platform': defaultTargetPlatform.name,
-        'diagnostics_error': e.toString(),
-      };
-    }
-  }
-
   /// События изменения состояния VPN с нативного [GraniVpnService] (без polling [getStatus]).
   static const EventChannel _vpnStateChannel =
       EventChannel('com.granivpn.mobile/vpn_state');
@@ -430,6 +409,152 @@ class NativeVpnService {
   /// Получение статуса VPN подключения (ошибка опроса → `false` — только для обратной совместимости).
   static Future<bool> getStatus() async {
     return (await getNativeConnectionStatus()) ?? false;
+  }
+
+  /// Быстрый снимок Android runtime: protocol/backend/session/notification/tile/system VPN state.
+  static Future<Map<String, dynamic>?> getRuntimeDiagnostics() async {
+    if (!_supportsNativeVpnChannel) return null;
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getRuntimeDiagnostics',
+      );
+      return result?.map((key, value) => MapEntry(key.toString(), value));
+    } on PlatformException catch (e) {
+      debugPrint('Ошибка получения runtime diagnostics: ${e.message}');
+      return null;
+    } catch (e) {
+      debugPrint('Неожиданная ошибка получения runtime diagnostics: $e');
+      return null;
+    }
+  }
+
+  /// Снимок базовой сети до старта VPN: wifi/mobile/ethernet и доступен ли интернет без туннеля.
+  static Future<Map<String, dynamic>> getNetworkDiagnostics() async {
+    if (!_isAndroidNativeVpn) {
+      return <String, dynamic>{
+        'network_type': defaultTargetPlatform.name,
+        'underlying_network_type': defaultTargetPlatform.name,
+        'underlying_network_available': false,
+        'internet_without_vpn_ok': false,
+        'underlying_internet_ok': false,
+        'underlying_probe_error': 'unsupported_platform',
+      };
+    }
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getNetworkDiagnostics',
+      );
+      return result?.map((key, value) => MapEntry(key.toString(), value)) ??
+          <String, dynamic>{};
+    } on PlatformException catch (e) {
+      debugPrint('Ошибка получения network diagnostics: ${e.message}');
+      return <String, dynamic>{
+        'network_type': 'unknown',
+        'underlying_network_type': 'unknown',
+        'underlying_network_available': false,
+        'internet_without_vpn_ok': false,
+        'underlying_internet_ok': false,
+        'underlying_probe_error': e.message ?? 'platform_exception',
+      };
+    } catch (e) {
+      debugPrint('Неожиданная ошибка получения network diagnostics: $e');
+      return <String, dynamic>{
+        'network_type': 'unknown',
+        'underlying_network_type': 'unknown',
+        'underlying_network_available': false,
+        'internet_without_vpn_ok': false,
+        'underlying_internet_ok': false,
+        'underlying_probe_error': e.toString(),
+      };
+    }
+  }
+
+  /// Единый diagnostic dump для логов поддержки и observability.
+  ///
+  /// Склеивает локальный контекст приложения с native runtime и базовой сетью.
+  /// Метод не бросает исключения: диагностика не должна ломать connect/disconnect.
+  static Future<Map<String, dynamic>> getUnifiedDiagnosticDump({
+    String? source,
+    String? protocol,
+    int? serverId,
+    String? serverName,
+    String? sessionId,
+    String? phase,
+    bool includeNetworkProbe = true,
+  }) async {
+    final startedAt = DateTime.now();
+    Map<String, dynamic> runtime = <String, dynamic>{};
+    Map<String, dynamic> network = <String, dynamic>{};
+
+    try {
+      runtime =
+          await getRuntimeDiagnostics().timeout(const Duration(seconds: 3)) ??
+              <String, dynamic>{};
+    } catch (e) {
+      runtime = <String, dynamic>{
+        'runtime_diagnostics_error': e.toString(),
+      };
+    }
+
+    if (includeNetworkProbe) {
+      try {
+        network =
+            await getNetworkDiagnostics().timeout(const Duration(seconds: 5));
+      } catch (e) {
+        network = <String, dynamic>{
+          'network_type': 'unknown',
+          'underlying_network_type': 'unknown',
+          'underlying_network_available': false,
+          'internet_without_vpn_ok': false,
+          'underlying_internet_ok': false,
+          'underlying_probe_error': e.toString(),
+        };
+      }
+    }
+
+    final runtimeSessionId = runtime['runtime_session_id']?.toString();
+    final runtimeProtocol = runtime['runtime_protocol']?.toString();
+    return <String, dynamic>{
+      'diagnostic_schema': 'grani_unified_vpn_dump_v1',
+      'diagnostic_source': source ?? 'unknown',
+      if (phase != null && phase.isNotEmpty) 'diagnostic_phase': phase,
+      'diagnostic_collected_at': startedAt.toIso8601String(),
+      'diagnostic_duration_ms':
+          DateTime.now().difference(startedAt).inMilliseconds,
+      'platform': defaultTargetPlatform.name,
+      if (protocol != null && protocol.isNotEmpty) 'protocol': protocol,
+      if (runtimeProtocol != null && runtimeProtocol.isNotEmpty)
+        'runtime_protocol_effective': runtimeProtocol,
+      if (serverId != null && serverId > 0) 'server_id': serverId,
+      if (serverName != null && serverName.isNotEmpty)
+        'server_name': serverName,
+      if (sessionId != null && sessionId.isNotEmpty)
+        'connection_session_id': sessionId,
+      if (runtimeSessionId != null && runtimeSessionId.isNotEmpty)
+        'runtime_session_id_effective': runtimeSessionId,
+      'runtime': runtime,
+      if (includeNetworkProbe) 'network': network,
+      ...runtime,
+      if (includeNetworkProbe) ...network,
+    };
+  }
+
+  /// Desktop/Windows runtime diagnostics for log payloads.
+  static Future<Map<String, dynamic>> getDesktopVpnDiagnostics() async {
+    if (!_supportsNativeVpnChannel) return <String, dynamic>{};
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getDesktopVpnDiagnostics',
+      );
+      return result?.map((key, value) => MapEntry(key.toString(), value)) ??
+          <String, dynamic>{};
+    } on PlatformException catch (e) {
+      debugPrint('Ошибка получения desktop VPN diagnostics: ${e.message}');
+      return <String, dynamic>{};
+    } catch (e) {
+      debugPrint('Неожиданная ошибка получения desktop VPN diagnostics: $e');
+      return <String, dynamic>{};
+    }
   }
 
   /// Получение статистики трафика VPN
@@ -821,11 +946,11 @@ class VpnException implements Exception {
 }
 
 class VpnPermissionException extends VpnException {
-  VpnPermissionException(String message) : super(message);
+  VpnPermissionException(super.message);
 }
 
 class VpnUnsupportedPlatformException extends VpnException {
-  VpnUnsupportedPlatformException(String message) : super(message);
+  VpnUnsupportedPlatformException(super.message);
 }
 
 class DeviceLimitException extends VpnException {
@@ -834,20 +959,20 @@ class DeviceLimitException extends VpnException {
   final List<dynamic> devices;
 
   DeviceLimitException(
-    String message, {
+    super.message, {
     this.limit,
     this.currentCount,
     this.devices = const [],
-  }) : super(message);
+  });
 }
 
 /// Нативный слой отклонил подключение: [runtime_contract.has_mismatch] (см. VpnPlugin.kt).
 class ConfigMismatchException extends VpnException {
   ConfigMismatchException(
-    String message, {
+    super.message, {
     this.correlationId,
     this.mismatchFields = const [],
-  }) : super(message);
+  });
 
   final String? correlationId;
   final List<String> mismatchFields;

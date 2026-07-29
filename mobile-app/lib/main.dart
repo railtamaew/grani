@@ -34,6 +34,7 @@ import 'core/storage/storage_service.dart';
 import 'core/storage/shared_preferences_holder.dart';
 import 'core/errors/error_handler.dart';
 import 'core/session/app_session_controller.dart';
+import 'core/session/post_auth_preparation_coordinator.dart';
 import 'core/vpn/lifecycle_network_controller.dart';
 import 'core/session/locale_controller.dart';
 import 'core/perf/perf_logger.dart';
@@ -42,8 +43,10 @@ import 'l10n/app_localizations.dart';
 import 'services/connection_logger.dart';
 import 'services/app_update_service.dart';
 import 'services/push_notification_service.dart';
+import 'services/in_app_event_banner_service.dart';
 import 'services/entitlement_native_sync.dart';
 import 'services/notification_journal_service.dart';
+import 'services/install_attribution_service.dart';
 import 'screens/notification_journal_screen.dart';
 import 'widgets/pending_device_limit_listener.dart';
 
@@ -188,6 +191,7 @@ void main() async {
   // Инициализация core компонентов: один экземпляр SharedPreferences, параллельно Storage + Cache, затем ApiClient
   perf.start('core_init');
   await _initializeCoreComponents();
+  await InstallAttributionService.instance.initialize();
   await NotificationJournalService.instance.ensureLoaded();
   perf.stop('core_init');
 
@@ -261,6 +265,7 @@ void main() async {
     // Показываем простой экран ошибки
     runApp(
       MaterialApp(
+        scaffoldMessengerKey: appScaffoldMessengerKey,
         locale: const Locale('en'),
         supportedLocales: const [Locale('en'), Locale('ru')],
         localizationsDelegates: const [
@@ -351,12 +356,14 @@ class _AppLifecycleHandler extends StatefulWidget {
 class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
     with WidgetsBindingObserver {
   Timer? _inactiveVpnSyncDebounce;
+  bool _resumeRefreshInFlight = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scheduleResumeRefresh();
       unawaited(
         Future<void>.delayed(const Duration(seconds: 2), () {
           return AppUpdateService.instance.checkForPlayUpdate(
@@ -384,6 +391,12 @@ class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
       _inactiveVpnSyncDebounce?.cancel();
       _inactiveVpnSyncDebounce = null;
       ConnectionLogger().flushPendingAfterResumeIfAny();
+      _scheduleResumeRefresh();
+      if (_isMobileTarget) {
+        unawaited(
+          PushNotificationService().syncAnalyticsIdentityWithCurrentSession(),
+        );
+      }
       unawaited(
         AppUpdateService.instance.checkForPlayUpdate(
           trigger: 'resume',
@@ -400,6 +413,15 @@ class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
       _inactiveVpnSyncDebounce = null;
       // Do not touch VPN state on pause; Android VPN must keep running independently.
     }
+  }
+
+  void _scheduleResumeRefresh() {
+    if (_resumeRefreshInFlight) return;
+    _resumeRefreshInFlight = true;
+    _markResumeSyncStart();
+    unawaited(_refreshServersIfNeeded().whenComplete(() {
+      _resumeRefreshInFlight = false;
+    }));
   }
 
   void _pollVpnStateSync() {
@@ -554,12 +576,34 @@ class _GraniAppState extends State<GraniApp> {
   bool _isDeterminingRoute = true;
   bool _initialRouteError = false;
   final PerfLogger _perfLogger = PerfLogger();
+  StreamSubscription<String>? _appLinkSubscription;
 
   @override
   void initState() {
     super.initState();
     EntitlementNativeSync.registerDartSideHandler();
+    _appLinkSubscription =
+        InstallAttributionService.instance.links.listen(_handleAppLink);
     _determineInitialRoute();
+  }
+
+  void _handleAppLink(String route) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!widget.authService.isAuthenticated) {
+        appNavigatorKey.currentState
+            ?.pushNamedAndRemoveUntil('/', (_) => false);
+        return;
+      }
+      appNavigatorKey.currentState
+          ?.pushNamedAndRemoveUntil(route, (_) => false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _appLinkSubscription?.cancel();
+    super.dispose();
   }
 
   /// Определяет начальный маршрут: по кэшу сразу (без блокировки на refreshUserStatus), затем обновление в фоне.
@@ -626,6 +670,8 @@ class _GraniAppState extends State<GraniApp> {
 
   Future<void> _determineInitialRouteInternal(AuthService authService) async {
     if (authService.isAuthenticated && authService.token != null) {
+      final appLinkRoute = await InstallAttributionService.instance
+          .takePendingRouteIfAuthorized(true);
       String? platformRoute;
       try {
         platformRoute = await const MethodChannel('com.granivpn.mobile/vpn')
@@ -634,9 +680,10 @@ class _GraniAppState extends State<GraniApp> {
       } catch (_) {
         platformRoute = null;
       }
-      _initialRoute = (platformRoute != null && platformRoute.isNotEmpty)
-          ? platformRoute
-          : _getTargetRoute(authService);
+      _initialRoute = appLinkRoute ??
+          ((platformRoute != null && platformRoute.isNotEmpty)
+              ? platformRoute
+              : _getTargetRoute(authService));
       Logger().debug(
         'Начальный маршрут: $_initialRoute${platformRoute != null ? " (с плитки)" : ""}',
         'GraniApp',
@@ -747,6 +794,7 @@ class _GraniAppState extends State<GraniApp> {
     // Ошибка определения маршрута (таймаут и т.п.) — показываем fallback с «Повторить» (BUG-005)
     if (_initialRouteError) {
       return MaterialApp(
+        scaffoldMessengerKey: appScaffoldMessengerKey,
         title: 'GRANI',
         locale: widget.localeController.locale,
         supportedLocales: _supportedLocales,
@@ -786,6 +834,7 @@ class _GraniAppState extends State<GraniApp> {
     // Показываем загрузку пока определяем маршрут
     if (_isDeterminingRoute) {
       return MaterialApp(
+        scaffoldMessengerKey: appScaffoldMessengerKey,
         title: 'GRANI',
         locale: widget.localeController.locale,
         supportedLocales: _supportedLocales,
@@ -825,6 +874,7 @@ class _GraniAppState extends State<GraniApp> {
       ],
       child: Builder(
         builder: (context) => MaterialApp(
+          scaffoldMessengerKey: appScaffoldMessengerKey,
           navigatorKey: appNavigatorKey,
           navigatorObservers: [appRouteObserver],
           title: 'GRANI',
@@ -835,12 +885,14 @@ class _GraniAppState extends State<GraniApp> {
           initialRoute: _initialRoute ?? '/',
           builder: (context, child) {
             // Оборачиваем в lifecycle handler и auth redirect (logout → экран входа)
-            return _AppLifecycleHandler(
-              child: _AuthRedirectListener(
-                authService: widget.authService,
-                child: PendingDeviceLimitListener(
-                  child: _PreloadVpnWidget(
-                    child: child ?? const SizedBox.shrink(),
+            return InAppEventBannerHost(
+              child: _AppLifecycleHandler(
+                child: _AuthRedirectListener(
+                  authService: widget.authService,
+                  child: PendingDeviceLimitListener(
+                    child: _PreloadVpnWidget(
+                      child: child ?? const SizedBox.shrink(),
+                    ),
                   ),
                 ),
               ),
@@ -893,6 +945,17 @@ class _GraniAppState extends State<GraniApp> {
                   ),
                   settings: settings,
                 );
+              case '/post-auth-preparation':
+                final args = settings.arguments;
+                final source = args is PostAuthPreparationArguments
+                    ? args.source
+                    : 'unknown';
+                return MaterialPageRoute(
+                  builder: (_) => PostAuthPreparationCoordinatorScreen(
+                    source: source,
+                  ),
+                  settings: settings,
+                );
               case '/trial-ended':
                 return SlideFadePageRoute(
                   child: const TrialEndedScreen(),
@@ -916,9 +979,9 @@ class _GraniAppState extends State<GraniApp> {
                 final args = settings.arguments;
                 final devices = args is List ? args : <dynamic>[];
                 return MaterialPageRoute(
-                  builder: (_) => DeviceLimitScreen(
+                  builder: (ctx) => DeviceLimitScreen(
                     initialDevices: devices,
-                    maxDevices: AppConfig.maxDevices,
+                    maxDevices: ctx.read<AuthService>().maxDevices,
                   ),
                   settings: settings,
                 );

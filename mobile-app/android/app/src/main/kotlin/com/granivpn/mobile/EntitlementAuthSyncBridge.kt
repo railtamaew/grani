@@ -8,7 +8,7 @@ import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * После остановки VPN по FCM из [EntitlementFcmReceiver]: дергает Dart `/auth/me`
+ * После entitlement-события из [EntitlementFcmReceiver]: дергает Dart `/auth/me`
  * ([EntitlementPushHandler]) или ставит флаг, чтобы [takePendingAndClear] на следующем resume.
  */
 object EntitlementAuthSyncBridge {
@@ -19,6 +19,10 @@ object EntitlementAuthSyncBridge {
     private const val PREFS = "grani_entitlement_auth_sync"
     private const val KEY_PENDING = "pending_auth_sync"
     private const val KEY_SOURCE = "pending_source"
+
+    fun notifyAuthRefreshAfterEntitlementChange(context: Context, traceSource: String) {
+        notifyAuthRefreshAfterEntitlementStop(context, traceSource)
+    }
 
     fun notifyAuthRefreshAfterEntitlementStop(context: Context, traceSource: String) {
         val app = context.applicationContext

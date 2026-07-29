@@ -11,6 +11,7 @@ import java.io.ByteArrayInputStream
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeoutException
 
 object SimpleAmneziaWgRunner {
     private const val TAG = "SimpleAmneziaWG"
@@ -20,9 +21,13 @@ object SimpleAmneziaWgRunner {
     private const val MAX_DIRECT_DOMAIN_IPS = 16
     private const val MAX_ALLOWED_IPS_CIDRS = 640
     private const val FORCE_GRANIWG_FULL_TUNNEL = false
+    private const val SET_STATE_UP_MAX_ATTEMPTS = 2
+    private const val SET_STATE_UP_RETRY_DELAY_MS = 650L
     private val lock = Any()
     private var backend: GoBackend? = null
     private var lastAppContext: Context? = null
+    @Volatile
+    private var lastKnownState: Tunnel.State = Tunnel.State.DOWN
     private val tunnel = SimpleTunnel("grani-awg")
 
     fun connect(context: Context, configText: String): Tunnel.State = synchronized(lock) {
@@ -36,15 +41,92 @@ object SimpleAmneziaWgRunner {
         }
         val activeBackend = backend ?: GoBackend(appContext).also { backend = it }
         Log.i(TAG, "connect: parsed AmneziaWG config, peers=${parsedConfig.peers.size}")
-        val state = activeBackend.setState(tunnel, Tunnel.State.UP, parsedConfig)
-        if (state == Tunnel.State.UP) {
-            NativeVpnRuntimeState.markAwgExpectedUp(appContext, true)
+        NativeVpnRuntimeState.markAwgExpectedUp(appContext, true)
+        try {
             GraniAwgNotificationService.start(appContext)
-            NativeVpnRuntimeState.notifyQuickTile(appContext)
-        } else {
-            NativeVpnRuntimeState.markAwgExpectedUp(appContext, false)
+        } catch (e: Exception) {
+            Log.w(TAG, "connect: foreground holder start before setState failed", e)
         }
+        val state = try {
+            setStateUpWithRetries(activeBackend, parsedConfig)
+        } catch (e: Exception) {
+            lastKnownState = Tunnel.State.DOWN
+            NativeVpnRuntimeState.markAwgExpectedUp(appContext, false)
+            GraniAwgNotificationService.stop(appContext)
+            NativeVpnRuntimeState.notifyQuickTile(appContext)
+            throw e
+        }
+        lastKnownState = state
+        if (state != Tunnel.State.UP) {
+            NativeVpnRuntimeState.markAwgExpectedUp(appContext, false)
+            GraniAwgNotificationService.stop(appContext)
+        }
+        NativeVpnRuntimeState.notifyQuickTile(appContext)
         state
+    }
+
+    private fun setStateUpWithRetries(
+        activeBackend: GoBackend,
+        parsedConfig: Config,
+    ): Tunnel.State {
+        var lastError: Exception? = null
+        for (attempt in 1..SET_STATE_UP_MAX_ATTEMPTS) {
+            try {
+                if (attempt > 1) {
+                    Log.i(TAG, "connect: retry setState UP attempt=$attempt")
+                }
+                return activeBackend.setState(tunnel, Tunnel.State.UP, parsedConfig)
+            } catch (e: Exception) {
+                lastError = e
+                if (!isTransientSetStateUpError(e) || attempt == SET_STATE_UP_MAX_ATTEMPTS) {
+                    throw e
+                }
+                Log.w(
+                    TAG,
+                    "connect: transient setState UP failure attempt=$attempt/${SET_STATE_UP_MAX_ATTEMPTS}: " +
+                        "${e.javaClass.simpleName}:${e.message}",
+                )
+                val lateState = try {
+                    activeBackend.getState(tunnel)
+                } catch (_: Exception) {
+                    null
+                }
+                if (lateState == Tunnel.State.UP) {
+                    Log.i(TAG, "connect: setState UP completed after timeout attempt=$attempt")
+                    return Tunnel.State.UP
+                }
+                try {
+                    Log.i(TAG, "connect: cleanup DOWN before retry attempt=$attempt")
+                    activeBackend.setState(tunnel, Tunnel.State.DOWN, null)
+                } catch (cleanupError: Exception) {
+                    Log.w(
+                        TAG,
+                        "connect: cleanup DOWN before retry failed attempt=$attempt: " +
+                            "${cleanupError.javaClass.simpleName}:${cleanupError.message}",
+                    )
+                }
+                try {
+                    Thread.sleep(SET_STATE_UP_RETRY_DELAY_MS * attempt)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw e
+                }
+            }
+        }
+        throw lastError ?: IllegalStateException("setState UP did not return")
+    }
+
+    private fun isTransientSetStateUpError(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            if (current is TimeoutException) return true
+            val name = current.javaClass.simpleName
+            val message = current.message.orEmpty()
+            if (name.contains("Timeout", ignoreCase = true)) return true
+            if (message.contains("Timeout", ignoreCase = true)) return true
+            current = current.cause
+        }
+        return false
     }
 
     private fun normalizeAmneziaObfuscation(configText: String): String {
@@ -415,10 +497,12 @@ object SimpleAmneziaWgRunner {
         val activeBackend = backend ?: appContext?.let { GoBackend(it).also { backend = it } } ?: return@synchronized
         try {
             activeBackend.setState(tunnel, Tunnel.State.DOWN, null)
+            lastKnownState = Tunnel.State.DOWN
             Log.i(TAG, "disconnect: AmneziaWG tunnel down")
         } catch (e: Exception) {
             Log.w(TAG, "disconnect: failed", e)
         } finally {
+            lastKnownState = Tunnel.State.DOWN
             appContext?.let {
                 NativeVpnRuntimeState.markAwgExpectedUp(it, false)
                 GraniAwgNotificationService.stop(it)
@@ -427,14 +511,13 @@ object SimpleAmneziaWgRunner {
         }
     }
 
-    fun isUp(): Boolean = synchronized(lock) {
-        backend?.getState(tunnel) == Tunnel.State.UP
-    }
+    fun isUp(): Boolean = lastKnownState == Tunnel.State.UP
 
     private class SimpleTunnel(private val tunnelName: String) : Tunnel {
         override fun getName(): String = tunnelName
 
         override fun onStateChange(newState: Tunnel.State) {
+            lastKnownState = newState
             Log.i(TAG, "tunnel state changed: $newState")
         }
     }

@@ -8,10 +8,13 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../config/app_navigation.dart';
 import '../core/api/api_client.dart';
 import '../core/logger/logger.dart';
+import '../core/storage/storage_service.dart';
 import '../l10n/app_localizations.dart';
 import '../l10n/localized_messages.dart';
+import 'analytics_service.dart';
 import 'entitlement_push_handler.dart';
 import 'fcm_journal_policy.dart';
+import 'in_app_event_banner_service.dart';
 import 'notification_journal_service.dart';
 
 AppLocalizations _fcmL10n() =>
@@ -27,7 +30,8 @@ Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
   }
   await Firebase.initializeApp();
   WidgetsFlutterBinding.ensureInitialized();
-  debugPrint('[Push] Background message: ${message.messageId} data=${message.data}');
+  debugPrint(
+      '[Push] Background message: ${message.messageId} data=${message.data}');
   await EntitlementPushHandler.handleFcmData(
     Map<String, dynamic>.from(message.data),
     source: 'fcm_background_ios',
@@ -58,17 +62,75 @@ class PushNotificationService {
   FlutterLocalNotificationsPlugin? _localNotifications;
   String? _fcmToken;
   bool _initialized = false;
+  DateTime? _lastAnalyticsIdentitySyncAt;
 
   String? get fcmToken => _fcmToken;
 
   /// После смены аккаунта на том же устройстве [init] уже не вызывает отправку токена.
   /// Вызывать из потоков успешного логина с уже выставленным JWT в [ApiClient].
   Future<void> syncPushTokenWithCurrentSession() async {
+    await syncAnalyticsIdentityWithCurrentSession(force: true);
     if (!_initialized) {
       await init();
       return;
     }
     await resendTokenIfNeeded();
+  }
+
+  /// Sync Firebase Analytics identity independently from FCM.
+  ///
+  /// Notification permission denial or an unavailable FCM token must not make
+  /// backend funnel events fall out of the Android Firebase data stream.
+  Future<void> syncAnalyticsIdentityWithCurrentSession({
+    bool force = false,
+  }) async {
+    final lastSync = _lastAnalyticsIdentitySyncAt;
+    if (!force &&
+        lastSync != null &&
+        DateTime.now().difference(lastSync) < const Duration(minutes: 10)) {
+      return;
+    }
+
+    try {
+      final storage = StorageService();
+      final deviceId = (await storage.getSecureString('device_id')) ??
+          (await storage.getString('device_id'));
+      if (deviceId == null || deviceId.isEmpty) {
+        _logger.warning(
+          'Analytics identity not sent: device_id is missing',
+          'PushNotificationService',
+        );
+        return;
+      }
+
+      final identity = await AnalyticsService().getBackendMeasurementIdentity();
+      final appInstanceId = identity['firebase_app_instance_id'];
+      if (appInstanceId is! String || appInstanceId.isEmpty) {
+        _logger.warning(
+          'Analytics identity not sent: app_instance_id is missing',
+          'PushNotificationService',
+        );
+        return;
+      }
+
+      await ApiClient().post(
+        '/vpn/device/analytics-identity',
+        data: <String, dynamic>{
+          'device_id': deviceId,
+          ...identity,
+        },
+      );
+      _lastAnalyticsIdentitySyncAt = DateTime.now();
+      _logger.info(
+        'Firebase analytics identity sent to backend',
+        'PushNotificationService',
+      );
+    } catch (e) {
+      _logger.warning(
+        'Failed to send analytics identity: $e',
+        'PushNotificationService',
+      );
+    }
   }
 
   Future<void> init() async {
@@ -104,13 +166,15 @@ class PushNotificationService {
 
     FirebaseMessaging.onMessage.listen((m) {
       _handleForegroundMessage(m).catchError((e, st) {
-        _logger.warning('foreground FCM handler: $e $st', 'PushNotificationService');
+        _logger.warning(
+            'foreground FCM handler: $e $st', 'PushNotificationService');
       });
     });
 
     FirebaseMessaging.onMessageOpenedApp.listen((m) {
       _handleMessageOpenedApp(m).catchError((e, st) {
-        _logger.warning('openedApp FCM handler: $e $st', 'PushNotificationService');
+        _logger.warning(
+            'openedApp FCM handler: $e $st', 'PushNotificationService');
       });
     });
 
@@ -130,8 +194,8 @@ class PushNotificationService {
         ),
         onDidReceiveNotificationResponse: _onLocalNotificationTapped,
       );
-      final android =
-          fln.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      final android = fln.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
       await android?.createNotificationChannel(
         const AndroidNotificationChannel(
           'grani_notifications',
@@ -142,9 +206,11 @@ class PushNotificationService {
       );
       await android?.requestNotificationsPermission();
       _localNotifications = fln;
-      _logger.info('Local notifications plugin ready', 'PushNotificationService');
+      _logger.info(
+          'Local notifications plugin ready', 'PushNotificationService');
     } catch (e, st) {
-      _logger.warning('Local notifications init: $e $st', 'PushNotificationService');
+      _logger.warning(
+          'Local notifications init: $e $st', 'PushNotificationService');
     }
   }
 
@@ -167,7 +233,8 @@ class PushNotificationService {
         'importance': 4, // IMPORTANCE_HIGH
       });
     } catch (e) {
-      _logger.warning('createNotificationChannel: $e', 'PushNotificationService');
+      _logger.warning(
+          'createNotificationChannel: $e', 'PushNotificationService');
     }
   }
 
@@ -201,12 +268,20 @@ class PushNotificationService {
 
   Future<void> _sendTokenToBackend(String token) async {
     try {
+      final storage = StorageService();
+      final deviceId = (await storage.getSecureString('device_id')) ??
+          (await storage.getString('device_id'));
+      final data = <String, dynamic>{
+        'push_token': token,
+        'language': LocalizedMessages.currentLanguageCode,
+      };
+      if (deviceId != null && deviceId.isNotEmpty) {
+        data['device_id'] = deviceId;
+      }
+      data.addAll(await AnalyticsService().getBackendMeasurementIdentity());
       await ApiClient().post(
         '/vpn/device/push-token',
-        data: {
-          'push_token': token,
-          'language': LocalizedMessages.currentLanguageCode,
-        },
+        data: data,
       );
       _logger.info('Push token sent to backend', 'PushNotificationService');
     } catch (e) {
@@ -225,7 +300,8 @@ class PushNotificationService {
   ) async {
     final fln = _localNotifications;
     if (fln == null) return;
-    final nid = (messageId?.hashCode ?? DateTime.now().microsecondsSinceEpoch) & 0x7fffffff;
+    final nid = (messageId?.hashCode ?? DateTime.now().microsecondsSinceEpoch) &
+        0x7fffffff;
     final android = AndroidNotificationDetails(
       'grani_notifications',
       l10n.notificationChannelName,
@@ -261,6 +337,11 @@ class PushNotificationService {
       title: pair.title,
       body: pair.body,
       source: 'fcm_foreground',
+      data: Map<String, dynamic>.from(message.data),
+    );
+    InAppEventBannerService.instance.show(
+      title: pair.title,
+      body: pair.body,
       data: Map<String, dynamic>.from(message.data),
     );
     await _showLocalBanner(pair.title, pair.body, message.messageId, l10n);

@@ -12,9 +12,9 @@ import '../config/subscription_products.dart';
 import '../config/app_navigation.dart';
 import 'bottom_sheet_profile.dart';
 import '../widgets/snackbar_utils.dart';
-import '../services/analytics_service.dart';
 import '../services/native_vpn_service.dart';
 import '../services/vpn_service.dart';
+import '../services/analytics_service.dart';
 import '../l10n/l10n.dart';
 
 /// Контекст открытия экрана тарифов.
@@ -47,12 +47,23 @@ class TrialEndedScreen extends StatefulWidget {
 
 class _TrialEndedScreenState extends State<TrialEndedScreen> with RouteAware {
   String? _purchasingProductId;
+
+  String _storePrice(BuildContext context, String productId) {
+    final subscription = context.watch<SubscriptionService>();
+    final price = subscription.priceFor(productId);
+    if (price != null && price.trim().isNotEmpty) return price;
+    return subscription.isLoading
+        ? context.l10n.tariffPriceLoading
+        : context.l10n.tariffPriceUnavailable;
+  }
+
   Timer? _subscriptionPollTimer;
   AuthService? _authServiceForListener;
 
   @override
   void initState() {
     super.initState();
+    unawaited(AnalyticsService().logPaywallView());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final route = ModalRoute.of(context);
@@ -121,25 +132,17 @@ class _TrialEndedScreenState extends State<TrialEndedScreen> with RouteAware {
     final sub = Provider.of<SubscriptionService>(context, listen: false);
     final auth = Provider.of<AuthService>(context, listen: false);
     try {
-      bool success;
-      final isUpgrade = widget.mode == SubscriptionScreenMode.manage ||
-          widget.mode == SubscriptionScreenMode.upgrade;
-
-      if (isUpgrade) {
-        final oldPurchase = await sub.getActiveSubscriptionPurchase();
-        if (!mounted) return;
-        if (oldPurchase != null && oldPurchase.productID != productId) {
-          debugPrint(
-              'TrialEndedScreen: upgrading from ${oldPurchase.productID} to $productId');
-          success = await sub.buyUpgrade(productId, oldPurchase);
-        } else {
-          debugPrint(
-              'TrialEndedScreen: no active subscription found or same product, using regular buy');
-          success = await sub.buy(productId);
-        }
-      } else {
-        success = await sub.buy(productId);
-      }
+      final applicationUserName =
+          SubscriptionService.obfuscatedAccountIdFor(auth.user?.id);
+      // Paid periods are repeatable consumable products. The backend binds
+      // each verified token to the currently signed-in GRANI account and
+      // stacks 30/180/365 days after the existing paid-until timestamp.
+      // Therefore another subscription owned by the same Google Play account
+      // must never block this purchase.
+      final success = await sub.buyExtension(
+        productId,
+        applicationUserName: applicationUserName,
+      );
 
       if (!mounted) return;
       if (success) {
@@ -157,21 +160,12 @@ class _TrialEndedScreenState extends State<TrialEndedScreen> with RouteAware {
         }
         await auth.refreshUserStatus(force: true);
         if (!mounted) return;
-        if (verified || auth.hasActiveSubscription) {
-          final msg = isUpgrade
-              ? context.l10n.subscriptionSnackbarPlanChanged
-              : context.l10n.subscriptionSnackbarActivated;
-          showInfoSnackBar(context, msg);
-          final price = sub.getProductPrice(productId);
-          try {
-            AnalyticsService().logPurchase(
-              planName: productId,
-              amount: price ?? 0,
-              transactionId: verifyData?['order_id'],
-            );
-          } catch (e) {
-            debugPrint('Analytics error (non-critical): $e');
-          }
+        if (verified) {
+          unawaited(AnalyticsService().logPurchaseCompleted(productId));
+          showInfoSnackBar(
+            context,
+            context.l10n.subscriptionSnackbarActivated,
+          );
           Navigator.pushReplacementNamed(context, '/main');
         } else {
           showErrorSnackBar(
@@ -257,13 +251,11 @@ class _TrialEndedScreenState extends State<TrialEndedScreen> with RouteAware {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
-    final designWidth = 412.0;
-    final designHeight = 917.0;
+    const designWidth = 412.0;
+    const designHeight = 917.0;
     final scaleX = screenWidth / designWidth;
     final scaleY = screenHeight / designHeight;
     final topBarHeight = (12 + 39 + 12) * scaleY;
-    final contentTopFromHeader = GraniTheme.trialTitleBlockTopGap * scaleY;
-
     final safeBottom = MediaQuery.of(context).padding.bottom;
     final canPop = widget.mode != SubscriptionScreenMode.expired;
 
@@ -358,7 +350,7 @@ class _TrialEndedScreenState extends State<TrialEndedScreen> with RouteAware {
                               'assets/images/figma/logo_grani_new.png',
                               fit: BoxFit.contain,
                               errorBuilder: (context, error, stackTrace) {
-                                return Icon(Icons.vpn_key,
+                                return const Icon(Icons.vpn_key,
                                     size: 40, color: GraniTheme.primaryText);
                               },
                             ),
@@ -465,31 +457,34 @@ class _TrialEndedScreenState extends State<TrialEndedScreen> with RouteAware {
                           _buildTariffCard(
                             '1',
                             l10n.tariffBadgeMonthOne,
-                            l10n.tariffPriceMonthly,
+                            _storePrice(
+                                context, SubscriptionProducts.extension30Days),
                             l10n.tariffDescMonthly,
                             scaleX,
                             scaleY,
-                            SubscriptionProducts.monthly,
+                            SubscriptionProducts.extension30Days,
                           ),
                           SizedBox(height: 10 * scaleY),
                           _buildTariffCard(
                             '6',
                             l10n.tariffBadgeMonthsMany,
-                            l10n.tariffPriceSixMonth,
+                            _storePrice(
+                                context, SubscriptionProducts.extension180Days),
                             l10n.tariffDescSixMonth,
                             scaleX,
                             scaleY,
-                            SubscriptionProducts.sixMonths,
+                            SubscriptionProducts.extension180Days,
                           ),
                           SizedBox(height: 10 * scaleY),
                           _buildTariffCard(
                             '12',
                             l10n.tariffBadgeMonthsMany,
-                            l10n.tariffPriceYearly,
+                            _storePrice(
+                                context, SubscriptionProducts.extension365Days),
                             l10n.tariffDescYearly,
                             scaleX,
                             scaleY,
-                            SubscriptionProducts.yearly,
+                            SubscriptionProducts.extension365Days,
                           ),
                         ],
                       ),

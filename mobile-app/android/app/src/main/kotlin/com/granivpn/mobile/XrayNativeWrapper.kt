@@ -1172,9 +1172,130 @@ class XrayNativeWrapper(private val context: Context) {
     }
 
     /**
+     * Blocking variant for confirmed user/service stop.
+     *
+     * Android can keep the system VPN transport visible for a short time after
+     * the TUN fd is closed. For ordered teardown we must at least wait until
+     * our own close task has actually run before removing foreground state.
+     */
+    fun cleanupTunOnlyBlocking(
+        source: String = "unknown",
+        reason: String = "unspecified",
+        allowWhileRunning: Boolean = false,
+        timeoutMs: Long = 2500L,
+    ): Boolean {
+        val latch = CountDownLatch(1)
+        var closed = false
+        var result = "pending"
+        tunCleanupExecutor.execute {
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                Log.w(TAG, "cleanupTunOnlyBlocking: unexpected main-thread executor execution")
+            }
+            try {
+                if (isRunning && !allowWhileRunning) {
+                    result = "skipped_running"
+                    Log.w(
+                        TAG,
+                        "cleanupTunOnlyBlocking: skip while core running source=$source reason=$reason",
+                    )
+                    return@execute
+                }
+                vpnInterface?.close()
+                vpnInterface = null
+                closed = true
+                result = "closed"
+                Log.i(
+                    TAG,
+                    "cleanupTunOnlyBlocking: TUN closed source=$source reason=$reason " +
+                        "allow_while_running=$allowWhileRunning thread=${Thread.currentThread().name}",
+                )
+            } catch (e: Exception) {
+                result = "error:${e::class.java.simpleName}"
+                Log.w(TAG, "cleanupTunOnlyBlocking: Ошибка закрытия TUN: ${e.message}")
+            } finally {
+                VpnNativeStateEmitter.emitRuntimeDiag(
+                    "cleanup_tun_only_blocking",
+                    mapOf(
+                        "source" to source,
+                        "reason" to reason,
+                        "result" to result,
+                        "allow_while_running" to allowWhileRunning,
+                        "thread" to Thread.currentThread().name,
+                    ),
+                )
+                latch.countDown()
+            }
+        }
+        val completed = latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        if (!completed) {
+            Log.w(TAG, "cleanupTunOnlyBlocking: timeout source=$source timeout_ms=$timeoutMs")
+            VpnNativeStateEmitter.emitRuntimeDiag(
+                "cleanup_tun_only_blocking",
+                mapOf(
+                    "source" to source,
+                    "reason" to reason,
+                    "result" to "timeout",
+                    "timeout_ms" to timeoutMs,
+                ),
+            )
+            return false
+        }
+        return closed
+    }
+
+    /**
      * Xray запущен (для проверки reconnect — можно ли переиспользовать без полного рестарта).
      */
     fun isXrayAlive(): Boolean = isXrayRunning()
+
+    /**
+     * Повторно использует текущий TUN без закрытия/establish().
+     *
+     * Это нужно для восстановления tun2socks после Android task removal:
+     * закрывать и пересоздавать VpnService TUN в этот момент рискованно,
+     * потому что система может оставить старый VPN transport в полуживом состоянии.
+     */
+    fun reuseCurrentTun(
+        source: String,
+        onTunAvailable: (ParcelFileDescriptor) -> Unit,
+    ): Boolean {
+        val current = vpnInterface
+        if (current == null) {
+            Log.w(TAG, "reuseCurrentTun: current TUN is null source=$source")
+            VpnNativeStateEmitter.emitRuntimeDiag(
+                "reuse_current_tun",
+                mapOf(
+                    "source" to source,
+                    "result" to "missing",
+                ),
+            )
+            return false
+        }
+        return try {
+            Log.i(TAG, "reuseCurrentTun: reuse existing TUN fd=${current.fd} source=$source")
+            VpnNativeStateEmitter.emitRuntimeDiag(
+                "reuse_current_tun",
+                mapOf(
+                    "source" to source,
+                    "result" to "ok",
+                    "fd" to current.fd,
+                ),
+            )
+            onTunAvailable(current)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "reuseCurrentTun: failed source=$source error=${e.message}", e)
+            VpnNativeStateEmitter.emitRuntimeDiag(
+                "reuse_current_tun",
+                mapOf(
+                    "source" to source,
+                    "result" to "error",
+                    "error" to (e.message ?: e::class.java.simpleName),
+                ),
+            )
+            false
+        }
+    }
 
     /**
      * Reconnect: создаёт новый TUN и вызывает onTunCreated. Xray уже должен быть запущен.

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:in_app_purchase_android/in_app_purchase_android.dart';
@@ -23,6 +25,14 @@ class SubscriptionService extends ChangeNotifier {
 
   static bool get _isAndroid => !kIsWeb && Platform.isAndroid;
 
+  /// Stable non-PII identifier for Google Play's obfuscatedAccountId.
+  /// Backend independently computes the same SHA-256 value.
+  static String? obfuscatedAccountIdFor(String? userId) {
+    final normalized = userId?.trim();
+    if (normalized == null || normalized.isEmpty) return null;
+    return sha256.convert(utf8.encode('grani:user:$normalized')).toString();
+  }
+
   StreamSubscription<List<PurchaseDetails>>? _subscription;
   final InAppPurchase _store = InAppPurchase.instance;
 
@@ -36,7 +46,6 @@ class SubscriptionService extends ChangeNotifier {
 
   /// Восстановленные покупки (для определения текущей активной подписки при апгрейде).
   final List<PurchaseDetails> _restoredPurchases = [];
-  bool _restoring = false;
 
   /// Данные последней успешной покупки для верификации на бэкенде.
   Map<String, String>? _lastPurchaseForVerification;
@@ -48,7 +57,8 @@ class SubscriptionService extends ChangeNotifier {
 
   /// Данные для верификации последней успешной покупки.
   /// Вызывать сразу после buy() вернул true — отправить на бэкенд POST /api/payments/google-play/verify.
-  Map<String, String>? get lastPurchaseForVerification => _lastPurchaseForVerification;
+  Map<String, String>? get lastPurchaseForVerification =>
+      _lastPurchaseForVerification;
 
   List<ProductDetails> get products => List.unmodifiable(_products);
   bool get isAvailable => _isAvailable;
@@ -77,9 +87,11 @@ class SubscriptionService extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      final response = await _store.queryProductDetails(SubscriptionProducts.all.toSet());
+      final response =
+          await _store.queryProductDetails(SubscriptionProducts.all.toSet());
       if (response.notFoundIDs.isNotEmpty) {
-        debugPrint('SubscriptionService: продукты не найдены: ${response.notFoundIDs}');
+        debugPrint(
+            'SubscriptionService: продукты не найдены: ${response.notFoundIDs}');
       }
       _products = response.productDetails;
       _errorMessage = response.error?.message;
@@ -94,7 +106,10 @@ class SubscriptionService extends ChangeNotifier {
   }
 
   /// Запуск покупки по product id. Возвращает true при успешной покупке (доставка через purchaseStream).
-  Future<bool> buy(String productId) async {
+  Future<bool> buy(
+    String productId, {
+    String? applicationUserName,
+  }) async {
     if (!_isAndroid || !_isAvailable) {
       return false;
     }
@@ -109,10 +124,14 @@ class SubscriptionService extends ChangeNotifier {
 
     debugPrint('SubscriptionService: buy() start productId=$productId');
 
+    _lastPurchaseForVerification = null;
     _pendingProductId = productId;
     _pendingPurchaseCompleter = Completer<bool>();
 
-    final param = PurchaseParam(productDetails: product);
+    final param = GooglePlayPurchaseParam(
+      productDetails: product,
+      applicationUserName: applicationUserName,
+    );
     final launchOk = await _store.buyNonConsumable(purchaseParam: param);
     if (!launchOk) {
       debugPrint('SubscriptionService: buy() launch failed');
@@ -127,11 +146,78 @@ class SubscriptionService extends ChangeNotifier {
         _pendingPurchaseCompleter!.future,
         purchaseTimeout,
         onTimeout: () {
-          debugPrint('SubscriptionService: buy() timeout after ${purchaseTimeout.inSeconds}s');
+          debugPrint(
+              'SubscriptionService: buy() timeout after ${purchaseTimeout.inSeconds}s');
           _completePending(false);
         },
       );
-      debugPrint('SubscriptionService: buy() end productId=$productId result=$result');
+      debugPrint(
+          'SubscriptionService: buy() end productId=$productId result=$result');
+      return result;
+    } finally {
+      _pendingProductId = null;
+      _pendingPurchaseCompleter = null;
+    }
+  }
+
+  /// Buy a repeatable paid-access extension.
+  ///
+  /// autoConsume is deliberately disabled: the backend first verifies the
+  /// token, grants the exact number of days, and then consumes the purchase
+  /// through Android Publisher API. This prevents both replay and entitlement
+  /// loss when the network fails between Play Billing and our backend.
+  Future<bool> buyExtension(
+    String productId, {
+    String? applicationUserName,
+  }) async {
+    if (!_isAndroid ||
+        !_isAvailable ||
+        !SubscriptionProducts.isExtension(productId)) {
+      return false;
+    }
+    final product = _products.cast<ProductDetails?>().firstWhere(
+          (p) => p!.id == productId,
+          orElse: () => null,
+        );
+    if (product == null) {
+      debugPrint(
+          'SubscriptionService: extension product not found: $productId');
+      return false;
+    }
+
+    debugPrint(
+        'SubscriptionService: buyExtension() start productId=$productId');
+    _lastPurchaseForVerification = null;
+    _pendingProductId = productId;
+    _pendingPurchaseCompleter = Completer<bool>();
+
+    final param = GooglePlayPurchaseParam(
+      productDetails: product,
+      applicationUserName: applicationUserName,
+    );
+    final launchOk = await _store.buyConsumable(
+      purchaseParam: param,
+      autoConsume: false,
+    );
+    if (!launchOk) {
+      debugPrint('SubscriptionService: buyExtension() launch failed');
+      _pendingProductId = null;
+      _pendingPurchaseCompleter!.complete(false);
+      _pendingPurchaseCompleter = null;
+      return false;
+    }
+
+    try {
+      final result = await _raceWithTimeout(
+        _pendingPurchaseCompleter!.future,
+        purchaseTimeout,
+        onTimeout: () {
+          debugPrint('SubscriptionService: buyExtension() timeout');
+          _completePending(false);
+        },
+      );
+      debugPrint(
+          'SubscriptionService: buyExtension() end productId=$productId result=$result');
       return result;
     } finally {
       _pendingProductId = null;
@@ -140,7 +226,8 @@ class SubscriptionService extends ChangeNotifier {
   }
 
   void _completePending(bool value) {
-    if (_pendingPurchaseCompleter != null && !_pendingPurchaseCompleter!.isCompleted) {
+    if (_pendingPurchaseCompleter != null &&
+        !_pendingPurchaseCompleter!.isCompleted) {
       _pendingPurchaseCompleter!.complete(value);
     }
   }
@@ -172,13 +259,16 @@ class SubscriptionService extends ChangeNotifier {
 
   void _onPurchaseUpdate(List<PurchaseDetails> purchaseDetailsList) {
     for (final purchase in purchaseDetailsList) {
-      debugPrint('SubscriptionService: purchaseStream status=${purchase.status} productID=${purchase.productID}');
+      debugPrint(
+          'SubscriptionService: purchaseStream status=${purchase.status} productID=${purchase.productID}');
 
       if (purchase.status == PurchaseStatus.restored) {
-        if (SubscriptionProducts.all.contains(purchase.productID)) {
+        if (SubscriptionProducts.isSubscription(purchase.productID)) {
           _restoredPurchases.add(purchase);
         }
-        _store.completePurchase(purchase);
+        if (!SubscriptionProducts.isExtension(purchase.productID)) {
+          _store.completePurchase(purchase);
+        }
         if (purchase.productID == _pendingProductId) {
           _completePending(true);
           _pendingProductId = null;
@@ -202,7 +292,9 @@ class SubscriptionService extends ChangeNotifier {
           } else {
             _lastPurchaseForVerification = null;
           }
-          _store.completePurchase(purchase);
+          if (!SubscriptionProducts.isExtension(purchase.productID)) {
+            _store.completePurchase(purchase);
+          }
           _completePending(true);
           _pendingProductId = null;
           _pendingPurchaseCompleter = null;
@@ -234,19 +326,18 @@ class SubscriptionService extends ChangeNotifier {
   Future<GooglePlayPurchaseDetails?> getActiveSubscriptionPurchase() async {
     if (!_isAndroid || !_isAvailable) return null;
     _restoredPurchases.clear();
-    _restoring = true;
     try {
       await _store.restorePurchases();
       await Future.delayed(const Duration(seconds: 3));
     } catch (e) {
       debugPrint('SubscriptionService: restorePurchases error: $e');
-    } finally {
-      _restoring = false;
     }
     if (_restoredPurchases.isEmpty) return null;
     for (final p in _restoredPurchases.reversed) {
-      if (SubscriptionProducts.all.contains(p.productID) && p is GooglePlayPurchaseDetails) {
-        debugPrint('SubscriptionService: found active subscription: ${p.productID}');
+      if (SubscriptionProducts.isSubscription(p.productID) &&
+          p is GooglePlayPurchaseDetails) {
+        debugPrint(
+            'SubscriptionService: found active subscription: ${p.productID}');
         return p;
       }
     }
@@ -255,7 +346,11 @@ class SubscriptionService extends ChangeNotifier {
 
   /// Покупка с апгрейдом/даунгрейдом существующей подписки.
   /// Google Play пересчитает стоимость с учётом оставшегося времени (proration).
-  Future<bool> buyUpgrade(String productId, GooglePlayPurchaseDetails oldPurchase) async {
+  Future<bool> buyUpgrade(
+    String productId,
+    GooglePlayPurchaseDetails oldPurchase, {
+    String? applicationUserName,
+  }) async {
     if (!_isAndroid || !_isAvailable) return false;
     final product = _products.cast<ProductDetails?>().firstWhere(
           (p) => p!.id == productId,
@@ -266,16 +361,21 @@ class SubscriptionService extends ChangeNotifier {
       return false;
     }
 
-    debugPrint('SubscriptionService: buyUpgrade() productId=$productId oldProduct=${oldPurchase.productID}');
+    debugPrint(
+        'SubscriptionService: buyUpgrade() productId=$productId oldProduct=${oldPurchase.productID}');
 
+    _lastPurchaseForVerification = null;
     _pendingProductId = productId;
     _pendingPurchaseCompleter = Completer<bool>();
 
     final param = GooglePlayPurchaseParam(
       productDetails: product,
+      applicationUserName: applicationUserName,
       changeSubscriptionParam: ChangeSubscriptionParam(
         oldPurchaseDetails: oldPurchase,
-        replacementMode: ReplacementMode.withTimeProration,
+        // User is charged for a full new billing period immediately. Google
+        // Play carries the remaining value from the old subscription forward.
+        replacementMode: ReplacementMode.chargeFullPrice,
       ),
     );
     final launchOk = await _store.buyNonConsumable(purchaseParam: param);

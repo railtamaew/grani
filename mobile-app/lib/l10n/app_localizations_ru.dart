@@ -682,25 +682,23 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get vpnConnectPatienceWarm =>
-      'Восстановление связи занимает дольше обычного — подождите, подключение продолжается.';
+      'Восстановление идёт дольше обычного. Подключаемся...';
 
   @override
   String get vpnRetryRouteWarm => 'Пробуем другой маршрут подключения...';
 
   @override
-  String get vpnSlowNetworkWarm =>
-      'Соединение может занять немного больше времени из-за сети.';
+  String get vpnSlowNetworkWarm => 'Сеть нестабильна. Подключаемся...';
 
   @override
   String get vpnConnectPatienceCold =>
-      'Первичная настройка на медленной сети может занять до минуты — подождите, это нормально.';
+      'Первичная настройка может занять до минуты.';
 
   @override
   String get vpnOptimizeRoute => 'Пробуем оптимизировать маршрут...';
 
   @override
-  String get vpnSlowNetworkCold =>
-      'Это нормально при медленной сети, продолжаем подключение...';
+  String get vpnSlowNetworkCold => 'Сеть нестабильна. Продолжаем...';
 
   @override
   String get connectionStagesProgressSemantic => 'Прогресс подключения VPN';
@@ -1000,23 +998,28 @@ class AppLocalizationsRu extends AppLocalizations {
   String get tariffBadgeMonthsMany => 'месяцев';
 
   @override
-  String get tariffPriceMonthly => '8\$ в месяц';
+  String get tariffPriceMonthly => 'Цена Google Play';
 
   @override
-  String get tariffPriceSixMonth => '6,8\$ в месяц';
+  String get tariffPriceSixMonth => 'Цена Google Play';
 
   @override
-  String get tariffPriceYearly => '5,6\$ в месяц';
+  String get tariffPriceYearly => 'Цена Google Play';
 
   @override
-  String get tariffDescMonthly => 'Для тех, кто хочет начать без обязательств';
+  String get tariffPriceLoading => 'Загружаем цену…';
 
   @override
-  String get tariffDescSixMonth =>
-      '40,8\$ - 15% скидка\nБаланс выгоды и гибкости';
+  String get tariffPriceUnavailable => 'Цена недоступна';
 
   @override
-  String get tariffDescYearly => '67,2\$ - 30% скидка\nСамый выгодный вариант';
+  String get tariffDescMonthly => 'Гибкий доступ на 1 месяц';
+
+  @override
+  String get tariffDescSixMonth => 'Выгодный доступ на 6 месяцев';
+
+  @override
+  String get tariffDescYearly => 'Максимальная выгода на 12 месяцев';
 
   @override
   String get subscriptionSnackbarPlanChanged => 'Тариф успешно изменён';
@@ -1034,6 +1037,18 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get subscriptionPurchaseError => 'Ошибка оплаты. Попробуйте снова.';
+
+  @override
+  String get subscriptionDifferentGraniAccount =>
+      'Текущая подписка Google Play уже привязана к другому аккаунту GRANI. Войдите в тот аккаунт GRANI или используйте другой аккаунт Google Play.';
+
+  @override
+  String get subscriptionPreflightUnavailable =>
+      'Не удалось безопасно проверить текущую подписку. Покупка не запущена — проверьте интернет и повторите.';
+
+  @override
+  String get subscriptionSamePlanAlreadyActive =>
+      'Этот тариф уже активен в Google Play и продлевается автоматически. Чтобы оплатить новый период сейчас, выберите тариф на 6 или 12 месяцев.';
 
   @override
   String get subscriptionGooglePlayUnavailable =>
@@ -1076,25 +1091,22 @@ class AppLocalizationsRu extends AppLocalizations {
   String get paymentTariffTitleOneYear => '1 год';
 
   @override
-  String get paymentTariffPriceMonthly => '399 ₽ мес.';
+  String get paymentTariffPriceMonthly => 'Цена Google Play';
 
   @override
-  String get paymentTariffPriceSixMonth => '340 ₽ мес.';
+  String get paymentTariffPriceSixMonth => 'Цена Google Play';
 
   @override
-  String get paymentTariffPriceYearly => '279 ₽ мес.';
+  String get paymentTariffPriceYearly => 'Цена Google Play';
 
   @override
-  String get paymentTariffDescMonthly =>
-      'Для тех, кто хочет начать без обязательств';
+  String get paymentTariffDescMonthly => 'Гибкий доступ на 1 месяц';
 
   @override
-  String get paymentTariffDescSixMonth =>
-      '2035 ₽ - 15% скидка\nБаланс выгоды и гибкости';
+  String get paymentTariffDescSixMonth => 'Выгодный доступ на 6 месяцев';
 
   @override
-  String get paymentTariffDescYearly =>
-      '3352 ₽ - 30% скидка\nСамый выгодный вариант';
+  String get paymentTariffDescYearly => 'Максимальная выгода на 12 месяцев';
 
   @override
   String get termsOfUseLink => 'Условия использования';

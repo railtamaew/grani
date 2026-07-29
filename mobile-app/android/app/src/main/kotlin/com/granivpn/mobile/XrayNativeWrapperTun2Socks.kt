@@ -28,6 +28,8 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
         private const val TUN2SOCKS_HEALTH_POLL_MS = 1200L
         // Fresh reconnect can produce short-lived binder/pipe blips before dataplane settles.
         private const val TUN2SOCKS_FAILURE_GRACE_MS = 7000L
+        private const val TASK_REMOVED_BINDER_GRACE_MS = 12000L
+        private const val TASK_REMOVED_REBIND_COOLDOWN_MS = 30000L
         /** Сокращено с 450ms — tun2socks в отдельном процессе, kill даёт быстрый cleanup. */
         private const val DELAY_AFTER_TUN2SOCKS_STOP_MS = 150L
         private const val CORE_STOP_WAIT_MS = 2000L
@@ -63,6 +65,12 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
     private var explicitStopVpnConfirmed = false
     @Volatile
     private var lastTunState: String = "init"
+    @Volatile
+    private var taskRemovedKeepaliveUntilMs: Long = 0L
+    @Volatile
+    private var taskRemovedRebindAttempted = false
+    @Volatile
+    private var lastTaskRemovedRebindAtMs: Long = 0L
 
     private fun setRuntimeState(next: RuntimeState, source: String) {
         synchronized(stateLock) {
@@ -86,6 +94,23 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
     private fun maybeReportTun2SocksFailure(reason: String) {
         if (stopped.get()) return
         if (reason == "tun2socks_service_disconnected" && lastTunState == "attached") {
+            if (System.currentTimeMillis() < taskRemovedKeepaliveUntilMs) {
+                Log.w(
+                    TAG,
+                    "[DIAG] suppress tun2socks disconnect during task-removed keepalive; " +
+                        "reason=$reason state=$runtimeState tun=$lastTunState",
+                )
+                VpnNativeStateEmitter.emitRuntimeDiag(
+                    "tun2socks_task_removed_disconnect_suppressed",
+                    mapOf(
+                        "reason" to reason,
+                        "runtime_state" to runtimeState.name.lowercase(),
+                        "tun_state" to lastTunState,
+                    ),
+                )
+                maybeRebindTun2SocksAfterTaskRemoved(reason)
+                return
+            }
             Log.e(TAG, "[DIAG] tun2socks disconnected after attach; report immediately")
             onTun2SocksFailure?.invoke(reason)
             return
@@ -117,6 +142,99 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
             return
         }
         onTun2SocksFailure?.invoke(reason)
+    }
+
+    fun noteTaskRemovedKeepalive(source: String = "task_removed_keepalive") {
+        val now = System.currentTimeMillis()
+        taskRemovedKeepaliveUntilMs = now + TASK_REMOVED_BINDER_GRACE_MS
+        if (now - lastTaskRemovedRebindAtMs > TASK_REMOVED_REBIND_COOLDOWN_MS) {
+            taskRemovedRebindAttempted = false
+        }
+        Log.i(
+            TAG,
+            "[DIAG] task_removed_keepalive_grace source=$source duration_ms=$TASK_REMOVED_BINDER_GRACE_MS " +
+                "state=$runtimeState tun=$lastTunState",
+        )
+        VpnNativeStateEmitter.emitRuntimeDiag(
+            "task_removed_keepalive_grace",
+            mapOf(
+                "source" to source,
+                "duration_ms" to TASK_REMOVED_BINDER_GRACE_MS,
+                "runtime_state" to runtimeState.name.lowercase(),
+                "tun_state" to lastTunState,
+            ),
+        )
+    }
+
+    private fun maybeRebindTun2SocksAfterTaskRemoved(reason: String) {
+        val now = System.currentTimeMillis()
+        val sinceLastRebind = now - lastTaskRemovedRebindAtMs
+        if (lastTaskRemovedRebindAtMs > 0L && sinceLastRebind < TASK_REMOVED_REBIND_COOLDOWN_MS) {
+            Log.w(
+                TAG,
+                "[DIAG] task_removed rebind skipped by cooldown reason=$reason " +
+                    "elapsed_ms=$sinceLastRebind cooldown_ms=$TASK_REMOVED_REBIND_COOLDOWN_MS",
+            )
+            VpnNativeStateEmitter.emitRuntimeDiag(
+                "task_removed_tun2socks_rebind_skipped",
+                mapOf(
+                    "reason" to reason,
+                    "action" to "cooldown",
+                    "elapsed_ms" to sinceLastRebind,
+                    "cooldown_ms" to TASK_REMOVED_REBIND_COOLDOWN_MS,
+                ),
+            )
+            return
+        }
+        if (taskRemovedRebindAttempted) {
+            Log.w(TAG, "[DIAG] task_removed rebind already attempted reason=$reason")
+            return
+        }
+        taskRemovedRebindAttempted = true
+        lastTaskRemovedRebindAtMs = now
+        if (delegate?.isXrayAlive() != true) {
+            Log.w(TAG, "[DIAG] task_removed rebind skipped: xray is not alive reason=$reason")
+            return
+        }
+        Log.w(TAG, "[DIAG] task_removed rebind: restart tun2socks on existing TUN reason=$reason")
+        VpnNativeStateEmitter.emitRuntimeDiag(
+            "task_removed_tun2socks_rebind",
+            mapOf("reason" to reason, "action" to "reuse_existing_tun"),
+        )
+        Thread {
+            try {
+                Thread.sleep(250)
+                if (stopped.get()) return@Thread
+                val d = delegate ?: run {
+                    Log.w(TAG, "[DIAG] task_removed rebind skipped: delegate null reason=$reason")
+                    return@Thread
+                }
+                if (!d.isXrayAlive()) {
+                    Log.w(TAG, "[DIAG] task_removed rebind skipped: xray stopped reason=$reason")
+                    return@Thread
+                }
+                try {
+                    val stoppedService = context.stopService(Intent(context, Tun2SocksProcessService::class.java))
+                    Log.i(TAG, "[DIAG] task_removed rebind: stop stale :tun2socks result=$stoppedService")
+                } catch (e: Exception) {
+                    Log.w(TAG, "[DIAG] task_removed rebind: stop stale :tun2socks failed: ${e.message}")
+                }
+                val reused = d.reuseCurrentTun("task_removed_tun2socks_disconnect") { pfd ->
+                    updateTunState("reusing_existing_tun_for_task_removed_rebind", "task_removed_tun2socks_disconnect")
+                    startTun2SocksBridge(pfd, bridgeSource = "task_removed_existing_tun")
+                }
+                if (!reused) {
+                    Log.e(TAG, "[DIAG] task_removed rebind failed: current TUN unavailable")
+                    onTun2SocksFailure?.invoke("task_removed_rebind_no_current_tun")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "task_removed rebind failed: ${e.message}", e)
+                onTun2SocksFailure?.invoke("task_removed_rebind_failed:${e::class.java.simpleName}")
+            }
+        }.apply {
+            name = "task-removed-tun2socks-rebind"
+            start()
+        }
     }
 
     private fun softReinitializeBridge(source: String) {
@@ -163,6 +281,9 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
         this.onTun2SocksFailure = onTun2SocksFailure
         explicitStopVpnConfirmed = false
         closedPipeGuardUsed = false
+        taskRemovedKeepaliveUntilMs = 0L
+        taskRemovedRebindAttempted = false
+        lastTaskRemovedRebindAtMs = 0L
         delegate?.let { previous ->
             // Defensive cleanup: avoid overlapping cores when start is triggered while
             // previous wrapper is still attached due lifecycle race.
@@ -230,8 +351,12 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
                 }
                 tun2socksConnection = conn
                 val intent = Intent(context, Tun2SocksProcessService::class.java)
+                // The bridge must inherit foreground VPN service importance.
+                // BIND_NOT_FOREGROUND made the :tun2socks process fragile when
+                // the user closed the GRANI task while the tunnel was active.
                 val bindFlags = Context.BIND_AUTO_CREATE or
-                    (if (Build.VERSION.SDK_INT >= 34) Context.BIND_NOT_FOREGROUND else 0)
+                    Context.BIND_IMPORTANT or
+                    Context.BIND_ABOVE_CLIENT
                 context.bindService(intent, conn, bindFlags)
                 if (!latch.await(TUN2SOCKS_BIND_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
                     val reason = "tun2socks_bind_timeout"
@@ -294,6 +419,42 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
         t.start()
     }
 
+    private fun waitForTun2SocksStopped(
+        remote: ITun2SocksProcess?,
+        source: String,
+        timeoutMs: Long,
+    ): Boolean {
+        if (remote == null) {
+            Log.i(TAG, "waitForTun2SocksStopped: remote=null source=$source")
+            return true
+        }
+        val startedAt = System.currentTimeMillis()
+        while (System.currentTimeMillis() - startedAt < timeoutMs) {
+            val runningNow = try {
+                remote.isTun2SocksRunning()
+            } catch (e: Exception) {
+                Log.i(TAG, "waitForTun2SocksStopped: binder gone source=$source err=${e::class.java.simpleName}")
+                return true
+            }
+            if (!runningNow) {
+                Log.i(TAG, "waitForTun2SocksStopped: stopped source=$source elapsed_ms=${System.currentTimeMillis() - startedAt}")
+                return true
+            }
+            try {
+                Thread.sleep(80)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+        }
+        Log.w(TAG, "waitForTun2SocksStopped: timeout source=$source timeout_ms=$timeoutMs")
+        VpnNativeStateEmitter.emitRuntimeDiag(
+            "tun2socks_stop_wait_timeout",
+            mapOf("source" to source, "timeout_ms" to timeoutMs),
+        )
+        return false
+    }
+
     /**
      * Остановка: закрываем TUN, ждём 200 ms, unbind без stopTun2Socks (избегаем краша pthread_mutex в BadVPN).
      */
@@ -328,11 +489,13 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
             "tun2socks_kill_request",
             mapOf("source" to "stopVpn", "reason" to "confirmed_stop", "confirmed_stop_vpn" to true),
         )
+        val remote = tun2socksService
         try {
-            tun2socksService?.stopTun2Socks("stopVpn", "confirmed_stop", true)
+            remote?.stopTun2Socks("stopVpn", "confirmed_stop", true)
         } catch (e: Exception) {
             Log.w(TAG, "stopTun2Socks IPC: ${e.message}")
         }
+        val ipcStopped = waitForTun2SocksStopped(remote, "after_ipc_stop", 900L)
         tun2socksService = null
         tun2socksConnection?.let { conn ->
             try {
@@ -342,6 +505,26 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
             }
         }
         tun2socksConnection = null
+        try {
+            val stoppedService = context.stopService(Intent(context, Tun2SocksProcessService::class.java))
+            Log.i(TAG, "stopVpn: explicit stopService(:tun2socks) result=$stoppedService")
+        } catch (e: Exception) {
+            Log.w(TAG, "stopVpn: explicit stopService(:tun2socks) failed: ${e.message}")
+        }
+        val serviceStopped = waitForTun2SocksStopped(remote, "after_stop_service", 1200L)
+        if (!ipcStopped || !serviceStopped) {
+            Log.w(
+                TAG,
+                "stopVpn: tun2socks did not confirm clean stop " +
+                    "ipc_stopped=$ipcStopped service_stopped=$serviceStopped; request process force-stop",
+            )
+            Tun2SocksProcessService.requestForceStop(
+                context,
+                source = "stopVpn_final",
+                reason = "tun2socks_stop_not_confirmed",
+            )
+            waitForTun2SocksStopped(remote, "after_force_stop", 900L)
+        }
         healthWatcherThread?.interrupt()
         healthWatcherThread = null
         try {
@@ -349,12 +532,16 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
         }
-        delegate?.cleanupTunOnly(
+        val tunClosed = delegate?.cleanupTunOnlyBlocking(
             source = "stopVpn",
             reason = "ordered_shutdown_after_tun2socks",
             allowWhileRunning = false,
-        )
-        updateTunState("closed", "stop_vpn_confirmed")
+            timeoutMs = 2500L,
+        ) ?: true
+        if (!tunClosed) {
+            Log.w(TAG, "stopVpn: blocking TUN close did not complete cleanly")
+        }
+        updateTunState(if (tunClosed) "closed" else "close_pending", "stop_vpn_confirmed")
         delegate = null
         onTun2SocksFailure = null
         setRuntimeState(RuntimeState.IDLE, "stop_vpn_done")

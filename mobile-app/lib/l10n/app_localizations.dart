@@ -1288,7 +1288,7 @@ abstract class AppLocalizations {
   /// No description provided for @vpnConnectPatienceWarm.
   ///
   /// In en, this message translates to:
-  /// **'Reconnecting is taking longer than usual — please wait, we are still connecting.'**
+  /// **'Reconnection is taking longer. Still connecting...'**
   String get vpnConnectPatienceWarm;
 
   /// No description provided for @vpnRetryRouteWarm.
@@ -1300,13 +1300,13 @@ abstract class AppLocalizations {
   /// No description provided for @vpnSlowNetworkWarm.
   ///
   /// In en, this message translates to:
-  /// **'Connection may take longer due to the network.'**
+  /// **'Network is unstable. Connecting...'**
   String get vpnSlowNetworkWarm;
 
   /// No description provided for @vpnConnectPatienceCold.
   ///
   /// In en, this message translates to:
-  /// **'First-time setup on a slow network can take up to a minute — please wait, this is normal.'**
+  /// **'First-time setup may take up to a minute.'**
   String get vpnConnectPatienceCold;
 
   /// No description provided for @vpnOptimizeRoute.
@@ -1318,7 +1318,7 @@ abstract class AppLocalizations {
   /// No description provided for @vpnSlowNetworkCold.
   ///
   /// In en, this message translates to:
-  /// **'Slow network is normal, still connecting...'**
+  /// **'Network is unstable. Still connecting...'**
   String get vpnSlowNetworkCold;
 
   /// No description provided for @connectionStagesProgressSemantic.
@@ -1858,37 +1858,49 @@ abstract class AppLocalizations {
   /// No description provided for @tariffPriceMonthly.
   ///
   /// In en, this message translates to:
-  /// **'\$8/mo'**
+  /// **'Google Play price'**
   String get tariffPriceMonthly;
 
   /// No description provided for @tariffPriceSixMonth.
   ///
   /// In en, this message translates to:
-  /// **'\$6.8/mo'**
+  /// **'Google Play price'**
   String get tariffPriceSixMonth;
 
   /// No description provided for @tariffPriceYearly.
   ///
   /// In en, this message translates to:
-  /// **'\$5.6/mo'**
+  /// **'Google Play price'**
   String get tariffPriceYearly;
+
+  /// No description provided for @tariffPriceLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading price…'**
+  String get tariffPriceLoading;
+
+  /// No description provided for @tariffPriceUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Price unavailable'**
+  String get tariffPriceUnavailable;
 
   /// No description provided for @tariffDescMonthly.
   ///
   /// In en, this message translates to:
-  /// **'For those who want to start without commitment.'**
+  /// **'Flexible access for 1 month'**
   String get tariffDescMonthly;
 
   /// No description provided for @tariffDescSixMonth.
   ///
   /// In en, this message translates to:
-  /// **'\$40.8 — 15% off\nBalance of benefit and flexibility'**
+  /// **'Great value for 6 months'**
   String get tariffDescSixMonth;
 
   /// No description provided for @tariffDescYearly.
   ///
   /// In en, this message translates to:
-  /// **'\$67.2 — 30% off\nBest value'**
+  /// **'Best value for 12 months'**
   String get tariffDescYearly;
 
   /// No description provided for @subscriptionSnackbarPlanChanged.
@@ -1920,6 +1932,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Payment error. Please try again.'**
   String get subscriptionPurchaseError;
+
+  /// No description provided for @subscriptionDifferentGraniAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'The current Google Play subscription is already linked to another GRANI account. Sign in to that GRANI account or use a different Google Play account.'**
+  String get subscriptionDifferentGraniAccount;
+
+  /// No description provided for @subscriptionPreflightUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'We could not safely verify the current subscription. The purchase was not started; check your connection and try again.'**
+  String get subscriptionPreflightUnavailable;
+
+  /// No description provided for @subscriptionSamePlanAlreadyActive.
+  ///
+  /// In en, this message translates to:
+  /// **'This plan is already active in Google Play and renews automatically. To pay for a new period now, choose the 6- or 12-month plan.'**
+  String get subscriptionSamePlanAlreadyActive;
 
   /// No description provided for @subscriptionGooglePlayUnavailable.
   ///
@@ -1996,37 +2026,37 @@ abstract class AppLocalizations {
   /// No description provided for @paymentTariffPriceMonthly.
   ///
   /// In en, this message translates to:
-  /// **'399 ₽/mo'**
+  /// **'Google Play price'**
   String get paymentTariffPriceMonthly;
 
   /// No description provided for @paymentTariffPriceSixMonth.
   ///
   /// In en, this message translates to:
-  /// **'340 ₽/mo'**
+  /// **'Google Play price'**
   String get paymentTariffPriceSixMonth;
 
   /// No description provided for @paymentTariffPriceYearly.
   ///
   /// In en, this message translates to:
-  /// **'279 ₽/mo'**
+  /// **'Google Play price'**
   String get paymentTariffPriceYearly;
 
   /// No description provided for @paymentTariffDescMonthly.
   ///
   /// In en, this message translates to:
-  /// **'For those who want to start without commitment.'**
+  /// **'Flexible access for 1 month'**
   String get paymentTariffDescMonthly;
 
   /// No description provided for @paymentTariffDescSixMonth.
   ///
   /// In en, this message translates to:
-  /// **'2,035 ₽ — 15% off\nBalance of benefit and flexibility'**
+  /// **'Great value for 6 months'**
   String get paymentTariffDescSixMonth;
 
   /// No description provided for @paymentTariffDescYearly.
   ///
   /// In en, this message translates to:
-  /// **'3,352 ₽ — 30% off\nBest value'**
+  /// **'Best value for 12 months'**
   String get paymentTariffDescYearly;
 
   /// No description provided for @termsOfUseLink.
