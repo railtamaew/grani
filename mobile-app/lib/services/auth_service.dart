@@ -283,7 +283,14 @@ class AuthService extends ChangeNotifier {
   }
 
   final StorageService _storage = StorageService();
-  final FirebaseAnalytics _firebaseAnalytics = FirebaseAnalytics.instance;
+  FirebaseAnalytics? get _firebaseAnalytics {
+    if (kIsWeb ||
+        (defaultTargetPlatform != TargetPlatform.android &&
+            defaultTargetPlatform != TargetPlatform.iOS)) {
+      return null;
+    }
+    return FirebaseAnalytics.instance;
+  }
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: ['email', 'profile'],
     serverClientId: AppConfig.googleOAuthWebClientId,
@@ -1067,8 +1074,10 @@ class AuthService extends ChangeNotifier {
     final normalized = userId?.trim();
     final analyticsUserId =
         normalized == null || normalized.isEmpty ? null : normalized;
+    final analytics = _firebaseAnalytics;
+    if (analytics == null) return;
     try {
-      await _firebaseAnalytics.setUserId(id: analyticsUserId);
+      await analytics.setUserId(id: analyticsUserId);
       debugPrint(
         'AuthService.analytics: Firebase user_id ${analyticsUserId == null ? "cleared" : "set"}',
       );
