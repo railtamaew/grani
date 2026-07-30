@@ -322,6 +322,15 @@ class AppConfig {
   static const String sharePlayStoreUrl =
       'https://play.google.com/store/apps/details?id=com.granivpn.mobile';
 
+  /// App Link for handing a Windows payment off to the Android app.
+  ///
+  /// It intentionally contains no token, email address, or other PII.
+  static const String androidPaymentHandoffUrl =
+      'https://granilink.com/open/pay'
+      '?utm_source=windows_app'
+      '&utm_medium=qr'
+      '&utm_campaign=windows_pay_android';
+
   // UI
   static const double borderRadius = 12.0;
   static const double padding = 16.0;

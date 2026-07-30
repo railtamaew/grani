@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_app/simple_vpn/simple_vpn_api.dart';
+import 'package:mobile_app/simple_vpn/windows_split_tunnel_settings.dart';
 import 'package:mobile_app/simple_vpn/windows_vless_config.dart';
 
 void main() {
@@ -10,6 +11,10 @@ void main() {
     final inbound = (decoded['inbounds'] as List).single as Map;
     final proxy = (decoded['outbounds'] as List).first as Map;
     final transport = proxy['transport'] as Map;
+    final dns = decoded['dns'] as Map;
+    final dnsServer = (dns['servers'] as List).first as Map;
+    final route = decoded['route'] as Map;
+    final routeRules = route['rules'] as List;
 
     expect(inbound['type'], 'tun');
     expect(inbound['interface_name'], 'grani-vless');
@@ -20,11 +25,35 @@ void main() {
     expect(proxy['server'], '203.0.113.10');
     expect(proxy['server_port'], 8080);
     expect(proxy['uuid'], '31343a66-e3b5-41e3-99df-cd901f8e052b');
+    expect(proxy.containsKey('network'), isFalse);
     expect(transport['type'], 'ws');
     expect(transport['path'], '/grani-ws');
     expect((transport['headers'] as Map)['Host'], '203.0.113.10');
-    expect((decoded['route'] as Map)['auto_detect_interface'], isTrue);
-    expect((decoded['route'] as Map)['final'], 'proxy');
+    expect(dns['final'], 'remote-dns');
+    expect(dns['strategy'], 'ipv4_only');
+    expect(dns['reverse_mapping'], isTrue);
+    expect(dnsServer['type'], 'https');
+    expect(dnsServer['server'], '1.1.1.1');
+    expect(dnsServer['detour'], 'proxy');
+    expect(route['auto_detect_interface'], isTrue);
+    expect(route['default_domain_resolver'], 'local-dns');
+    expect(route['final'], 'proxy');
+    expect(
+      routeRules.whereType<Map>().any(
+            (rule) =>
+                rule['protocol'] == 'dns' && rule['action'] == 'hijack-dns',
+          ),
+      isTrue,
+    );
+    expect(
+      routeRules.whereType<Map>().any(
+            (rule) =>
+                rule['ip_is_private'] == true &&
+                rule['action'] == 'route' &&
+                rule['outbound'] == 'direct',
+          ),
+      isTrue,
+    );
   });
 
   test('adds strict TLS without exposing source config in errors', () {
@@ -56,6 +85,71 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('routes selected Windows processes and domains outside VLESS', () {
+    final decoded = jsonDecode(
+      buildWindowsVlessConfig(
+        _config(),
+        splitTunnel: const WindowsSplitTunnelSettingsData(
+          processNames: <String>['chrome.exe'],
+          directDomains: <String>['bank.example'],
+        ),
+      ),
+    ) as Map;
+    final route = decoded['route'] as Map;
+    final rules = (route['rules'] as List).whereType<Map>().toList();
+    final dns = decoded['dns'] as Map;
+
+    expect(route['final'], 'proxy');
+    expect(
+      rules.any(
+        (rule) =>
+            (rule['process_name'] as List?)?.contains('chrome.exe') == true &&
+            rule['action'] == 'route' &&
+            rule['outbound'] == 'direct',
+      ),
+      isTrue,
+    );
+    expect(
+      rules.any(
+        (rule) =>
+            (rule['domain_suffix'] as List?)?.contains('bank.example') ==
+                true &&
+            rule['action'] == 'route' &&
+            rule['outbound'] == 'direct',
+      ),
+      isTrue,
+    );
+    expect((dns['rules'] as List).single['server'], 'local-dns');
+  });
+
+  test('routes only selected Windows processes through VLESS', () {
+    final decoded = jsonDecode(
+      buildWindowsVlessConfig(
+        _config(),
+        splitTunnel: const WindowsSplitTunnelSettingsData(
+          mode: windowsSplitTunnelModeInclude,
+          processNames: <String>['firefox.exe'],
+        ),
+      ),
+    ) as Map;
+    final route = decoded['route'] as Map;
+    final rules = (route['rules'] as List).whereType<Map>().toList();
+    final dns = decoded['dns'] as Map;
+
+    expect(route['final'], 'direct');
+    expect(
+      rules.any(
+        (rule) =>
+            (rule['process_name'] as List?)?.contains('firefox.exe') == true &&
+            rule['action'] == 'route' &&
+            rule['outbound'] == 'proxy',
+      ),
+      isTrue,
+    );
+    expect(dns['final'], 'local-dns');
+    expect((dns['rules'] as List).single['server'], 'remote-dns');
   });
 }
 

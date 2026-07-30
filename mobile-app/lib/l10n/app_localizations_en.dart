@@ -1038,6 +1038,58 @@ class AppLocalizationsEn extends AppLocalizations {
       'Google Play purchases are not available on this device.';
 
   @override
+  String get subscriptionPayOnAndroidPrice => 'Google Play price';
+
+  @override
+  String get subscriptionPayOnAndroidTitle => 'Pay on Android';
+
+  @override
+  String get subscriptionPayOnAndroidBody =>
+      'Scan the QR code with your Android phone. In the GRANI app, sign in to the same account and pay for the selected period through Google Play.';
+
+  @override
+  String get subscriptionPayOnAndroidSameAccount =>
+      'Important: Android and Windows must use the same GRANI account.';
+
+  @override
+  String get subscriptionPayOnAndroidWaiting =>
+      'Keep this window open after payment — Windows will check the subscription automatically.';
+
+  @override
+  String get subscriptionPayOnAndroidOpenStore => 'Open Google Play';
+
+  @override
+  String get subscriptionPayOnAndroidCheck => 'Check payment';
+
+  @override
+  String get subscriptionPayOnAndroidChecking => 'Checking subscription…';
+
+  @override
+  String get subscriptionPayOnAndroidNotFound =>
+      'The new payment has not appeared yet. Complete the purchase on Android and check again.';
+
+  @override
+  String get subscriptionPayOnAndroidLinkCopied => 'Android link copied';
+
+  @override
+  String get subscriptionPayOnAndroidCopyLink => 'Copy link';
+
+  @override
+  String get splitTunnelWindowsProcessHint =>
+      'Process name, for example chrome.exe';
+
+  @override
+  String get splitTunnelWindowsProcessAdd => 'Add process';
+
+  @override
+  String get splitTunnelWindowsProcessInvalid =>
+      'Enter a valid Windows process name ending in .exe.';
+
+  @override
+  String get splitTunnelWindowsProcessAlreadyAdded =>
+      'This process is already added.';
+
+  @override
   String get vpnDisconnectedAccessExpired =>
       'VPN was disconnected because access expired.';
 

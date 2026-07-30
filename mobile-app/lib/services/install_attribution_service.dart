@@ -126,6 +126,8 @@ class InstallAttributionService {
     switch (path) {
       case '/open/settings/split-tunneling':
         return '/split-tunnel';
+      case '/open/pay':
+        return '/trial-ended';
       case '/open':
       case '/open/home':
       case '/open/connect':

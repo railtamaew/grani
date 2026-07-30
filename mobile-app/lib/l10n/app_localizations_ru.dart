@@ -1055,6 +1055,59 @@ class AppLocalizationsRu extends AppLocalizations {
       'Покупки через Google Play недоступны на этом устройстве.';
 
   @override
+  String get subscriptionPayOnAndroidPrice => 'Цена в Google Play';
+
+  @override
+  String get subscriptionPayOnAndroidTitle => 'Оплатить через Android';
+
+  @override
+  String get subscriptionPayOnAndroidBody =>
+      'Откройте камеру Android-телефона и отсканируйте QR-код. В приложении GRANI войдите в тот же аккаунт и оплатите выбранный период через Google Play.';
+
+  @override
+  String get subscriptionPayOnAndroidSameAccount =>
+      'Важно: на Android и Windows должен быть один и тот же аккаунт GRANI.';
+
+  @override
+  String get subscriptionPayOnAndroidWaiting =>
+      'После оплаты оставьте это окно открытым — Windows автоматически проверит подписку.';
+
+  @override
+  String get subscriptionPayOnAndroidOpenStore => 'Открыть Google Play';
+
+  @override
+  String get subscriptionPayOnAndroidCheck => 'Проверить оплату';
+
+  @override
+  String get subscriptionPayOnAndroidChecking => 'Проверяем подписку…';
+
+  @override
+  String get subscriptionPayOnAndroidNotFound =>
+      'Новая оплата пока не найдена. Завершите покупку на Android и повторите проверку.';
+
+  @override
+  String get subscriptionPayOnAndroidLinkCopied =>
+      'Ссылка для Android скопирована';
+
+  @override
+  String get subscriptionPayOnAndroidCopyLink => 'Копировать ссылку';
+
+  @override
+  String get splitTunnelWindowsProcessHint =>
+      'Имя процесса, например chrome.exe';
+
+  @override
+  String get splitTunnelWindowsProcessAdd => 'Добавить процесс';
+
+  @override
+  String get splitTunnelWindowsProcessInvalid =>
+      'Введите корректное имя процесса Windows с расширением .exe.';
+
+  @override
+  String get splitTunnelWindowsProcessAlreadyAdded =>
+      'Этот процесс уже добавлен.';
+
+  @override
   String get vpnDisconnectedAccessExpired =>
       'VPN отключен из-за окончания доступа.';
 

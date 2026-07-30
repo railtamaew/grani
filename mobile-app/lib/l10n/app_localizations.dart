@@ -1957,6 +1957,96 @@ abstract class AppLocalizations {
   /// **'Google Play purchases are not available on this device.'**
   String get subscriptionGooglePlayUnavailable;
 
+  /// No description provided for @subscriptionPayOnAndroidPrice.
+  ///
+  /// In en, this message translates to:
+  /// **'Google Play price'**
+  String get subscriptionPayOnAndroidPrice;
+
+  /// No description provided for @subscriptionPayOnAndroidTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Pay on Android'**
+  String get subscriptionPayOnAndroidTitle;
+
+  /// No description provided for @subscriptionPayOnAndroidBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan the QR code with your Android phone. In the GRANI app, sign in to the same account and pay for the selected period through Google Play.'**
+  String get subscriptionPayOnAndroidBody;
+
+  /// No description provided for @subscriptionPayOnAndroidSameAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Important: Android and Windows must use the same GRANI account.'**
+  String get subscriptionPayOnAndroidSameAccount;
+
+  /// No description provided for @subscriptionPayOnAndroidWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep this window open after payment — Windows will check the subscription automatically.'**
+  String get subscriptionPayOnAndroidWaiting;
+
+  /// No description provided for @subscriptionPayOnAndroidOpenStore.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Google Play'**
+  String get subscriptionPayOnAndroidOpenStore;
+
+  /// No description provided for @subscriptionPayOnAndroidCheck.
+  ///
+  /// In en, this message translates to:
+  /// **'Check payment'**
+  String get subscriptionPayOnAndroidCheck;
+
+  /// No description provided for @subscriptionPayOnAndroidChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking subscription…'**
+  String get subscriptionPayOnAndroidChecking;
+
+  /// No description provided for @subscriptionPayOnAndroidNotFound.
+  ///
+  /// In en, this message translates to:
+  /// **'The new payment has not appeared yet. Complete the purchase on Android and check again.'**
+  String get subscriptionPayOnAndroidNotFound;
+
+  /// No description provided for @subscriptionPayOnAndroidLinkCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Android link copied'**
+  String get subscriptionPayOnAndroidLinkCopied;
+
+  /// No description provided for @subscriptionPayOnAndroidCopyLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy link'**
+  String get subscriptionPayOnAndroidCopyLink;
+
+  /// No description provided for @splitTunnelWindowsProcessHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Process name, for example chrome.exe'**
+  String get splitTunnelWindowsProcessHint;
+
+  /// No description provided for @splitTunnelWindowsProcessAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add process'**
+  String get splitTunnelWindowsProcessAdd;
+
+  /// No description provided for @splitTunnelWindowsProcessInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid Windows process name ending in .exe.'**
+  String get splitTunnelWindowsProcessInvalid;
+
+  /// No description provided for @splitTunnelWindowsProcessAlreadyAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'This process is already added.'**
+  String get splitTunnelWindowsProcessAlreadyAdded;
+
   /// No description provided for @vpnDisconnectedAccessExpired.
   ///
   /// In en, this message translates to:

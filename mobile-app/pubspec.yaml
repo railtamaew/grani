@@ -33,6 +33,7 @@ dependencies:
   cupertino_icons: ^1.0.2
   flutter_svg: ^2.0.9
   cached_network_image: ^3.3.1
+  qr_flutter: ^4.1.0
   
   # Утилиты
   intl: ^0.20.2

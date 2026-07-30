@@ -1220,7 +1220,7 @@ class _AccountCardState extends State<_AccountCard> {
                 spacingAfterIcon: 14,
               ),
               const Divider(height: 1, color: GraniTheme.surfaceVariant),
-              if (Platform.isAndroid) ...[
+              if (Platform.isAndroid || Platform.isWindows) ...[
                 GraniSectionRow(
                   iconSvg: 'assets/images/figma/profile/split_tunnel_new.svg',
                   label: context.l10n.splitTunnelTitle,

@@ -1,6 +1,7 @@
 // ignore_for_file: prefer_single_quotes
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
@@ -12,6 +13,7 @@ import '../services/analytics_service.dart';
 import 'simple_vpn_api.dart';
 import 'simple_vpn_options_cache.dart';
 import 'windows_hysteria2_config.dart';
+import 'windows_split_tunnel_settings.dart';
 import 'windows_vless_config.dart';
 
 enum SimpleVpnState {
@@ -196,8 +198,12 @@ class WindowsSimpleVpnRuntime implements SimpleVpnRuntime {
     required String? sessionId,
     required String source,
   }) async {
+    final splitTunnel = await WindowsSplitTunnelSettings.load();
     if (config.engine == 'xray' || config.protocol == 'vless_ws') {
-      final nativeConfig = buildWindowsVlessConfig(config);
+      final nativeConfig = buildWindowsVlessConfig(
+        config,
+        splitTunnel: splitTunnel,
+      );
       return NativeVpnService.connectVless(
         nativeConfig,
         connectionSessionId: sessionId,
@@ -205,6 +211,17 @@ class WindowsSimpleVpnRuntime implements SimpleVpnRuntime {
       );
     }
     if (config.engine == 'hysteria2' || config.protocol == 'hysteria2') {
+      if (splitTunnel.hasRules) {
+        final nativeConfig = buildWindowsHysteria2SingBoxConfig(
+          config,
+          splitTunnel: splitTunnel,
+        );
+        return NativeVpnService.connectVless(
+          nativeConfig,
+          connectionSessionId: sessionId,
+          source: source,
+        );
+      }
       final nativeConfig = buildWindowsHysteria2Config(config);
       return NativeVpnService.connectHysteria2(
         nativeConfig,
@@ -1572,6 +1589,78 @@ class SimpleVpnController extends ChangeNotifier {
     return NativeVpnService.getDesktopVpnDiagnostics();
   }
 
+  Future<bool> _verifyWindowsTunnelConnectivity({
+    required String protocol,
+    required String? sessionId,
+    required String? deviceId,
+  }) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) {
+      return true;
+    }
+
+    const targets = <String>[
+      'https://connectivitycheck.gstatic.com/generate_204',
+      'https://api.granilink.com/health',
+      'https://cloudflare.com/cdn-cgi/trace',
+    ];
+    final failures = <String>[];
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      for (final rawUrl in targets) {
+        final client = HttpClient()
+          ..connectionTimeout = const Duration(seconds: 5)
+          ..idleTimeout = const Duration(seconds: 5)
+          ..userAgent = 'GRANI-Windows-connectivity-check';
+        try {
+          final uri = Uri.parse(rawUrl);
+          final request =
+              await client.getUrl(uri).timeout(const Duration(seconds: 6));
+          request.followRedirects = false;
+          request.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
+          final response =
+              await request.close().timeout(const Duration(seconds: 6));
+          final status = response.statusCode;
+          await response.drain<void>();
+          if (status >= 200 && status < 500) {
+            unawaited(_api.log(
+              event: 'windows_tunnel_connectivity_verified',
+              sessionId: sessionId,
+              deviceId: deviceId,
+              details: <String, dynamic>{
+                'protocol': protocol,
+                'attempt': attempt,
+                'target_host': uri.host,
+                'http_status': status,
+              },
+            ).catchError((_) {}));
+            return true;
+          }
+          failures.add('${uri.host}:http_$status');
+        } catch (error) {
+          final host = Uri.tryParse(rawUrl)?.host ?? 'invalid_target';
+          failures.add('$host:${error.runtimeType}');
+        } finally {
+          client.close(force: true);
+        }
+      }
+      if (attempt < 3) {
+        await Future<void>.delayed(Duration(seconds: attempt));
+      }
+    }
+
+    unawaited(_api.log(
+      event: 'windows_tunnel_connectivity_failed',
+      level: 'error',
+      sessionId: sessionId,
+      deviceId: deviceId,
+      details: <String, dynamic>{
+        'protocol': protocol,
+        'attempts': 3,
+        'failures': failures.take(12).toList(growable: false),
+      },
+    ).catchError((_) {}));
+    return false;
+  }
+
   Future<int?> _readSelectedServerId() async {
     final cached =
         (await _cacheService.getString(_selectedServerCacheKey))?.trim();
@@ -2626,6 +2715,11 @@ class SimpleVpnController extends ChangeNotifier {
           'protocol': selectedProtocolId,
         },
       );
+      unawaited(_analyticsService.logVpnConnectStart(
+        serverId: selectedServerId ?? 0,
+        protocol: selectedProtocolId,
+        sourceSurface: source,
+      ));
       await _api.log(
         event: 'connect_tap',
         deviceId: deviceId,
@@ -2990,6 +3084,38 @@ class SimpleVpnController extends ChangeNotifier {
 
       _setConnectionProgress('Проверяем защищенный трафик...', percent: 92);
       _throwIfConnectCancelled(attemptId);
+      final windowsConnectivityOk = await _verifyWindowsTunnelConnectivity(
+        protocol: config.protocol,
+        sessionId: backendSessionId ?? sessionId,
+        deviceId: deviceId,
+      );
+      _throwIfConnectCancelled(attemptId);
+      if (!windowsConnectivityOk) {
+        final failedDiagnostics = await _desktopVpnDiagnosticsForLogs();
+        _traceConnectPhase(
+          'windows_connectivity_gate_failed',
+          attemptId: attemptId,
+          source: source,
+          sessionId: sessionId,
+          deviceId: deviceId,
+          config: config,
+          extra: <String, dynamic>{
+            if (failedDiagnostics.isNotEmpty)
+              'desktop_vpn_diagnostics': failedDiagnostics,
+          },
+        );
+        await _runtime
+            .disconnect(
+              reason: 'connectivity_gate_failed',
+              source: '${source}_connectivity_gate',
+              sessionId: sessionId,
+            )
+            .catchError((_) => false);
+        throw VpnException(
+          'Туннель запущен, но защищённый интернет недоступен. '
+          'Проверьте сеть или выберите другой протокол.',
+        );
+      }
       final desktopDiagnostics = await _desktopVpnDiagnosticsForLogs();
       unawaited(_api.log(
         event: 'native_start_ok',

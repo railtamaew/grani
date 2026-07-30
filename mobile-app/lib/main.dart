@@ -48,6 +48,7 @@ import 'services/in_app_event_banner_service.dart';
 import 'services/entitlement_native_sync.dart';
 import 'services/notification_journal_service.dart';
 import 'services/install_attribution_service.dart';
+import 'services/analytics_service.dart';
 import 'screens/notification_journal_screen.dart';
 import 'widgets/pending_device_limit_listener.dart';
 
@@ -406,8 +407,12 @@ void main() async {
     ApiClient().setTokenProvider(() => authService.token);
     ApiClient().setRefreshTokenProvider(authService.refreshAccessToken);
     authService.setOnLogoutCallback(() {
+      unawaited(AnalyticsService().setUserId(null));
       unawaited(_disconnectVpnAfterAuthLoss());
     });
+    unawaited(
+      AnalyticsService().initialize(userId: authService.user?.id),
+    );
     perf.stop('auth_init');
 
     final localeController = LocaleController();

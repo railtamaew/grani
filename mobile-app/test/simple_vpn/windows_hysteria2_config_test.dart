@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_app/simple_vpn/simple_vpn_api.dart';
 import 'package:mobile_app/simple_vpn/windows_hysteria2_config.dart';
+import 'package:mobile_app/simple_vpn/windows_split_tunnel_settings.dart';
 
 void main() {
   test('builds official Hysteria2 TUN config with node route exclusion', () {
@@ -56,6 +59,47 @@ void main() {
     } on WindowsHysteria2ConfigException catch (error) {
       expect(error.toString(), isNot(contains(secret)));
     }
+  });
+
+  test('builds sing-box Hysteria2 TUN config for Windows split tunnel', () {
+    final decoded = jsonDecode(
+      buildWindowsHysteria2SingBoxConfig(
+        _config(
+          raw: '''
+{
+  "outbounds": [
+    {
+      "type": "hysteria2",
+      "server": "hy2-pl.granilink.com",
+      "server_port": 443,
+      "password": "secret",
+      "tls": {"server_name": "hy2-pl.granilink.com"}
+    }
+  ]
+}
+''',
+        ),
+        splitTunnel: const WindowsSplitTunnelSettingsData(
+          processNames: <String>['chrome.exe'],
+        ),
+      ),
+    ) as Map;
+    final proxy = (decoded['outbounds'] as List).first as Map;
+    final route = decoded['route'] as Map;
+    final rules = (route['rules'] as List).whereType<Map>().toList();
+
+    expect(proxy['type'], 'hysteria2');
+    expect(proxy['tag'], 'proxy');
+    expect(route['final'], 'proxy');
+    expect(
+      rules.any(
+        (rule) =>
+            rule['process_name'] is List &&
+            (rule['process_name'] as List).contains('chrome.exe') &&
+            rule['outbound'] == 'direct',
+      ),
+      isTrue,
+    );
   });
 }
 

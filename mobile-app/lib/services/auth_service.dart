@@ -291,6 +291,7 @@ class AuthService extends ChangeNotifier {
     }
     return FirebaseAnalytics.instance;
   }
+
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: ['email', 'profile'],
     serverClientId: AppConfig.googleOAuthWebClientId,

@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../theme.dart';
 import '../config/app_config.dart';
 import '../services/auth_service.dart';
@@ -49,6 +52,9 @@ class _TrialEndedScreenState extends State<TrialEndedScreen> with RouteAware {
   String? _purchasingProductId;
 
   String _storePrice(BuildContext context, String productId) {
+    if (Platform.isWindows) {
+      return context.l10n.subscriptionPayOnAndroidPrice;
+    }
     final subscription = context.watch<SubscriptionService>();
     final price = subscription.priceFor(productId);
     if (price != null && price.trim().isNotEmpty) return price;
@@ -58,7 +64,12 @@ class _TrialEndedScreenState extends State<TrialEndedScreen> with RouteAware {
   }
 
   Timer? _subscriptionPollTimer;
+  Timer? _androidPaymentPollTimer;
   AuthService? _authServiceForListener;
+  DateTime? _androidPaymentBaselineExpiresAt;
+  bool _androidPaymentBaselineActive = false;
+  bool _androidPaymentDialogOpen = false;
+  bool _androidPaymentCheckInFlight = false;
 
   @override
   void initState() {
@@ -120,8 +131,176 @@ class _TrialEndedScreenState extends State<TrialEndedScreen> with RouteAware {
   void dispose() {
     appRouteObserver.unsubscribe(this);
     _subscriptionPollTimer?.cancel();
+    _androidPaymentPollTimer?.cancel();
     _authServiceForListener?.removeListener(_onAuthSubscriptionUpdate);
     super.dispose();
+  }
+
+  String _androidPaymentUrl(String productId) {
+    final base = Uri.parse(AppConfig.androidPaymentHandoffUrl);
+    return base.replace(
+      queryParameters: <String, String>{
+        ...base.queryParameters,
+        'plan': productId,
+      },
+    ).toString();
+  }
+
+  Future<void> _showPayOnAndroid(String productId) async {
+    if (!Platform.isWindows || _androidPaymentDialogOpen) return;
+
+    final auth = Provider.of<AuthService>(context, listen: false);
+    _androidPaymentBaselineActive = auth.hasActiveSubscription;
+    _androidPaymentBaselineExpiresAt = auth.subscriptionExpiresAt;
+    _androidPaymentDialogOpen = true;
+    final handoffUrl = _androidPaymentUrl(productId);
+
+    _androidPaymentPollTimer?.cancel();
+    _androidPaymentPollTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => unawaited(_checkAndroidPayment(showNotFound: false)),
+    );
+
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: Text(context.l10n.subscriptionPayOnAndroidTitle),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(context.l10n.subscriptionPayOnAndroidBody),
+                    const SizedBox(height: 16),
+                    Semantics(
+                      label: context.l10n.subscriptionPayOnAndroidTitle,
+                      image: true,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: QrImageView(
+                            data: handoffUrl,
+                            size: 220,
+                            backgroundColor: Colors.white,
+                            eyeStyle: const QrEyeStyle(
+                              eyeShape: QrEyeShape.square,
+                              color: Color(0xFF163041),
+                            ),
+                            dataModuleStyle: const QrDataModuleStyle(
+                              dataModuleShape: QrDataModuleShape.square,
+                              color: Color(0xFF163041),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      context.l10n.subscriptionPayOnAndroidSameAccount,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(context.l10n.subscriptionPayOnAndroidWaiting),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: handoffUrl));
+                  if (!mounted) return;
+                  showInfoSnackBar(
+                    context,
+                    context.l10n.subscriptionPayOnAndroidLinkCopied,
+                  );
+                },
+                child: Text(context.l10n.subscriptionPayOnAndroidCopyLink),
+              ),
+              TextButton(
+                onPressed: () async {
+                  await launchUrl(
+                    Uri.parse(AppConfig.sharePlayStoreUrl),
+                    mode: LaunchMode.externalApplication,
+                  );
+                },
+                child: Text(context.l10n.subscriptionPayOnAndroidOpenStore),
+              ),
+              FilledButton(
+                onPressed: () => _checkAndroidPayment(showNotFound: true),
+                child: Text(context.l10n.subscriptionPayOnAndroidCheck),
+              ),
+            ],
+          );
+        },
+      );
+    } finally {
+      _androidPaymentDialogOpen = false;
+      _androidPaymentPollTimer?.cancel();
+      _androidPaymentPollTimer = null;
+    }
+  }
+
+  Future<void> _checkAndroidPayment({required bool showNotFound}) async {
+    if (!_androidPaymentDialogOpen ||
+        _androidPaymentCheckInFlight ||
+        !mounted) {
+      return;
+    }
+    _androidPaymentCheckInFlight = true;
+    final auth = Provider.of<AuthService>(context, listen: false);
+    try {
+      if (showNotFound) {
+        showInfoSnackBar(
+          context,
+          context.l10n.subscriptionPayOnAndroidChecking,
+        );
+      }
+      await auth.refreshUserStatus(force: true);
+      if (!mounted || !_androidPaymentDialogOpen) return;
+
+      final expiresAt = auth.subscriptionExpiresAt;
+      final activated =
+          !_androidPaymentBaselineActive && auth.hasActiveSubscription;
+      final extended = _androidPaymentBaselineActive &&
+          expiresAt != null &&
+          (_androidPaymentBaselineExpiresAt == null ||
+              expiresAt.isAfter(_androidPaymentBaselineExpiresAt!));
+
+      if (activated || extended) {
+        _androidPaymentDialogOpen = false;
+        _androidPaymentPollTimer?.cancel();
+        _androidPaymentPollTimer = null;
+        Navigator.of(context, rootNavigator: true).pop();
+        showInfoSnackBar(
+          context,
+          context.l10n.subscriptionSnackbarActivated,
+        );
+        Navigator.pushNamedAndRemoveUntil(context, '/main', (_) => false);
+      } else if (showNotFound) {
+        showInfoSnackBar(
+          context,
+          context.l10n.subscriptionPayOnAndroidNotFound,
+        );
+      }
+    } catch (_) {
+      if (showNotFound && mounted && _androidPaymentDialogOpen) {
+        showErrorSnackBar(
+          context,
+          context.l10n.subscriptionPreflightUnavailable,
+        );
+      }
+    } finally {
+      _androidPaymentCheckInFlight = false;
+    }
   }
 
   Future<void> _purchase(String productId) async {
@@ -517,6 +696,8 @@ class _TrialEndedScreenState extends State<TrialEndedScreen> with RouteAware {
               : () {
                   if (SubscriptionService.supported) {
                     _purchase(productId);
+                  } else if (Platform.isWindows) {
+                    _showPayOnAndroid(productId);
                   } else {
                     showErrorSnackBar(context,
                         context.l10n.subscriptionGooglePlayUnavailable);

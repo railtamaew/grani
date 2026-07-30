@@ -1,6 +1,11 @@
+import 'dart:io';
+
 import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:flutter/foundation.dart';
+
 import '../core/logger/logger.dart';
 import 'install_attribution_service.dart';
+import 'windows_analytics_transport.dart';
 
 class AnalyticsService {
   static final AnalyticsService _instance = AnalyticsService._internal();
@@ -11,10 +16,34 @@ class AnalyticsService {
   FirebaseAnalytics get _analytics =>
       _analyticsInstance ??= FirebaseAnalytics.instance;
   final _logger = Logger();
+  final _windows = WindowsAnalyticsTransport.instance;
+
+  bool get _isWindows =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+
+  bool get _isFirebaseSupported =>
+      !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+
+  Future<void> initialize({String? userId}) async {
+    if (_isWindows) {
+      await _windows.initialize(userId: userId);
+    }
+  }
 
   /// Успешная авторизация (Google / Email)
   Future<void> logLogin(String method) async {
     try {
+      if (_isWindows) {
+        await _windows.logEvent(
+          'login',
+          params: {
+            'method': method,
+            'source_surface': 'desktop_auth',
+          },
+        );
+        return;
+      }
+      if (!_isFirebaseSupported) return;
       await _analytics.logLogin(loginMethod: method);
       _logger.info('analytics: login ($method)', 'AnalyticsService');
     } catch (e) {
@@ -30,6 +59,7 @@ class AnalyticsService {
     String? transactionId,
   }) async {
     try {
+      if (!_isFirebaseSupported) return;
       await _analytics.logRefund(
         currency: currency,
         value: amount,
@@ -56,6 +86,7 @@ class AnalyticsService {
   /// Регистрация нового пользователя
   Future<void> logSignUp(String method) async {
     try {
+      if (!_isFirebaseSupported) return;
       await _analytics.logSignUp(signUpMethod: method);
       _logger.info('analytics: sign_up ($method)', 'AnalyticsService');
     } catch (e) {
@@ -66,6 +97,7 @@ class AnalyticsService {
   /// Начало триала
   Future<void> logTrialStart() async {
     try {
+      if (!_isFirebaseSupported) return;
       await _analytics.logEvent(name: 'trial_start');
       await InstallAttributionService.instance
           .logLifecycleEvent('trial_started');
@@ -75,21 +107,48 @@ class AnalyticsService {
     }
   }
 
-  Future<void> logPaywallView() =>
-      InstallAttributionService.instance.logLifecycleEvent('paywall_view');
-
-  Future<void> logPurchaseCompleted(String productId) =>
-      InstallAttributionService.instance.logLifecycleEvent(
-        'purchase_completed',
-        extra: {'product_id': productId},
-        once: false,
+  Future<void> logPaywallView() {
+    if (_isWindows) {
+      return _windows.logEvent(
+        'paywall_view',
+        params: {'source_surface': 'desktop_subscription'},
       );
+    }
+    return InstallAttributionService.instance.logLifecycleEvent('paywall_view');
+  }
 
-  Future<void> logFirstConnectionSuccess(String protocol) =>
-      InstallAttributionService.instance.logLifecycleEvent(
-        'first_connection_success',
-        extra: {'protocol': protocol},
-      );
+  Future<void> logPurchaseCompleted(String productId) {
+    if (_isWindows) return Future<void>.value();
+    return InstallAttributionService.instance.logLifecycleEvent(
+      'purchase_completed',
+      extra: {'product_id': productId},
+      once: false,
+    );
+  }
+
+  Future<void> logFirstConnectionSuccess(String protocol) {
+    if (_isWindows) return Future<void>.value();
+    return InstallAttributionService.instance.logLifecycleEvent(
+      'first_connection_success',
+      extra: {'protocol': protocol},
+    );
+  }
+
+  Future<void> logVpnConnectStart({
+    required int serverId,
+    required String protocol,
+    required String sourceSurface,
+  }) {
+    if (!_isWindows) return Future<void>.value();
+    return _windows.logEvent(
+      'vpn_connect_start',
+      params: {
+        'server_id': serverId,
+        'protocol': protocol,
+        'source_surface': sourceSurface,
+      },
+    );
+  }
 
   /// Реальный GRANIwg dataplane подтвержден backend-проверкой на VPN-ноде.
   Future<void> logVpnDataVerified({
@@ -102,6 +161,19 @@ class AnalyticsService {
     bool fromCache = false,
   }) async {
     try {
+      if (_isWindows) {
+        await _windows.logEvent(
+          'vpn_data_verified',
+          params: <String, Object?>{
+            'server_id': serverId,
+            'protocol': protocol,
+            'from_cache': fromCache,
+            'verification_source': 'client_tun',
+          },
+        );
+        return;
+      }
+      if (!_isFirebaseSupported) return;
       await _analytics.logEvent(
         name: 'vpn_data_verified',
         parameters: <String, Object>{
@@ -127,6 +199,11 @@ class AnalyticsService {
   /// Идентификация пользователя
   Future<void> setUserId(String? userId) async {
     try {
+      if (_isWindows) {
+        await _windows.setUserId(userId);
+        return;
+      }
+      if (!_isFirebaseSupported) return;
       await _analytics.setUserId(id: userId);
     } catch (e) {
       _logger.warning('analytics setUserId error: $e', 'AnalyticsService');
@@ -137,6 +214,7 @@ class AnalyticsService {
   /// Firebase app instance and analytics session as client-side events.
   Future<Map<String, dynamic>> getBackendMeasurementIdentity() async {
     final identity = <String, dynamic>{};
+    if (!_isFirebaseSupported) return identity;
 
     try {
       final appInstanceId = await _analytics.appInstanceId;
