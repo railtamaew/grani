@@ -22,6 +22,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check Android release version convention
+        shell: bash
+        run: |
+          version="$(awk '/^version:[[:space:]]*/ { print $2; exit }' pubspec.yaml)"
+
+          # The already published v34 keeps its historical public versionName.
+          if [[ "$version" == "1.0.4+34" ]]; then
+            echo "Legacy Android version accepted: $version"
+            exit 0
+          fi
+
+          if [[ ! "$version" =~ ^1\.0\.([1-9][0-9]*)\+([1-9][0-9]*)$ ]]; then
+            echo "Invalid Android version '$version'. Expected 1.0.N+N (for example 1.0.35+35)." >&2
+            exit 1
+          fi
+
+          visible_patch="${BASH_REMATCH[1]}"
+          version_code="${BASH_REMATCH[2]}"
+          if (( version_code < 35 )) || [[ "$visible_patch" != "$version_code" ]]; then
+            echo "Invalid Android version '$version': visible patch and versionCode must match and be at least 35." >&2
+            exit 1
+          fi
+
+          echo "Android version convention verified: versionName=1.0.$visible_patch, versionCode=$version_code"
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
