@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme.dart';
 import '../services/native_vpn_service.dart';
+import '../simple_vpn/windows_split_tunnel_settings.dart';
 import '../widgets/split_tunnel/split_tunnel_ui_kit.dart';
 import '../widgets/snackbar_utils.dart';
 import '../widgets/info_banner.dart';
@@ -53,6 +54,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
   String _searchQuery = '';
   int _activeTabIndex = 0;
   final TextEditingController _domainController = TextEditingController();
+  final TextEditingController _processController = TextEditingController();
 
   /// Сообщение о переподключении VPN — только на этом экране (не через ScaffoldMessenger).
   String? _reconnectInfoMessage;
@@ -96,6 +98,9 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
         'com.whatsapp',
         'org.thunderdog.challegram',
         'com.discord',
+        'telegram.exe',
+        'whatsapp.exe',
+        'discord.exe',
       ],
     ),
     _PresetGroup(
@@ -106,6 +111,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
         'com.google.android.youtube',
         'com.netflix.mediaclient',
         'com.ss.android.ugc.trill',
+        'vlc.exe',
       ],
     ),
     _PresetGroup(
@@ -116,6 +122,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
         'com.tencent.ig',
         'com.activision.callofduty.shooter',
         'com.mobile.legends',
+        'steam.exe',
       ],
     ),
   ];
@@ -129,20 +136,33 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
   @override
   void dispose() {
     _domainController.dispose();
+    _processController.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
-    if (!Platform.isAndroid) {
+    if (!Platform.isAndroid && !Platform.isWindows) {
       setState(() => _isLoading = false);
       return;
     }
     setState(() => _isLoading = true);
     try {
-      final apps = await NativeVpnService.getInstalledApps();
-      final selected = await NativeVpnService.getSplitTunnelExcludedApps();
-      final mode = await NativeVpnService.getSplitTunnelMode();
-      final domains = await NativeVpnService.getSplitTunnelDirectDomains();
+      final List<Map<String, String>> apps;
+      final List<String> selected;
+      final String mode;
+      final List<String> domains;
+      if (Platform.isWindows) {
+        final settings = await WindowsSplitTunnelSettings.load();
+        apps = await WindowsSplitTunnelSettings.listRunningApps();
+        selected = settings.processNames;
+        mode = settings.mode;
+        domains = settings.directDomains;
+      } else {
+        apps = await NativeVpnService.getInstalledApps();
+        selected = await NativeVpnService.getSplitTunnelExcludedApps();
+        mode = await NativeVpnService.getSplitTunnelMode();
+        domains = await NativeVpnService.getSplitTunnelDirectDomains();
+      }
       if (mounted) {
         setState(() {
           _apps = apps;
@@ -192,7 +212,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
   }
 
   Future<void> _toggleApp(String package) async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid && !Platform.isWindows) return;
     final newSet = Set<String>.from(_selectedPackages);
     final wasSelected = newSet.contains(package);
     if (wasSelected) {
@@ -201,7 +221,11 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
       newSet.add(package);
     }
     setState(() => _selectedPackages = newSet);
-    await NativeVpnService.setSplitTunnelExcludedApps(newSet.toList());
+    if (Platform.isWindows) {
+      await WindowsSplitTunnelSettings.saveProcesses(newSet);
+    } else {
+      await NativeVpnService.setSplitTunnelExcludedApps(newSet.toList());
+    }
     await _notifyReconnectHintIfNeeded(
       changeMessage: wasSelected
           ? context.l10n.splitTunnelAppRemoved
@@ -209,13 +233,47 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
     );
   }
 
+  Future<void> _addWindowsProcess(String raw) async {
+    if (!Platform.isWindows) return;
+    final process = WindowsSplitTunnelSettings.normalizeProcessName(raw);
+    if (process.isEmpty) {
+      showErrorSnackBar(context, context.l10n.splitTunnelWindowsProcessInvalid);
+      return;
+    }
+    if (_selectedPackages.contains(process)) {
+      showInfoSnackBar(
+        context,
+        context.l10n.splitTunnelWindowsProcessAlreadyAdded,
+      );
+      return;
+    }
+    final newSet = Set<String>.from(_selectedPackages)..add(process);
+    final newApps = List<Map<String, String>>.from(_apps);
+    if (!newApps.any((app) => app['package'] == process)) {
+      newApps.add(<String, String>{'package': process, 'label': process});
+    }
+    setState(() {
+      _selectedPackages = newSet;
+      _apps = newApps;
+      _processController.clear();
+    });
+    await WindowsSplitTunnelSettings.saveProcesses(newSet);
+    await _notifyReconnectHintIfNeeded(
+      changeMessage: context.l10n.splitTunnelAppAdded,
+    );
+  }
+
   Future<void> _toggleMode() async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid && !Platform.isWindows) return;
     final newMode = _mode == NativeVpnService.splitTunnelModeExclude
         ? NativeVpnService.splitTunnelModeInclude
         : NativeVpnService.splitTunnelModeExclude;
     setState(() => _mode = newMode);
-    await NativeVpnService.setSplitTunnelMode(newMode);
+    if (Platform.isWindows) {
+      await WindowsSplitTunnelSettings.saveMode(newMode);
+    } else {
+      await NativeVpnService.setSplitTunnelMode(newMode);
+    }
     await _notifyReconnectHintIfNeeded(
       changeMessage: newMode == NativeVpnService.splitTunnelModeExclude
           ? context.l10n.splitTunnelModeExcludeChanged
@@ -224,7 +282,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
   }
 
   Future<void> _addDomain(String domain) async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid && !Platform.isWindows) return;
     final d = _normalizeDirectDomain(domain);
     if (d.isEmpty || _directDomains.contains(d)) return;
     final newList = List<String>.from(_directDomains)..add(d);
@@ -232,7 +290,11 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
       _directDomains = newList;
       _domainController.clear();
     });
-    await NativeVpnService.setSplitTunnelDirectDomains(newList);
+    if (Platform.isWindows) {
+      await WindowsSplitTunnelSettings.saveDirectDomains(newList);
+    } else {
+      await NativeVpnService.setSplitTunnelDirectDomains(newList);
+    }
     await _notifyReconnectHintIfNeeded(
         changeMessage: context.l10n.splitTunnelDomainAdded);
   }
@@ -274,10 +336,14 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
   }
 
   Future<void> _removeDomain(String domain) async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid && !Platform.isWindows) return;
     final newList = _directDomains.where((x) => x != domain).toList();
     setState(() => _directDomains = newList);
-    await NativeVpnService.setSplitTunnelDirectDomains(newList);
+    if (Platform.isWindows) {
+      await WindowsSplitTunnelSettings.saveDirectDomains(newList);
+    } else {
+      await NativeVpnService.setSplitTunnelDirectDomains(newList);
+    }
     await _notifyReconnectHintIfNeeded(
         changeMessage: context.l10n.splitTunnelDomainRemoved);
   }
@@ -304,7 +370,11 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
 
     final newSet = Set<String>.from(_selectedPackages)..addAll(toAdd);
     setState(() => _selectedPackages = newSet);
-    await NativeVpnService.setSplitTunnelExcludedApps(newSet.toList());
+    if (Platform.isWindows) {
+      await WindowsSplitTunnelSettings.saveProcesses(newSet);
+    } else {
+      await NativeVpnService.setSplitTunnelExcludedApps(newSet.toList());
+    }
     await _notifyReconnectHintIfNeeded(
       changeMessage: l10n.splitTunnelPresetGroupAddedApps(label, toAdd.length),
     );
@@ -331,7 +401,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    if (!Platform.isAndroid) {
+    if (!Platform.isAndroid && !Platform.isWindows) {
       return Scaffold(
         backgroundColor: const Color(0xFFF7F9FA),
         appBar: AppBar(
@@ -512,6 +582,36 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
                         ),
                       ),
                     ),
+                  if (_activeTabIndex == 0 && Platform.isWindows) ...[
+                    const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Container(
+                        decoration: GraniTheme.graniSurfaceDecoration(
+                          radius: 18,
+                          shadows: GraniTheme.surfaceControlShadow,
+                        ),
+                        child: TextField(
+                          controller: _processController,
+                          decoration: InputDecoration(
+                            hintText: l10n.splitTunnelWindowsProcessHint,
+                            prefixIcon:
+                                const Icon(Icons.desktop_windows, size: 22),
+                            suffixIcon: IconButton(
+                              tooltip: l10n.splitTunnelWindowsProcessAdd,
+                              icon: const Icon(Icons.add),
+                              onPressed: () =>
+                                  _addWindowsProcess(_processController.text),
+                            ),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 12),
+                          ),
+                          onSubmitted: _addWindowsProcess,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   Expanded(
                     child: _activeTabIndex == 0

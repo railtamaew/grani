@@ -9,69 +9,55 @@ class VpnShellUiHelpers {
   VpnShellUiHelpers._();
 
   static String friendlyProgressMessage(String? raw, AppLocalizations l10n) {
-    if (raw == null || raw.isEmpty) {
-      return l10n.vpnProgressConnecting;
-    }
-    if (raw.contains('проверка разрешений')) {
-      return l10n.vpnProgressVpnPermission;
-    }
-    if (raw.contains('проверка авторизации')) {
-      return l10n.vpnProgressAuthCheck;
-    }
-    if (raw.contains('выбор сервера')) {
-      return l10n.vpnProgressServerSelection;
-    }
-    if (raw.contains('регистрация устройства')) {
-      return l10n.vpnProgressDeviceRegistration;
-    }
-    if (raw.contains('получение конфигурации')) {
-      return l10n.vpnProgressConfigFetch;
-    }
-    if (raw.contains('обработка конфигурации')) {
-      return l10n.vpnProgressConfigProcessing;
-    }
-    if (raw.contains('создание VPN интерфейса')) {
-      return l10n.vpnProgressVpnInterface;
-    }
-    if (raw.contains('запуск протокола')) {
-      return l10n.vpnProgressProtocolStart;
-    }
-    if (raw.contains('проверка трафика')) {
-      return l10n.vpnProgressTrafficCheck;
-    }
-    if (raw.contains('подключено')) {
-      return l10n.vpnProgressConnected;
-    }
-    return raw;
+    return _localizedProgressMessage(raw, l10n);
   }
 
   static String simpleProgressMessage(String? raw, AppLocalizations l10n) {
+    return _localizedProgressMessage(raw, l10n);
+  }
+
+  static String _localizedProgressMessage(String? raw, AppLocalizations l10n) {
     if (raw == null || raw.isEmpty) return l10n.vpnProgressConnecting;
-    final value = raw.toLowerCase();
-    if (value.contains('проверяем доступ')) return l10n.vpnProgressAuthCheck;
-    if (value.contains('выбираем оптимальный сервер')) {
+    final value = raw.toLowerCase().replaceAll('ё', 'е');
+    if (value.contains('проверка разрешений') ||
+        value.contains('проверяем разрешение')) {
+      return l10n.vpnProgressVpnPermission;
+    }
+    if (value.contains('проверка авторизации') ||
+        value.contains('проверяем доступ')) {
+      return l10n.vpnProgressAuthCheck;
+    }
+    if (value.contains('выбор сервера') ||
+        value.contains('выбираем оптимальный сервер')) {
       return l10n.vpnProgressServerSelection;
     }
-    if (value.contains('регистрируем устройство')) {
+    if (value.contains('регистрация устройства') ||
+        value.contains('регистрируем устройство')) {
       return l10n.vpnProgressDeviceRegistration;
     }
-    if (value.contains('готовим защищенный профиль') ||
+    if (value.contains('получение конфигурации') ||
+        value.contains('готовим защищенный профиль') ||
         value.contains('восстанавливаем защищенный профиль')) {
       return l10n.vpnProgressConfigFetch;
     }
-    if (value.contains('проверяем параметры подключения')) {
+    if (value.contains('обработка конфигурации') ||
+        value.contains('проверяем параметры подключения')) {
       return l10n.vpnProgressConfigProcessing;
     }
-    if (value.contains('создаем защищенный туннель')) {
+    if (value.contains('создание vpn интерфейса') ||
+        value.contains('создаем защищенный туннель')) {
       return l10n.vpnProgressVpnInterface;
     }
-    if (value.contains('запускаем защищенный канал')) {
+    if (value.contains('запуск протокола') ||
+        value.contains('запускаем защищенный канал')) {
       return l10n.vpnProgressProtocolStart;
     }
-    if (value.contains('проверяем защищенный трафик')) {
+    if (value.contains('проверка трафика') ||
+        value.contains('проверяем защищенный трафик')) {
       return l10n.vpnProgressTrafficCheck;
     }
-    if (value.contains('соединение установлено')) {
+    if (value.contains('соединение установлено') ||
+        value.contains('подключено')) {
       return l10n.vpnProgressConnected;
     }
     if (value.contains('завершаем защищ')) {
@@ -84,17 +70,29 @@ class VpnShellUiHelpers {
     if (value.contains('пробуем оптимизировать маршрут')) {
       return l10n.vpnOptimizeRoute;
     }
-    if (value.contains('соединение может занять')) {
+    if (value.contains('продолжаем подключение') ||
+        value.contains('ждем ответ сети')) {
       return l10n.vpnSlowNetworkWarm;
     }
-    if (value.contains('восстановление связи занимает')) {
+    if (value.contains('соединение может занять') ||
+        value.contains('подключение занимает чуть')) {
+      return l10n.vpnSlowNetworkWarm;
+    }
+    if (value.contains('восстановление связи занимает') ||
+        value.contains('восстановление может занять')) {
       return l10n.vpnConnectPatienceWarm;
     }
-    if (value.contains('первичная настройка на медленной сети')) {
+    if (value.contains('первичная настройка на медленной сети') ||
+        value.contains('настройка может занять')) {
       return l10n.vpnConnectPatienceCold;
     }
-    if (value.contains('это нормально при медленной сети')) {
+    if (value.contains('это нормально при медленной сети') ||
+        value.contains('медленная сеть')) {
       return l10n.vpnSlowNetworkCold;
+    }
+    if (!l10n.localeName.toLowerCase().startsWith('ru') &&
+        _containsCyrillic(raw)) {
+      return l10n.vpnProgressConnecting;
     }
     return raw;
   }
@@ -106,7 +104,15 @@ class VpnShellUiHelpers {
       return l10n.vpnBadgeFastReconnect;
     }
     if (value.contains('первичная настройка')) return l10n.vpnBadgeFirstSetup;
+    if (!l10n.localeName.toLowerCase().startsWith('ru') &&
+        _containsCyrillic(raw)) {
+      return null;
+    }
     return raw;
+  }
+
+  static bool _containsCyrillic(String value) {
+    return RegExp(r'[А-Яа-яЁё]').hasMatch(value);
   }
 
   static String? connectionFlowBadge(

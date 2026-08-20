@@ -2,6 +2,7 @@ package com.granivpn.mobile
 
 import android.app.Application
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.os.IBinder
 import android.os.Process
@@ -9,6 +10,7 @@ import android.util.Log
 import com.LondonX.tun2socks.Tun2Socks
 import com.LondonX.tun2socks.Tun2Socks.LogLevel
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.system.exitProcess
 
 /**
  * Сервис tun2socks в отдельном процессе (:tun2socks).
@@ -18,11 +20,36 @@ import java.util.concurrent.atomic.AtomicBoolean
 class Tun2SocksProcessService : Service() {
     companion object {
         private const val TAG = "Tun2SocksProc"
+        private const val ACTION_FORCE_STOP =
+            "com.granivpn.mobile.action.FORCE_STOP_TUN2SOCKS"
+        private const val FORCE_KILL_DELAY_MS = 120L
         // Throughput mode for unstable UDP/443 environments:
         // disable UDP forwarding at tun2socks boundary to prevent
         // endless UDP->blocked->redial loops that starve TCP dataplane.
         private const val GLOBAL_UDP_REDIAL_GUARD_ENABLED = false
         private const val UDP_GUARD_MARKER = "udp_redial_guard_v1_2026_05_08"
+
+        @JvmStatic
+        fun requestForceStop(context: Context, source: String, reason: String) {
+            val app = context.applicationContext
+            val intent = Intent(app, Tun2SocksProcessService::class.java).apply {
+                action = ACTION_FORCE_STOP
+                putExtra("source", source)
+                putExtra("reason", reason)
+                putExtra("confirmed_stop_vpn", true)
+            }
+            try {
+                app.startService(intent)
+            } catch (e: Exception) {
+                Log.w(TAG, "requestForceStop startService failed source=$source: ${e.message}")
+            }
+            try {
+                val stopped = app.stopService(Intent(app, Tun2SocksProcessService::class.java))
+                Log.i(TAG, "requestForceStop stopService result=$stopped source=$source reason=$reason")
+            } catch (e: Exception) {
+                Log.w(TAG, "requestForceStop stopService failed source=$source: ${e.message}")
+            }
+        }
     }
 
     private val binder = object : ITun2SocksProcess.Stub() {
@@ -31,12 +58,15 @@ class Tun2SocksProcessService : Service() {
             mtu: Int,
             socksAddress: String?,
             socksPort: Int
-        ) {
+        ): Boolean {
             if (tunFd == null || socksAddress.isNullOrBlank()) {
                 Log.e(TAG, "startTun2Socks: tunFd или socksAddress пусты")
-                return
+                try {
+                    tunFd?.close()
+                } catch (_: Exception) { }
+                return false
             }
-            startTun2SocksInternal(tunFd, mtu, socksAddress, socksPort)
+            return startTun2SocksInternal(tunFd, mtu, socksAddress, socksPort)
         }
 
         override fun stopTun2Socks(source: String?, reason: String?, confirmedStopVpn: Boolean) {
@@ -59,17 +89,44 @@ class Tun2SocksProcessService : Service() {
     @Volatile
     private var lastStopConfirmed: Boolean = false
 
-    override fun onBind(intent: Intent?): IBinder = binder
+    override fun onCreate() {
+        super.onCreate()
+        Log.i(TAG, "onCreate: lightweight worker ready pid=${Process.myPid()}")
+    }
+
+    override fun onBind(intent: Intent?): IBinder {
+        Log.i(TAG, "onBind: binder published pid=${Process.myPid()}")
+        return binder
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_FORCE_STOP) {
+            lastStopSource = intent.getStringExtra("source") ?: "force_stop"
+            lastStopReason = intent.getStringExtra("reason") ?: "force_stop"
+            lastStopConfirmed = intent.getBooleanExtra("confirmed_stop_vpn", true)
+            Log.w(
+                TAG,
+                "onStartCommand: force stop requested startId=$startId " +
+                    "source=$lastStopSource reason=$lastStopReason confirmed=$lastStopConfirmed",
+            )
+            stopTun2SocksInternal(forceKill = true)
+            return START_NOT_STICKY
+        }
+        return START_NOT_STICKY
+    }
 
     private fun startTun2SocksInternal(
         tunFd: android.os.ParcelFileDescriptor,
         mtu: Int,
         socksAddress: String,
         socksPort: Int
-    ) {
+    ): Boolean {
         if (!running.compareAndSet(false, true)) {
-            Log.w(TAG, "tun2socks уже запущен, пропуск")
-            return
+            Log.w(TAG, "tun2socks уже запущен; новый TUN отклонён")
+            try {
+                tunFd.close()
+            } catch (_: Exception) { }
+            return false
         }
         tun2socksThread = Thread({
             try {
@@ -106,12 +163,77 @@ class Tun2SocksProcessService : Service() {
                 running.set(false)
             }
         }, "tun2socks-remote").apply { start() }
+        return true
     }
 
-    private fun stopTun2SocksInternal() {
-        running.set(false)
-        tun2socksThread?.join(2000)
+    private fun stopTun2SocksInternal(forceKill: Boolean = lastStopConfirmed) {
+        val thread = tun2socksThread
+        if (thread != null) {
+            try {
+                thread.interrupt()
+                thread.join(600)
+                if (thread.isAlive) {
+                    Log.w(
+                        TAG,
+                        "stopTun2Socks: thread still alive after 600ms; force kill :tun2socks process",
+                    )
+                    scheduleProcessKill("thread_alive_after_stop", FORCE_KILL_DELAY_MS)
+                } else {
+                    running.set(false)
+                }
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                Log.w(TAG, "stopTun2Socks interrupted: ${e.message}")
+                scheduleProcessKill("stop_interrupted", FORCE_KILL_DELAY_MS)
+            }
+        } else {
+            running.set(false)
+        }
         tun2socksThread = null
+        stopSelf()
+        if (forceKill) {
+            scheduleProcessKill("confirmed_stop", FORCE_KILL_DELAY_MS)
+        }
+    }
+
+    private fun scheduleProcessKill(source: String, delayMs: Long) {
+        Thread {
+            try {
+                if (delayMs > 0L) {
+                    Thread.sleep(delayMs)
+                }
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            killTun2SocksProcess(source)
+        }.apply {
+            name = "tun2socks-force-kill"
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun killTun2SocksProcess(source: String) {
+        val processName = try {
+            Application.getProcessName()
+        } catch (_: Exception) {
+            null
+        }
+        if (processName?.endsWith(":tun2socks") == true) {
+            Log.w(
+                TAG,
+                "force killProcess for $processName pid=${Process.myPid()} " +
+                    "source=$source last_source=$lastStopSource reason=$lastStopReason " +
+                    "confirmed_stop_vpn=$lastStopConfirmed running=${running.get()}",
+            )
+            Process.killProcess(Process.myPid())
+            exitProcess(0)
+        } else {
+            Log.w(
+                TAG,
+                "skip force killProcess source=$source unexpected processName=$processName pid=${Process.myPid()}",
+            )
+        }
     }
 
     override fun onDestroy() {
@@ -130,6 +252,7 @@ class Tun2SocksProcessService : Service() {
                     "source=$lastStopSource reason=$lastStopReason confirmed_stop_vpn=$lastStopConfirmed",
             )
             Process.killProcess(Process.myPid())
+            exitProcess(0)
         } else {
             Log.w(
                 TAG,

@@ -19,14 +19,45 @@ class EntitlementPushContract {
     'logout',
     'auth_lost',
     'device_limit',
+    'device_limit_exceeded',
     'device_revoked',
   };
 
+  static const Set<String> deviceLimitEvents = {
+    'device_limit',
+    'device_limit_exceeded',
+  };
+
   static const Set<String> accessGrantedEvents = {
+    'payment_completed',
     'trial_activated',
     'subscription_activated',
     accessChanged,
   };
+
+  static bool mapRequestsDeviceLogout(Map<String, dynamic> data) {
+    final event = data['event']?.toString().trim();
+    final reason = data[reasonKey]?.toString().trim();
+    if (event == 'device_revoked' || reason == 'device_revoked') {
+      return true;
+    }
+    final logout = data['logout']?.toString().trim().toLowerCase();
+    final cleanup = data['cleanup']?.toString().trim().toLowerCase();
+    return logout == 'true' || cleanup == 'true';
+  }
+
+  static bool mapReportsDeviceLimit(Map<String, dynamic> data) {
+    final event = data['event']?.toString().trim();
+    final reason = data[reasonKey]?.toString().trim();
+    final code = data['code']?.toString().trim();
+    final showDeviceLimit =
+        data['show_device_limit']?.toString().trim().toLowerCase();
+    return deviceLimitEvents.contains(event) ||
+        reason == 'device_limit' ||
+        reason == 'device_limit_exceeded' ||
+        code == 'DEVICE_LIMIT_EXCEEDED' ||
+        showDeviceLimit == 'true';
+  }
 
   /// Все значения data в FCM — строки.
   static bool mapRequestsVpnStop(Map<String, dynamic> data) {

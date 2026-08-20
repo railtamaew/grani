@@ -27,6 +27,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import java.util.concurrent.FutureTask
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.HttpsURLConnection
 
@@ -39,7 +40,7 @@ class GraniVpnService : android.net.VpnService() {
     companion object {
         private const val TAG = "GraniVpnService"
         /** Вручную/скриптом sync_versions.sh перед релизной сборкой; flutter build apk сам не обновляет. */
-        private const val CODE_VERSION = "2026-06-18-v26-0758017"
+        private const val CODE_VERSION = "2026-07-29-v34-f3e53f9"
         private const val RUNTIME_STOP_GUARD_MARKER = "2026-04-30-runtime-stop-guard-v1"
         private const val VPN_ADDRESS = "10.0.0.2"
         private const val VPN_ROUTE = "0.0.0.0"
@@ -69,41 +70,46 @@ class GraniVpnService : android.net.VpnService() {
         private const val AUTO_RESTART_LIMIT = 3
         /** Если переподключение произошло в течение этого времени (мс), даём задержку перед establish(). */
         private const val RECONNECT_WINDOW_MS = 5000L
-        /** Дебаунс смены сети (избегаем гонок Wi‑Fi ↔ LTE; 500–800 ms). */
+        /** Debounce raw Android callbacks; the policy adds a separate loss grace. */
         private const val NETWORK_CHANGE_DEBOUNCE_MS = 600L
+        private const val NETWORK_HANDOVER_GRACE_MS = 900L
+        private const val NETWORK_HANDOVER_PROBE_RETRY_GAP_MS = 800L
         private const val NETWORK_RECONNECT_MIN_INTERVAL_MS = 2000L
         /** Post-connect HTTP probes: English-only log tag for logcat / client log export. */
         private const val CONNECTIVITY_PROBE_LOG = "[CONNECTIVITY_PROBE]"
         private const val PROBE_API_HEALTH_URL = "https://api.granilink.com/health"
         /**
-         * Public internet: try several endpoints (HTTP captive check first — avoids TLS quirks;
-         * then HTTPS gstatic; then example.com which is typically routed via proxy like user traffic).
+         * Public internet: start with Android/captive endpoints that usually
+         * answer quickly on mobile networks. 1.1.1.1 is useful diagnostically,
+         * but in restricted mobile states it often burns the whole timeout, so
+         * keep it as the last fallback.
          */
         private val PROBE_PUBLIC_CANDIDATES: List<Pair<String, String>> = listOf(
-            "http://1.1.1.1/" to "cloudflare_ip_http",
             "http://connectivitycheck.gstatic.com/generate_204" to "captive_http",
             "https://www.gstatic.com/generate_204" to "gstatic_https",
             "https://example.com/" to "example_https",
+            "http://1.1.1.1/" to "cloudflare_ip_http",
         )
-        private const val PROBE_CONNECT_TIMEOUT_MS = 6500
-        private const val PROBE_READ_TIMEOUT_MS = 6500
+        private const val PROBE_CONNECT_TIMEOUT_MS = 2500
+        private const val PROBE_READ_TIMEOUT_MS = 2500
         /** Tun2socks + routing stabilization before probing (was 400 ms; too early on some OEMs). */
         private const val PROBE_START_DELAY_MS = 1400L
         private const val PROBE_RETRY_GAP_MS = 400L
         private const val PROBE_DEGRADED_RETRY_GAP_MS = 10_000L
         private const val PROBE_DEGRADED_MAX_RETRIES = 6
-        private const val DIAG_APP_CONFLICT_A_DISABLE_NETWORK_CALLBACK = true
+        private const val NETWORK_HANDOVER_MONITOR_ENABLED = true
         private const val DIAG_APP_CONFLICT_A_DISABLE_POST_CONNECT_PROBES = false
         // Diagnostic mode: ensure split-domain prefs do not affect routing.
         private const val FORCE_NEUTRAL_SPLIT_DOMAINS = true
         private const val MTU_WIFI = 1500
         private const val MTU_MOBILE = 1280
         private const val MTU_DEFAULT = 1420
-        /** Базово 200 ms. Oplus (OPPO/OnePlus/realme) — 400 ms для стабильной маршрутизации. */
+        /**
+         * Короткая универсальная пауза после подтверждённого teardown.
+         * Состояние runtime, а не бренд устройства, является источником истины.
+         */
         private fun getReconnectDelayMs(): Long {
-            val mfr = Build.MANUFACTURER.uppercase()
-            if (mfr.contains("OPPO") || mfr.contains("ONEPLUS") || mfr.contains("REALME")) return 400L
-            return 200L
+            return 150L
         }
 
         // Статический контекст для использования когда сервис создан напрямую
@@ -161,14 +167,20 @@ class GraniVpnService : android.net.VpnService() {
         }
 
         fun forceStopIfRunning(context: Context, source: String, reason: String) {
-            if (!NativeVpnRuntimeState.isNativeVpnLikelyActive(context.applicationContext)) return
+            if (!isNativeTunnelActiveOrClosing()) return
             stopService(context.applicationContext, source = source, reason = reason)
             val deadline = SystemClock.elapsedRealtime() + 2600L
             while (
-                NativeVpnRuntimeState.isNativeVpnLikelyActive(context.applicationContext) &&
+                isNativeTunnelActiveOrClosing() &&
                 SystemClock.elapsedRealtime() < deadline
             ) {
-                Thread.sleep(100L)
+                try {
+                    Thread.sleep(100L)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    Log.w(TAG, "forceStopIfRunning interrupted source=$source reason=$reason")
+                    break
+                }
             }
         }
 
@@ -182,19 +194,89 @@ class GraniVpnService : android.net.VpnService() {
 
         @Volatile
         private var lastStartErrorSnapshot: String? = null
+        @Volatile
+        private var lastStartErrorSessionSnapshot: String? = null
 
         private fun clearLastStartErrorSnapshot() {
             lastStartErrorSnapshot = null
+            lastStartErrorSessionSnapshot = null
         }
 
-        private fun recordLastStartError(error: String?) {
+        private fun recordLastStartError(error: String?, sessionId: String?) {
             lastStartErrorSnapshot = error
+            lastStartErrorSessionSnapshot = sessionId?.trim()?.takeIf { it.isNotEmpty() }
         }
 
         fun isVpnRunning(): Boolean = instance?.isVpnRunning() == true
         fun isVpnCommitted(): Boolean = instance?.isVpnCommitted() == true
+        fun isNativeTunnelActiveOrClosing(): Boolean = instance?.isNativeTunnelActiveOrClosing() == true
+        fun hasServiceInstance(): Boolean = instance != null
 
-        fun getLastStartError(): String? = instance?.lastStartError ?: lastStartErrorSnapshot
+        /**
+         * Terminal-start failures can race the service state callback: the
+         * contract may already say OFF while the foreground service, TUN or
+         * Hysteria bridge is still alive. In that state forceStopIfRunning()
+         * used to return early and the stale notification/runtime blocked the
+         * next protocol. Stop the actual service instance first, then use
+         * Context.stopService and notification cancellation as a final fence.
+         */
+        fun forceStopAfterTerminalFailure(context: Context, source: String, reason: String) {
+            val app = context.applicationContext
+            if (instance != null) {
+                try {
+                    stopService(app, source = source, reason = reason)
+                } catch (e: Exception) {
+                    Log.w(TAG, "forceStopAfterTerminalFailure ordered stop failed source=$source", e)
+                }
+                val deadline = SystemClock.elapsedRealtime() + 2800L
+                while (instance != null && SystemClock.elapsedRealtime() < deadline) {
+                    try {
+                        Thread.sleep(100L)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        break
+                    }
+                }
+            }
+            if (instance != null) {
+                try {
+                    val stopped = app.stopService(Intent(app, GraniVpnService::class.java))
+                    Log.w(TAG, "forceStopAfterTerminalFailure hard stop result=$stopped source=$source")
+                } catch (e: Exception) {
+                    Log.w(TAG, "forceStopAfterTerminalFailure hard stop failed source=$source", e)
+                }
+            }
+            try {
+                val manager = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                manager.cancel(NOTIFICATION_ID)
+            } catch (e: Exception) {
+                Log.w(TAG, "forceStopAfterTerminalFailure notification cancel failed source=$source", e)
+            }
+        }
+
+        fun reconcileForegroundNotification(context: Context, source: String) {
+            val service = instance
+            if (service == null || !service.isNativeTunnelActiveOrClosing()) return
+            service.reconcileForegroundNotification(source)
+        }
+
+        fun getLastStartError(connectionSessionId: String? = null): String? {
+            val requestedSession = connectionSessionId?.trim()?.takeIf { it.isNotEmpty() }
+            val service = instance
+            val error = service?.lastStartError ?: lastStartErrorSnapshot
+            val errorSession = service?.lastStartErrorSessionId ?: lastStartErrorSessionSnapshot
+            if (requestedSession != null &&
+                !errorSession.isNullOrBlank() &&
+                errorSession != requestedSession
+            ) {
+                Log.i(
+                    TAG,
+                    "ignore stale start error requested_session=$requestedSession error_session=$errorSession",
+                )
+                return null
+            }
+            return error
+        }
 
         fun getTrafficStatsSnapshot(): Map<String, Long> {
             return instance?.getTrafficStats() ?: mapOf("rx_bytes" to 0L, "tx_bytes" to 0L)
@@ -206,7 +288,7 @@ class GraniVpnService : android.net.VpnService() {
         /** Снимок для EventChannel при подписке (без лишнего polling из Dart). */
         fun peekStateForFlutter(): Pair<Boolean, String> {
             val i = instance ?: return false to "idle"
-        return i.isVpnCommitted() to i.serviceState.name.lowercase(Locale.US)
+            return i.isVpnCommitted() to i.serviceState.name.lowercase(Locale.US)
         }
     }
 
@@ -214,9 +296,12 @@ class GraniVpnService : android.net.VpnService() {
     private var isRunning = false
     @Volatile
     private var lastStartError: String? = null
+    @Volatile
+    private var lastStartErrorSessionId: String? = null
     private var currentProtocol: VpnProtocol? = null
     private var currentAdapter: VpnAdapter? = null
     private var xrayNativeWrapper: XrayNativeWrapperTun2Socks? = null
+    @Volatile
     private var hysteria2Runtime: Hysteria2ProcessWrapper? = null
     @Volatile
     private var lastEffectiveOutbounds: String? = null
@@ -233,6 +318,7 @@ class GraniVpnService : android.net.VpnService() {
     private var lastConfig: String? = null
     private var lastProtocol: String? = null
     private var lastMtu: Int = 0
+    private var lastStartSource: String = "unknown"
     /** Последний известный connection_session_id (Flutter или prefs) для handover и корреляции логов. */
     @Volatile
     private var lastConnectionSessionId: String? = null
@@ -240,8 +326,11 @@ class GraniVpnService : android.net.VpnService() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var networkEvalRunnable: Runnable? = null
-    @Volatile
-    private var lastUnderlyingNetworkType: String? = null
+    private val networkHandoverPolicy = UnderlyingNetworkHandoverPolicy(
+        graceMs = NETWORK_HANDOVER_GRACE_MS,
+        failuresBeforeReconnect = 2,
+    )
+    private val networkHandoverProbeInProgress = AtomicBoolean(false)
     @Volatile
     private var networkReconnectInProgress = false
     @Volatile
@@ -257,13 +346,100 @@ class GraniVpnService : android.net.VpnService() {
 
     private fun setServiceState(s: ServiceState) {
         serviceState = s
-        Log.d(TAG, "serviceState=$s")
+        val protocol = expectedNativeProtocolLabel()
+        val sessionId = lastConnectionSessionId ?: loadPersistedSessionId()
+        Log.d(TAG, "serviceState=$s protocol=${protocol ?: "unknown"} session=${sessionId ?: "none"}")
         if (s == ServiceState.LOCAL_UP || s == ServiceState.DATAPLANE_VERIFIED || s == ServiceState.COMMITTED) {
             VpnNativeStateEmitter.maybeStartTrafficTicks()
         } else {
             VpnNativeStateEmitter.stopTrafficTicks()
         }
+        syncRuntimeStateFromService(s, protocol, sessionId)
+        updateNotificationForState(s)
         VpnNativeStateEmitter.emit(isVpnRunning(), s.name.lowercase(Locale.US))
+    }
+
+    private fun syncRuntimeStateFromService(
+        s: ServiceState,
+        protocol: String?,
+        sessionId: String?,
+    ) {
+        val source = lastStartSource.ifBlank { "grani_vpn_service" }
+        when (s) {
+            ServiceState.PREPARE -> ProtocolRuntimeContract.markConnecting(
+                applicationContext,
+                backend = "native",
+                protocol = protocol,
+                sessionId = sessionId,
+                source = source,
+            )
+            ServiceState.LOCAL_UP -> ProtocolRuntimeContract.markLocalUp(
+                applicationContext,
+                backend = "native",
+                protocol = protocol,
+                sessionId = sessionId,
+                source = source,
+            )
+            ServiceState.DATAPLANE_VERIFIED -> ProtocolRuntimeContract.markVerified(
+                applicationContext,
+                backend = "native",
+                protocol = protocol,
+                sessionId = sessionId,
+                source = source,
+            )
+            ServiceState.COMMITTED -> ProtocolRuntimeContract.markConnected(
+                applicationContext,
+                backend = "native",
+                protocol = protocol,
+                sessionId = sessionId,
+                source = source,
+            )
+            ServiceState.DISCONNECTING -> ProtocolRuntimeContract.markDisconnecting(
+                applicationContext,
+                backend = "native",
+                protocol = protocol,
+                sessionId = sessionId,
+                source = source,
+            )
+            ServiceState.ERROR -> ProtocolRuntimeContract.markError(
+                applicationContext,
+                backend = "native",
+                protocol = protocol,
+                sessionId = sessionId,
+                source = source,
+                error = lastStartError ?: "native_runtime_error",
+            )
+            ServiceState.IDLE -> {
+                if (!NativeVpnRuntimeState.isAwgLikelyActive(applicationContext)) {
+                    ProtocolRuntimeContract.markOff(
+                        applicationContext,
+                        source = source,
+                        reason = "native_idle",
+                        sessionId = sessionId,
+                    )
+                }
+            }
+        }
+        Log.i(
+            TAG,
+            "[VPN_RUNTIME] owner=grani backend=native status=${s.name.lowercase(Locale.US)} " +
+                "protocol=${protocol ?: "unknown"} session=${sessionId ?: "none"} source=$source",
+        )
+        ProtocolRuntimeContract.emitServiceState(
+            applicationContext,
+            serviceState = s.name.lowercase(Locale.US),
+            backend = "native",
+            protocol = protocol,
+            sessionId = sessionId,
+            source = source,
+            error = if (s == ServiceState.ERROR) lastStartError else null,
+            details = mapOf(
+                "service_state" to s.name.lowercase(Locale.US),
+                "is_running" to isRunning,
+                "committed" to isVpnCommitted(),
+                "native_active_or_closing" to isNativeTunnelActiveOrClosing(),
+            ),
+        )
     }
 
     override fun onCreate() {
@@ -271,10 +447,10 @@ class GraniVpnService : android.net.VpnService() {
         instance = this
         appContext = applicationContext
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        if (DIAG_APP_CONFLICT_A_DISABLE_NETWORK_CALLBACK) {
-            Log.i(TAG, "[APP_CONFLICT_A] native NetworkCallback disabled")
-        } else {
+        if (NETWORK_HANDOVER_MONITOR_ENABLED) {
             registerUnderlyingNetworkCallback()
+        } else {
+            Log.i(TAG, "[NET_MONITOR] disabled by build flag")
         }
         Log.d(TAG, "GraniVpnService создан")
     }
@@ -283,6 +459,8 @@ class GraniVpnService : android.net.VpnService() {
         unregisterUnderlyingNetworkCallback()
         networkEvalRunnable?.let { mainHandler.removeCallbacks(it) }
         networkEvalRunnable = null
+        networkHandoverPolicy.reset()
+        networkHandoverProbeInProgress.set(false)
         if (xrayNativeWrapper != null) {
             stopXrayFull()
         }
@@ -296,27 +474,37 @@ class GraniVpnService : android.net.VpnService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        if (isRunning && !lastConfig.isNullOrEmpty()) {
-            val sid = lastConnectionSessionId ?: loadPersistedSessionId()
-            // Task removed не является crash-сценарием: не учитываем в circuit breaker,
-            // чтобы закрытие/свайп приложения не ломало удержание рабочего туннеля.
-            Log.i(TAG, "onTaskRemoved: задача удалена при активном VPN — сохраняем туннель и перезапускаем сервис")
+        if (orderedStopInProgress.get() || serviceState == ServiceState.DISCONNECTING || wasIntentionallyStopped()) {
             Log.i(
                 TAG,
-                "[RESTART_TRACE] schedule source=task_removed_restart reason=task_removed connection_session_id=${sid ?: "null"}",
+                "onTaskRemoved: skip restart while stopping state=$serviceState " +
+                    "ordered_stop=${orderedStopInProgress.get()} intentionally_stopped=${wasIntentionallyStopped()}",
             )
-            val restartIntent = Intent(applicationContext, GraniVpnService::class.java).apply {
-                action = ACTION_START
-                putExtra(EXTRA_CONFIG, lastConfig)
-                if (!lastProtocol.isNullOrBlank()) putExtra(EXTRA_PROTOCOL, lastProtocol)
-                if (lastMtu > 0) putExtra(EXTRA_MTU, lastMtu)
-                putExtra(EXTRA_SOURCE, "task_removed_restart")
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(restartIntent)
-            } else {
-                startService(restartIntent)
-            }
+            return
+        }
+        if (isRunning && !lastConfig.isNullOrEmpty()) {
+            val sid = lastConnectionSessionId ?: loadPersistedSessionId()
+            // Task removed is just UI removal. Keep the foreground VPN service
+            // alive instead of starting a second START over the active tunnel.
+            Log.i(TAG, "onTaskRemoved: задача удалена при активном VPN — сохраняем foreground-туннель без restart")
+            Log.i(
+                TAG,
+                "[RESTART_TRACE] skipped source=task_removed_keepalive reason=ui_task_removed connection_session_id=${sid ?: "null"}",
+            )
+            lastStartSource = "task_removed_keepalive"
+            xrayNativeWrapper?.noteTaskRemovedKeepalive("task_removed_keepalive")
+            ensureForegroundWithNotification(createNotification(notificationTextForState(serviceState)))
+            ProtocolRuntimeContract.markConnected(
+                applicationContext,
+                backend = "native",
+                protocol = expectedNativeProtocolLabel(),
+                sessionId = sid,
+                source = "task_removed_keepalive",
+            )
+            refreshQuickTile()
+            scheduleQuickTileRefresh(1200L)
+            scheduleForegroundReconcile(1000L, "task_removed_keepalive")
+            scheduleForegroundReconcile(3000L, "task_removed_keepalive")
         }
     }
 
@@ -329,13 +517,14 @@ class GraniVpnService : android.net.VpnService() {
                     serviceState == ServiceState.PREPARE ||
                     serviceState == ServiceState.LOCAL_UP ||
                     serviceState == ServiceState.DATAPLANE_VERIFIED ||
-                    serviceState == ServiceState.COMMITTED
+                    serviceState == ServiceState.COMMITTED ||
+                    serviceState == ServiceState.DISCONNECTING
                 ) {
                     Log.i(
                         TAG,
                         "onStartCommand: start_ignored_busy_state source=$startSource state=$serviceState isRunning=$isRunning",
                     )
-                    ensureForegroundWithNotification(createNotification())
+                    ensureForegroundWithNotification(createNotification(notificationTextForState(serviceState)))
                     refreshQuickTile()
                     return START_STICKY
                 }
@@ -354,6 +543,8 @@ class GraniVpnService : android.net.VpnService() {
                 )
                 if (config.isNullOrEmpty()) {
                     Log.e(TAG, "onStartCommand: ❌ конфигурация отсутствует")
+                    setStartError("missing_config")
+                    setServiceState(ServiceState.ERROR)
                     stopSelf()
                     return START_NOT_STICKY
                 }
@@ -363,14 +554,16 @@ class GraniVpnService : android.net.VpnService() {
                 lastConfig = config
                 lastProtocol = protocolHint
                 lastMtu = if (mtuExtra > 0) mtuExtra else 0
+                lastStartSource = startSource
                 Log.d(TAG, "onStartCommand: Конфигурация получена, длина=${config.length}, mtu=$mtuExtra")
                 Log.d(TAG, "onStartCommand: Подсказка протокола: ${protocolHint ?: "null"}")
                 Log.i(TAG, "onStartCommand: start_source=$startSource")
 
-                ensureForegroundWithNotification(createNotification())
+                ensureForegroundWithNotification(createNotification(getString(R.string.vpn_notification_connecting)))
                 val success = startVpn(config, protocolHint, if (mtuExtra > 0) mtuExtra else null)
                 if (!success) {
                     Log.e(TAG, "onStartCommand: старт VPN не удался")
+                    setServiceState(ServiceState.ERROR)
                     stopSelf()
                 } else {
                     saveConfigToPreferences(config, protocolHint)
@@ -390,11 +583,21 @@ class GraniVpnService : android.net.VpnService() {
                     TAG,
                     "[DISCONNECT_TRACE] source=$stopSource reason=$stopReason connection_session_id=${lastConnectionSessionId ?: "null"}",
                 )
+                lastStartSource = stopSource
+                ensureForegroundWithNotification(createNotification(getString(R.string.vpn_notification_disconnecting)))
                 setIntentionallyStopped(true)
                 orderedStopInProgress.set(true)
-                stopVpn()
-                refreshQuickTile()
-                stopSelf()
+                val stopStartId = startId
+                Thread({
+                    try {
+                        stopVpn()
+                        refreshQuickTile()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "ACTION_STOP async teardown failed: ${e.message}", e)
+                    } finally {
+                        stopSelf(stopStartId)
+                    }
+                }, "grani-vpn-stop").start()
                 return START_NOT_STICKY
             }
             ACTION_APPLY_ROUTING_HOTSWAP -> {
@@ -418,7 +621,7 @@ class GraniVpnService : android.net.VpnService() {
                         "[AUTO_RESTART_CB] block source=sticky_restart connection_session_id=${sid ?: "null"}",
                     )
                     setIntentionallyStopped(true)
-                    lastStartError = "Auto-restart blocked by circuit breaker (sticky_restart)"
+                    setStartError("Auto-restart blocked by circuit breaker (sticky_restart)")
                     setServiceState(ServiceState.ERROR)
                     ensureForegroundWithNotification(createRecoveryNotification())
                     stopSelf()
@@ -441,6 +644,7 @@ class GraniVpnService : android.net.VpnService() {
                     lastConfig = saved.config
                     lastProtocol = saved.protocol
                     lastMtu = if (saved.mtu > 0) saved.mtu else 0
+                    lastStartSource = "sticky_restart"
                     val success = startVpn(
                         saved.config,
                         saved.protocol,
@@ -540,6 +744,30 @@ class GraniVpnService : android.net.VpnService() {
         }
     }
 
+    private fun updateNotificationForState(state: ServiceState) {
+        if (state == ServiceState.IDLE) return
+        updateNotificationContent(notificationTextForState(state))
+    }
+
+    private fun notificationTextForState(state: ServiceState): String {
+        return when (state) {
+            ServiceState.PREPARE -> getString(R.string.vpn_notification_connecting)
+            ServiceState.LOCAL_UP -> getString(R.string.vpn_notification_connecting)
+            ServiceState.DATAPLANE_VERIFIED,
+            ServiceState.COMMITTED -> getString(R.string.vpn_notification_connected)
+            ServiceState.DISCONNECTING -> getString(R.string.vpn_notification_disconnecting)
+            ServiceState.ERROR -> getString(R.string.vpn_notification_error)
+            ServiceState.IDLE -> getString(R.string.vpn_notification_recovering)
+        }
+    }
+
+    private fun reconcileForegroundNotification(source: String) {
+        Log.i(TAG, "[VPN_RUNTIME] reconcile_foreground_notification source=$source state=$serviceState")
+        if (serviceState != ServiceState.IDLE) {
+            updateNotificationForState(serviceState)
+        }
+    }
+
     enum class VpnProtocol {
         XRAY,
         HYSTERIA2
@@ -550,6 +778,72 @@ class GraniVpnService : android.net.VpnService() {
     @Volatile
     private var vpnStartTs: Long = 0L
 
+    private fun currentConnectionSessionId(): String? =
+        lastConnectionSessionId ?: loadPersistedSessionId()
+
+    private fun clearStartError() {
+        lastStartError = null
+        lastStartErrorSessionId = null
+        clearLastStartErrorSnapshot()
+    }
+
+    private fun setStartError(error: String?) {
+        val sid = currentConnectionSessionId()
+        lastStartError = error
+        lastStartErrorSessionId = sid
+        recordLastStartError(error, sid)
+    }
+
+    private fun handleRuntimeFailureForSession(
+        reason: String,
+        source: String,
+        sessionId: String?,
+    ) {
+        val expectedSession = sessionId?.trim()?.takeIf { it.isNotEmpty() }
+        val currentSession = currentConnectionSessionId()
+        val sharedSnapshot = NativeVpnRuntimeState.getRuntimeSnapshot(applicationContext)
+        val sharedSession = sharedSnapshot.sessionId?.trim()?.takeIf { it.isNotEmpty() }
+        if (expectedSession != null &&
+            currentSession != null &&
+            expectedSession != currentSession
+        ) {
+            Log.i(
+                TAG,
+                "[RUNTIME_FAIL_STALE] source=$source reason=$reason " +
+                    "failure_session=$expectedSession current_session=$currentSession state=$serviceState",
+            )
+            return
+        }
+        if (expectedSession != null &&
+            sharedSession != null &&
+            expectedSession != sharedSession
+        ) {
+            Log.i(
+                TAG,
+                "[RUNTIME_FAIL_STALE_SHARED] source=$source reason=$reason " +
+                    "failure_session=$expectedSession shared_session=$sharedSession " +
+                    "shared_backend=${sharedSnapshot.backend ?: "unknown"} " +
+                    "shared_status=${sharedSnapshot.status}",
+            )
+            return
+        }
+        // GraniVpnService owns VLESS/Hysteria. A late callback from either
+        // engine must never tear down or poison the shared contract after the
+        // user has already switched to the independent AmneziaWG runtime.
+        if (sharedSnapshot.backend?.equals("amneziawg", ignoreCase = true) == true &&
+            sharedSnapshot.awgLikelyActive
+        ) {
+            Log.i(
+                TAG,
+                "[RUNTIME_FAIL_STALE_OWNER] source=$source reason=$reason " +
+                    "failure_session=${expectedSession ?: "null"} " +
+                    "shared_session=${sharedSession ?: "null"} shared_status=${sharedSnapshot.status}",
+            )
+            return
+        }
+        handleRuntimeFailure(reason, source)
+    }
+
     fun startVpn(config: String, protocolHint: String? = null, mtu: Int? = null): Boolean {
         vpnStartTs = System.currentTimeMillis()
         Log.i(TAG, "startVpn: ========== ЗАПУСК VPN (ВЕРСИЯ КОДА: $CODE_VERSION) ==========")
@@ -558,8 +852,7 @@ class GraniVpnService : android.net.VpnService() {
         Log.d(TAG, "startVpn: Превью конфигурации: ${VpnLogRedaction.previewRedacted(config, 200)}")
         Log.d(TAG, "startVpn: Подсказка протокола: ${protocolHint ?: "null"}")
 
-        lastStartError = null
-        clearLastStartErrorSnapshot()
+        clearStartError()
         
         if (isRunning) {
             Log.w(TAG, "VPN уже запущен")
@@ -595,8 +888,7 @@ class GraniVpnService : android.net.VpnService() {
             val started = adapter.start(config)
             if (!started) {
                 Log.e(TAG, "startVpn: Не удалось запустить VPN через адаптер")
-                lastStartError = "Не удалось запустить VPN через адаптер"
-                recordLastStartError(lastStartError)
+                setStartError("Не удалось запустить VPN через адаптер")
                 currentAdapter = null
                 currentProtocol = null
                 return false
@@ -605,8 +897,7 @@ class GraniVpnService : android.net.VpnService() {
             return true
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка запуска VPN: ${e.message}", e)
-            lastStartError = e.message ?: "Ошибка запуска VPN"
-            recordLastStartError(lastStartError)
+            setStartError(e.message ?: "Ошибка запуска VPN")
             return false
         }
     }
@@ -716,7 +1007,7 @@ class GraniVpnService : android.net.VpnService() {
         try {
             setServiceState(ServiceState.DISCONNECTING)
             isRunning = false
-            lastStartError = null
+            clearStartError()
             try {
                 VpnCircuitBreaker.reset()
             } catch (_: Exception) {
@@ -766,17 +1057,35 @@ class GraniVpnService : android.net.VpnService() {
         }, delayMs)
     }
 
+    private fun scheduleForegroundReconcile(delayMs: Long, source: String) {
+        mainHandler.postDelayed({
+            if (!isNativeTunnelActiveOrClosing()) return@postDelayed
+            Log.i(
+                TAG,
+                "[VPN_RUNTIME] delayed_foreground_reconcile source=$source delay_ms=$delayMs state=$serviceState",
+            )
+            ensureForegroundWithNotification(createNotification(notificationTextForState(serviceState)))
+            reconcileForegroundNotification("${source}_delayed_${delayMs}ms")
+            refreshQuickTile()
+        }, delayMs)
+    }
+
     /**
      * Не снимаем foreground-уведомление мгновенно: ждём короткое окно, пока TUN реально закроется.
      * Иначе в UI может исчезнуть иконка GRANI, а системный ключ VPN ещё останется.
      */
     private fun waitForTunClosedBeforeForegroundRemove() {
-        val wrapper = xrayNativeWrapper ?: return
         val waitStart = SystemClock.elapsedRealtime()
         val waitBudgetMs = 4000L
         while (SystemClock.elapsedRealtime() - waitStart < waitBudgetMs) {
-            val tunState = wrapper.getLastTunState()
-            if (tunState == "closed" || tunState == "idle") {
+            val xrayTunState = xrayNativeWrapper?.getLastTunState()
+            val hy2TunState = hysteria2Runtime?.getTunState()
+            val xrayClosed = xrayTunState == null ||
+                xrayTunState == "closed" ||
+                xrayTunState == "idle" ||
+                xrayTunState == "init"
+            val hy2Closed = hy2TunState == null || hy2TunState == "closed"
+            if (xrayClosed && hy2Closed) {
                 return
             }
             try {
@@ -860,7 +1169,13 @@ class GraniVpnService : android.net.VpnService() {
 
     private fun handleRuntimeFailure(reason: String, source: String) {
         val sid = lastConnectionSessionId ?: loadPersistedSessionId()
-        val tunState = xrayNativeWrapper?.getLastTunState() ?: "unknown"
+        val hysteriaDiagnostic = hysteria2Runtime?.diagnosticSnapshot().orEmpty()
+        val tunState = if (source.startsWith("hysteria")) {
+            hysteriaDiagnostic["tun_state"]?.toString() ?: "unknown"
+        } else {
+            xrayNativeWrapper?.getLastTunState() ?: "unknown"
+        }
+        val protocol = expectedNativeProtocolLabel()
         if (orderedStopInProgress.get() || serviceState == ServiceState.DISCONNECTING || wasIntentionallyStopped()) {
             Log.i(
                 TAG,
@@ -875,19 +1190,37 @@ class GraniVpnService : android.net.VpnService() {
             "[RUNTIME_FAIL] source=$source reason=$reason connection_session_id=${sid ?: "null"} " +
                 "state=$serviceState isRunning=$isRunning last_tun_state=$tunState ordered_stop=${orderedStopInProgress.get()}",
         )
-        VpnNativeStateEmitter.emitRuntimeDiag(
-            "runtime_fail",
-            mapOf(
+        setStartError(reason)
+        ProtocolRuntimeContract.markError(
+            applicationContext,
+            backend = "native",
+            protocol = protocol,
+            sessionId = sid,
+            source = source,
+            error = reason,
+        )
+        val diagnosticDetails = linkedMapOf<String, Any>(
                 "source" to source,
                 "reason" to reason,
+                "runtime_backend" to "native",
+                "runtime_protocol" to (protocol ?: ""),
                 "vpn_session_id" to (sid ?: ""),
+                "connection_session_id" to (sid ?: ""),
                 "runtime_fail_reason" to reason,
                 "last_tun_state" to tunState,
-            ),
+        )
+        if (source.startsWith("hysteria")) {
+            hysteriaDiagnostic.forEach { (key, value) ->
+                if (value != null) {
+                    diagnosticDetails["hysteria_$key"] = value
+                }
+            }
+        }
+        VpnNativeStateEmitter.emitRuntimeDiag(
+            "runtime_fail",
+            diagnosticDetails,
         )
         setIntentionallyStopped(true)
-        lastStartError = reason
-        recordLastStartError(reason)
         try {
             stopVpn(ServiceState.ERROR)
         } catch (e: Exception) {
@@ -903,12 +1236,16 @@ class GraniVpnService : android.net.VpnService() {
     }
 
     private fun stopHysteria2() {
+        val runtime = hysteria2Runtime
         try {
-            hysteria2Runtime?.stop()
+            runtime?.stop()
         } catch (e: Exception) {
             Log.w(TAG, "Ошибка остановки Hysteria2 process runtime: ${e.message}", e)
+        } finally {
+            if (hysteria2Runtime === runtime) {
+                hysteria2Runtime = null
+            }
         }
-        hysteria2Runtime = null
     }
 
     /** Полная остановка Xray (при смене конфига/сервера или уничтожении сервиса). */
@@ -1039,6 +1376,13 @@ class GraniVpnService : android.net.VpnService() {
         } catch (e: Exception) {
             Log.e(TAG, "processXrayPackets: Ошибка: ${e.message}", e)
             isRunning = false
+            if (!orderedStopInProgress.get() && !wasIntentionallyStopped()) {
+                handleRuntimeFailureForSession(
+                    reason = "xray_start_exception:${e::class.java.simpleName}",
+                    source = "xray_start",
+                    sessionId = currentConnectionSessionId(),
+                )
+            }
         } finally {
             // stopXray() уже вызван из adapter.stop() — полный tear down выполнен
         }
@@ -1085,6 +1429,7 @@ class GraniVpnService : android.net.VpnService() {
             TAG,
             "[CORRELATION] xray_tun_session=$tunLabel full_connection_session_id=${lastConnectionSessionId ?: "null"}",
         )
+        val startSessionId = currentConnectionSessionId()
         xrayNativeWrapper = XrayNativeWrapperTun2Socks(context)
         xrayNativeWrapper?.startVpn(
             this,
@@ -1092,12 +1437,23 @@ class GraniVpnService : android.net.VpnService() {
             requestedMtu,
             tunLabel,
             onTun2SocksFailure = { reason ->
-                handleRuntimeFailure(reason, source = "tun2socks")
+                handleRuntimeFailureForSession(
+                    reason,
+                    source = "tun2socks",
+                    sessionId = startSessionId,
+                )
             },
         )
         if (!waitForNativeXrayRunning(timeoutMs = 10_000L)) {
+            if (isNativeStartCancellationRequested(startSessionId, "native_core_wait")) return
             throw IllegalStateException("Нативный XRay не запустился")
         }
+        if (isNativeStartCancellationRequested(startSessionId, "native_core_ready")) return
+        if (!waitForTun2SocksBridgeReady(timeoutMs = 25_000L)) {
+            if (isNativeStartCancellationRequested(startSessionId, "tun2socks_bridge_wait")) return
+            throw IllegalStateException("tun2socks bridge не перешёл в готовое состояние")
+        }
+        if (isNativeStartCancellationRequested(startSessionId, "before_local_up")) return
         isRunning = true
         NativeVpnRuntimeState.markNativeVpnExpectedUp(
             applicationContext,
@@ -1105,7 +1461,7 @@ class GraniVpnService : android.net.VpnService() {
             expectedNativeProtocolLabel(),
         )
         setServiceState(ServiceState.LOCAL_UP)
-        lastUnderlyingNetworkType = detectUnderlyingNetworkType()
+        scheduleUnderlyingNetworkEvaluation("xray_local_up", delayMs = 0L)
         refreshQuickTile()
         Log.i(TAG, "[DIAG] processXrayPacketsInProcess: VPN запущен, handshake_ms=${System.currentTimeMillis() - vpnStartTs}ms, total_process_ms=${System.currentTimeMillis() - inProcessStartTs}ms")
         if (DIAG_APP_CONFLICT_A_DISABLE_POST_CONNECT_PROBES) {
@@ -1147,8 +1503,8 @@ class GraniVpnService : android.net.VpnService() {
                         "last_tun_state=$tunState ordered_stop=${orderedStopInProgress.get()}",
                 )
                 isRunning = false
-                if (serviceState != ServiceState.IDLE) {
-                    setServiceState(ServiceState.IDLE)
+                if (serviceState != ServiceState.DISCONNECTING) {
+                    setServiceState(ServiceState.DISCONNECTING)
                 }
                 refreshQuickTile()
             } else {
@@ -1158,16 +1514,34 @@ class GraniVpnService : android.net.VpnService() {
         }
     }
 
+    /**
+     * Read-only runtime probe used by UI/status snapshots.
+     *
+     * A status read must never mutate service state. In particular, native
+     * cores can briefly report false during Android/HyperOS lifecycle and
+     * network handover. Failure reconciliation belongs to the runtime monitor
+     * and watchdog, not to a getter invoked by Flutter polling.
+     */
     fun isVpnRunning(): Boolean {
         val nativeRunning = xrayNativeWrapper?.isRunning() == true
         val hy2Running = hysteria2Runtime?.isRunning() == true
-        if (isRunning && !nativeRunning && !hy2Running) {
-            Log.w(TAG, "isVpnRunning: найден stale-state (isRunning=true, native=false), корректируем")
-            isRunning = false
-            setServiceState(ServiceState.IDLE)
-            refreshQuickTile()
-        }
         return isRunning && (nativeRunning || hy2Running)
+    }
+
+    fun isNativeTunnelActiveOrClosing(): Boolean {
+        val nativeRunning = xrayNativeWrapper?.isRunning() == true
+        val hy2Running = hysteria2Runtime?.isRunning() == true
+        if (isRunning && (nativeRunning || hy2Running)) return true
+        if (serviceState == ServiceState.DISCONNECTING) return true
+        val tunState = xrayNativeWrapper?.getLastTunState()
+        if (tunState != null && tunState != "closed" && tunState != "idle" && tunState != "init") {
+            return true
+        }
+        val hy2TunState = hysteria2Runtime?.getTunState()
+        if (hy2TunState != null && hy2TunState != "closed") {
+            return true
+        }
+        return false
     }
 
     fun isVpnCommitted(): Boolean {
@@ -1220,12 +1594,59 @@ class GraniVpnService : android.net.VpnService() {
     private fun waitForNativeXrayRunning(timeoutMs: Long): Boolean {
         val start = System.currentTimeMillis()
         while (System.currentTimeMillis() - start < timeoutMs) {
+            if (orderedStopInProgress.get() || wasIntentionallyStopped()) return false
             if (xrayNativeWrapper?.isRunning() == true) {
                 return true
             }
             Thread.sleep(50)
         }
-        return xrayNativeWrapper?.isRunning() == true
+        return !orderedStopInProgress.get() &&
+            !wasIntentionallyStopped() &&
+            xrayNativeWrapper?.isRunning() == true
+    }
+
+    /**
+     * A start callback may arrive after the owning transaction was cancelled
+     * or replaced. Such a callback must never promote the service to LOCAL_UP.
+     */
+    private fun isNativeStartCancellationRequested(
+        startSessionId: String?,
+        stage: String,
+    ): Boolean {
+        val currentSessionId = currentConnectionSessionId()
+        val staleSession = !startSessionId.isNullOrBlank() &&
+            !currentSessionId.isNullOrBlank() &&
+            startSessionId != currentSessionId
+        val cancelled = orderedStopInProgress.get() ||
+            serviceState == ServiceState.DISCONNECTING ||
+            wasIntentionallyStopped()
+        if (staleSession || cancelled) {
+            Log.w(
+                TAG,
+                "[STALE_START_ABORT] stage=$stage start_session=${startSessionId ?: "null"} " +
+                    "current_session=${currentSessionId ?: "null"} state=$serviceState " +
+                    "ordered_stop=${orderedStopInProgress.get()} intentionally_stopped=${wasIntentionallyStopped()}",
+            )
+            return true
+        }
+        return false
+    }
+
+    /**
+     * libXray без прикреплённого tun2socks ещё не является рабочим VPN.
+     * Отдельный процесс может холодно стартовать дольше на любом Android/OEM,
+     * поэтому LOCAL_UP публикуется только после подтверждённого binder bridge.
+     */
+    private fun waitForTun2SocksBridgeReady(timeoutMs: Long): Boolean {
+        val start = System.currentTimeMillis()
+        while (System.currentTimeMillis() - start < timeoutMs) {
+            if (orderedStopInProgress.get() || wasIntentionallyStopped()) return false
+            if (xrayNativeWrapper?.isBridgeReady() == true) return true
+            Thread.sleep(50)
+        }
+        return !orderedStopInProgress.get() &&
+            !wasIntentionallyStopped() &&
+            xrayNativeWrapper?.isBridgeReady() == true
     }
 
     private interface VpnAdapter {
@@ -1252,6 +1673,7 @@ class GraniVpnService : android.net.VpnService() {
         override fun start(config: String): Boolean {
             Log.d(TAG, "Hysteria2Adapter: Запуск через отдельный hysteria native process")
             isRunning = false
+            val startSessionId = currentConnectionSessionId()
             val runtime = Hysteria2ProcessWrapper(applicationContext)
             hysteria2Runtime = runtime
             Thread {
@@ -1261,10 +1683,31 @@ class GraniVpnService : android.net.VpnService() {
                         rawConfig = config,
                         mtu = requestedMtu,
                         session = formatSessionName("hysteria2"),
-                        onFailure = { reason ->
-                            handleRuntimeFailure(reason, source = "hysteria2")
+                        onFailure = onFailure@ { reason ->
+                            if (hysteria2Runtime !== runtime) {
+                                Log.i(
+                                    TAG,
+                                    "[HY2_STALE_CALLBACK] ignored reason=$reason " +
+                                        "session=${startSessionId ?: "null"}",
+                                )
+                                return@onFailure
+                            }
+                            handleRuntimeFailureForSession(
+                                reason,
+                                source = "hysteria2",
+                                sessionId = startSessionId,
+                            )
                         },
                     )
+                    if (hysteria2Runtime !== runtime ||
+                        isNativeStartCancellationRequested(startSessionId, "hysteria_runtime_ready")
+                    ) {
+                        runtime.stop()
+                        if (hysteria2Runtime === runtime) {
+                            hysteria2Runtime = null
+                        }
+                        return@Thread
+                    }
                     isRunning = true
                     NativeVpnRuntimeState.markNativeVpnExpectedUp(
                         applicationContext,
@@ -1272,7 +1715,7 @@ class GraniVpnService : android.net.VpnService() {
                         expectedNativeProtocolLabel(),
                     )
                     setServiceState(ServiceState.LOCAL_UP)
-                    lastUnderlyingNetworkType = detectUnderlyingNetworkType()
+                    scheduleUnderlyingNetworkEvaluation("hysteria_local_up", delayMs = 0L)
                     refreshQuickTile()
                     if (DIAG_APP_CONFLICT_A_DISABLE_POST_CONNECT_PROBES) {
                         Log.i(TAG, "[APP_CONFLICT_A] HY2 post-connect connectivity probes disabled")
@@ -1281,7 +1724,9 @@ class GraniVpnService : android.net.VpnService() {
                             try {
                                 Thread.sleep(PROBE_START_DELAY_MS)
                                 var retry = 0
-                                while (isRunning &&
+                                while (hysteria2Runtime === runtime &&
+                                    !isNativeStartCancellationRequested(startSessionId, "hysteria_probe") &&
+                                    isRunning &&
                                     (serviceState == ServiceState.LOCAL_UP ||
                                         serviceState == ServiceState.DATAPLANE_VERIFIED ||
                                         serviceState == ServiceState.COMMITTED)
@@ -1296,15 +1741,27 @@ class GraniVpnService : android.net.VpnService() {
                             }
                         }, "grani-hy2-connectivity-probe").start()
                     }
-                    while (isRunning && runtime.isRunning()) {
+                    while (hysteria2Runtime === runtime && isRunning && runtime.isRunning()) {
                         Thread.sleep(1000)
                     }
-                    if (isRunning && !orderedStopInProgress.get() && !wasIntentionallyStopped()) {
-                        handleRuntimeFailure("Hysteria2 process stopped", source = "hysteria2")
+                    if (hysteria2Runtime === runtime &&
+                        isRunning &&
+                        !orderedStopInProgress.get() &&
+                        !wasIntentionallyStopped()
+                    ) {
+                        handleRuntimeFailureForSession(
+                            "Hysteria2 process stopped",
+                            source = "hysteria2",
+                            sessionId = startSessionId,
+                        )
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Hysteria2Adapter: ошибка запуска: ${e.message}", e)
-                    handleRuntimeFailure(e.message ?: "Hysteria2 start failed", source = "hysteria2")
+                    handleRuntimeFailureForSession(
+                        e.message ?: "Hysteria2 start failed",
+                        source = "hysteria2",
+                        sessionId = startSessionId,
+                    )
                 }
             }.start()
             return true
@@ -1316,10 +1773,7 @@ class GraniVpnService : android.net.VpnService() {
     }
 
     private fun registerUnderlyingNetworkCallback() {
-        if (DIAG_APP_CONFLICT_A_DISABLE_NETWORK_CALLBACK) {
-            Log.i(TAG, "[APP_CONFLICT_A] registerUnderlyingNetworkCallback skipped")
-            return
-        }
+        if (!NETWORK_HANDOVER_MONITOR_ENABLED) return
         if (networkCallback != null) return
         val cm = connectivityManager ?: return
         val request = NetworkRequest.Builder()
@@ -1328,20 +1782,20 @@ class GraniVpnService : android.net.VpnService() {
             .build()
         networkCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                scheduleUnderlyingNetworkEvaluation("onAvailable")
+                scheduleUnderlyingNetworkEvaluation("onAvailable:${networkId(network)}")
             }
 
             override fun onLost(network: Network) {
-                scheduleUnderlyingNetworkEvaluation("onLost")
+                scheduleUnderlyingNetworkEvaluation("onLost:${networkId(network)}")
             }
 
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                scheduleUnderlyingNetworkEvaluation("onCapabilitiesChanged")
+                scheduleUnderlyingNetworkEvaluation("onCapabilitiesChanged:${networkId(network)}")
             }
         }
         try {
             cm.registerNetworkCallback(request, networkCallback!!)
-            scheduleUnderlyingNetworkEvaluation("register")
+            scheduleUnderlyingNetworkEvaluation("register", delayMs = 0L)
             Log.i(TAG, "registerUnderlyingNetworkCallback: registered")
         } catch (e: Exception) {
             Log.w(TAG, "registerUnderlyingNetworkCallback: ${e.message}")
@@ -1359,31 +1813,221 @@ class GraniVpnService : android.net.VpnService() {
         }
     }
 
-    private fun scheduleUnderlyingNetworkEvaluation(reason: String) {
-        if (DIAG_APP_CONFLICT_A_DISABLE_NETWORK_CALLBACK) {
-            Log.i(TAG, "[APP_CONFLICT_A] network evaluation skipped reason=$reason")
-            return
-        }
+    private fun scheduleUnderlyingNetworkEvaluation(
+        reason: String,
+        delayMs: Long = NETWORK_CHANGE_DEBOUNCE_MS,
+    ) {
+        if (!NETWORK_HANDOVER_MONITOR_ENABLED) return
         networkEvalRunnable?.let { mainHandler.removeCallbacks(it) }
         networkEvalRunnable = Runnable {
-            val current = detectUnderlyingNetworkType()
-            val previous = lastUnderlyingNetworkType
-            if (previous == null) {
-                lastUnderlyingNetworkType = current
-                Log.d(TAG, "[NET_MONITOR] initialized type=$current reason=$reason")
-                return@Runnable
-            }
-            if (current == previous) return@Runnable
-            val meaningful = setOf("wifi", "mobile", "ethernet")
-            if (!meaningful.contains(previous) || !meaningful.contains(current)) {
-                lastUnderlyingNetworkType = current
-                Log.d(TAG, "[NET_MONITOR] ignored transition $previous->$current reason=$reason")
-                return@Runnable
-            }
-            lastUnderlyingNetworkType = current
-            handleUnderlyingNetworkChanged(previous, current)
+            evaluateUnderlyingNetworkHandover(reason)
         }
-        mainHandler.postDelayed(networkEvalRunnable!!, NETWORK_CHANGE_DEBOUNCE_MS)
+        mainHandler.postDelayed(networkEvalRunnable!!, delayMs.coerceAtLeast(0L))
+    }
+
+    private fun evaluateUnderlyingNetworkHandover(reason: String) {
+        val candidates = collectUnderlyingNetworkCandidates()
+        val preferredId = preferredUnderlyingNetworkId()
+        when (
+            val decision = networkHandoverPolicy.evaluate(
+                candidates = candidates,
+                preferredNetworkId = preferredId,
+                nowMs = SystemClock.elapsedRealtime(),
+            )
+        ) {
+            is UnderlyingNetworkHandoverPolicy.Decision.Initialized -> {
+                Log.i(
+                    TAG,
+                    "[NET_MONITOR] initialized selected=${describeNetwork(decision.selected)} " +
+                        "preferred=${preferredId ?: "none"} candidates=${candidates.size} reason=$reason",
+                )
+            }
+            is UnderlyingNetworkHandoverPolicy.Decision.Stable -> {
+                Log.d(
+                    TAG,
+                    "[NET_MONITOR] stable selected=${describeNetwork(decision.selected)} " +
+                        "candidates=${candidates.size} reason=$reason",
+                )
+            }
+            is UnderlyingNetworkHandoverPolicy.Decision.Pending -> {
+                Log.i(
+                    TAG,
+                    "[NET_MONITOR] pending from=${describeNetwork(decision.from)} " +
+                        "replacement=${describeNetwork(decision.replacement)} " +
+                        "remaining_ms=${decision.remainingMs} reason=$reason",
+                )
+                if (decision.replacement != null && decision.remainingMs > 0L) {
+                    scheduleUnderlyingNetworkEvaluation(
+                        reason = "handover_grace_expired",
+                        delayMs = decision.remainingMs,
+                    )
+                }
+            }
+            is UnderlyingNetworkHandoverPolicy.Decision.VerifyDataplane -> {
+                verifyDataplaneAfterHandover(decision)
+            }
+            else -> Unit
+        }
+    }
+
+    private fun collectUnderlyingNetworkCandidates(): List<UnderlyingNetworkHandoverPolicy.Candidate> {
+        val cm = connectivityManager ?: return emptyList()
+        return try {
+            cm.allNetworks.mapNotNull { network ->
+                val caps = cm.getNetworkCapabilities(network) ?: return@mapNotNull null
+                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return@mapNotNull null
+                if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)) return@mapNotNull null
+                UnderlyingNetworkHandoverPolicy.Candidate(
+                    id = networkId(network),
+                    transport = networkTransport(caps),
+                    hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+                    validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+                    suspended = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+                        !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED),
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "[NET_MONITOR] candidate snapshot failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun preferredUnderlyingNetworkId(): String? {
+        val cm = connectivityManager ?: return null
+        return try {
+            val active = cm.activeNetwork ?: return null
+            val caps = cm.getNetworkCapabilities(active) ?: return null
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) ||
+                !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            ) {
+                null
+            } else {
+                networkId(active)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun networkTransport(
+        caps: NetworkCapabilities,
+    ): UnderlyingNetworkHandoverPolicy.Transport = when {
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ->
+            UnderlyingNetworkHandoverPolicy.Transport.ETHERNET
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ->
+            UnderlyingNetworkHandoverPolicy.Transport.WIFI
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ->
+            UnderlyingNetworkHandoverPolicy.Transport.MOBILE
+        else -> UnderlyingNetworkHandoverPolicy.Transport.OTHER
+    }
+
+    private fun networkId(network: Network): String = network.toString()
+
+    private fun describeNetwork(candidate: UnderlyingNetworkHandoverPolicy.Candidate?): String {
+        if (candidate == null) return "none"
+        return "${candidate.id}/${candidate.transport.name.lowercase(Locale.US)}"
+    }
+
+    private fun verifyDataplaneAfterHandover(
+        decision: UnderlyingNetworkHandoverPolicy.Decision.VerifyDataplane,
+    ) {
+        if (!networkHandoverProbeInProgress.compareAndSet(false, true)) {
+            Log.d(TAG, "[NET_MONITOR] handover probe already in progress")
+            return
+        }
+        Thread({
+            try {
+                if (!canEvaluateHandoverDataplane()) {
+                    deferHandoverVerification(decision.replacement, "runtime_not_committed")
+                    return@Thread
+                }
+                var healthy = runHandoverDataplaneProbe(attempt = 1)
+                var outcome = networkHandoverPolicy.recordDataplaneProbe(
+                    replacement = decision.replacement,
+                    healthy = healthy,
+                )
+                if (outcome is UnderlyingNetworkHandoverPolicy.Decision.ProbeAgain) {
+                    Thread.sleep(NETWORK_HANDOVER_PROBE_RETRY_GAP_MS)
+                    if (!canEvaluateHandoverDataplane()) {
+                        deferHandoverVerification(decision.replacement, "runtime_changed_during_probe")
+                        return@Thread
+                    }
+                    healthy = runHandoverDataplaneProbe(attempt = 2)
+                    outcome = networkHandoverPolicy.recordDataplaneProbe(
+                        replacement = decision.replacement,
+                        healthy = healthy,
+                    )
+                }
+
+                when (outcome) {
+                    is UnderlyingNetworkHandoverPolicy.Decision.HandoverSurvived -> {
+                        Log.i(
+                            TAG,
+                            "[NET_MONITOR] dataplane survived handover " +
+                                "${describeNetwork(outcome.from)}->${describeNetwork(outcome.replacement)}; no restart",
+                        )
+                        emitHandoverDiagnostic("network_handover_survived", outcome.from, outcome.replacement, 0)
+                    }
+                    is UnderlyingNetworkHandoverPolicy.Decision.ReconnectRequired -> {
+                        emitHandoverDiagnostic(
+                            "network_handover_reconnect_required",
+                            outcome.from,
+                            outcome.replacement,
+                            outcome.failedProbes,
+                        )
+                        handleUnderlyingNetworkChanged(outcome.from, outcome.replacement)
+                    }
+                    else -> Unit
+                }
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } catch (e: Exception) {
+                Log.w(TAG, "[NET_MONITOR] handover verification failed: ${e.message}", e)
+                deferHandoverVerification(decision.replacement, "probe_exception")
+            } finally {
+                networkHandoverProbeInProgress.set(false)
+            }
+        }, "grani-network-handover-probe").start()
+    }
+
+    private fun deferHandoverVerification(
+        replacement: UnderlyingNetworkHandoverPolicy.Candidate,
+        reason: String,
+    ) {
+        networkHandoverPolicy.deferDataplaneVerification(replacement)
+        Log.i(TAG, "[NET_MONITOR] handover verification deferred reason=$reason")
+        if (isRunning && !orderedStopInProgress.get() && !wasIntentionallyStopped()) {
+            scheduleUnderlyingNetworkEvaluation(
+                reason = "deferred_verification:$reason",
+                delayMs = NETWORK_CHANGE_DEBOUNCE_MS,
+            )
+        }
+    }
+
+    private fun canEvaluateHandoverDataplane(): Boolean =
+        isRunning &&
+            serviceState == ServiceState.COMMITTED &&
+            !orderedStopInProgress.get() &&
+            !wasIntentionallyStopped()
+
+    private fun runHandoverDataplaneProbe(attempt: Int): Boolean {
+        val vpnNetwork = findVpnTransportNetwork()
+        if (vpnNetwork == null) {
+            Log.w(TAG, "[NET_MONITOR] handover_probe attempt=$attempt vpn_network=none ok=false")
+            return false
+        }
+        val candidates = listOf(PROBE_PUBLIC_CANDIDATES[0], PROBE_PUBLIC_CANDIDATES[2])
+        for ((url, label) in candidates) {
+            val result = httpGetProbe(vpnNetwork, url)
+            Log.i(
+                TAG,
+                "[NET_MONITOR] handover_probe attempt=$attempt label=$label ok=${result.success} " +
+                    "rtt_ms=${result.rttMs} http_status=${result.httpStatus}" +
+                    (result.error?.let { " err=$it" } ?: ""),
+            )
+            if (result.success) return true
+        }
+        return false
     }
 
     private fun loadPersistedSessionId(): String? {
@@ -1408,13 +2052,16 @@ class GraniVpnService : android.net.VpnService() {
         }
     }
 
-    private fun handleUnderlyingNetworkChanged(from: String, to: String) {
+    private fun handleUnderlyingNetworkChanged(
+        from: UnderlyingNetworkHandoverPolicy.Candidate,
+        to: UnderlyingNetworkHandoverPolicy.Candidate,
+    ) {
         if (!isRunning || serviceState != ServiceState.COMMITTED) {
-            Log.d(TAG, "[NET_MONITOR] skip $from->$to: vpn not connected")
+            Log.d(TAG, "[NET_MONITOR] skip ${describeNetwork(from)}->${describeNetwork(to)}: vpn not connected")
             return
         }
         if (networkReconnectInProgress) {
-            Log.d(TAG, "[NET_MONITOR] skip $from->$to: reconnect already in progress")
+            Log.d(TAG, "[NET_MONITOR] skip ${describeNetwork(from)}->${describeNetwork(to)}: reconnect already in progress")
             return
         }
         val now = System.currentTimeMillis()
@@ -1422,57 +2069,75 @@ class GraniVpnService : android.net.VpnService() {
         if (sinceLast < NETWORK_RECONNECT_MIN_INTERVAL_MS) {
             Log.d(
                 TAG,
-                "[NET_MONITOR] skip $from->$to: reconnect cooldown (${sinceLast}ms < ${NETWORK_RECONNECT_MIN_INTERVAL_MS}ms min interval)",
+                "[NET_MONITOR] skip ${describeNetwork(from)}->${describeNetwork(to)}: " +
+                    "reconnect cooldown (${sinceLast}ms < ${NETWORK_RECONNECT_MIN_INTERVAL_MS}ms min interval)",
             )
             return
         }
         if (wasIntentionallyStopped()) {
-            Log.d(TAG, "[NET_MONITOR] skip $from->$to: intentionally stopped")
+            Log.d(TAG, "[NET_MONITOR] skip ${describeNetwork(from)}->${describeNetwork(to)}: intentionally stopped")
             return
         }
         val config = lastConfig
         if (config.isNullOrBlank()) {
-            Log.w(TAG, "[NET_MONITOR] skip $from->$to: no config for reconnect")
+            Log.w(TAG, "[NET_MONITOR] skip ${describeNetwork(from)}->${describeNetwork(to)}: no config for reconnect")
             return
         }
-        val nextMtu = selectMtuForNetworkType(to)
+        val nextMtu = selectMtuForNetworkType(to.transport.name.lowercase(Locale.US))
         val protocol = lastProtocol
         networkReconnectInProgress = true
         lastNetworkReconnectAtMs = now
-        Log.i(TAG, "[NET_MONITOR] network_change $from->$to, restart vpn with mtu=$nextMtu")
-        // Анти-дребезг: scheduleUnderlyingNetworkEvaluation postDelayed(NETWORK_CHANGE_DEBOUNCE_MS);
-        // плюс cooldown выше; плюс networkReconnectInProgress на время stop+start в этом потоке.
         Log.i(
             TAG,
-            "[NET_MONITOR] HARD_RECONNECT stack: XrayAdapter.stop → stopXrayFull → " +
-                "XrayNativeWrapperTun2Socks.stopVpn (unbind :tun2socks process, libXray stop+join, TUN close) → " +
-                "new startVpn/new adapter/new TUN/new tun2socks bind. " +
-                "TCP приложений идут через новый fd; медленный старт на LTE может быть TCP slow-start/радио, не «старый libXray». " +
+            "[NET_MONITOR] confirmed dataplane loss ${describeNetwork(from)}->${describeNetwork(to)}; " +
+                "controlled reconnect through runtime gate mtu=$nextMtu " +
                 "session=${lastConnectionSessionId ?: loadPersistedSessionId() ?: "none"}",
         )
         Thread {
             try {
                 updateNotificationContent(getString(R.string.vpn_notification_reconnecting))
-                stopVpn()
-                Thread.sleep(250L)
                 val sessionForHandover = lastConnectionSessionId ?: loadPersistedSessionId()
-                val startIntent = Intent(applicationContext, GraniVpnService::class.java).apply {
-                    action = ACTION_START
-                    putExtra(EXTRA_CONFIG, config)
-                    if (!protocol.isNullOrBlank()) putExtra(EXTRA_PROTOCOL, protocol)
-                    putExtra(EXTRA_MTU, nextMtu)
-                    putExtra(EXTRA_SOURCE, "network_handover_native")
-                    if (!sessionForHandover.isNullOrBlank()) {
-                        putExtra(EXTRA_CONNECTION_SESSION_ID, sessionForHandover)
-                    }
+                val result = VpnRuntimeCoordinator.reconnectAfterNetworkHandover(
+                    context = applicationContext,
+                    config = config,
+                    protocol = protocol,
+                    mtu = nextMtu,
+                    source = "network_handover_native",
+                    connectionSessionId = sessionForHandover,
+                )
+                if (result.started) {
+                    networkHandoverPolicy.acknowledgeReconnect(to)
                 }
-                startService(startIntent)
+                Log.i(
+                    TAG,
+                    "[NET_MONITOR] controlled reconnect result=${result.started} " +
+                        "status=${result.status} error=${result.error ?: "none"}",
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "[NET_MONITOR] reconnect failed: ${e.message}", e)
             } finally {
                 networkReconnectInProgress = false
             }
         }.start()
+    }
+
+    private fun emitHandoverDiagnostic(
+        eventName: String,
+        from: UnderlyingNetworkHandoverPolicy.Candidate,
+        to: UnderlyingNetworkHandoverPolicy.Candidate,
+        failedProbes: Int,
+    ) {
+        VpnNativeStateEmitter.emitRuntimeDiag(
+            eventName,
+            mapOf(
+                "from_network_id" to from.id,
+                "from_transport" to from.transport.name.lowercase(Locale.US),
+                "to_network_id" to to.id,
+                "to_transport" to to.transport.name.lowercase(Locale.US),
+                "failed_probes" to failedProbes,
+                "connection_session_id" to (lastConnectionSessionId ?: loadPersistedSessionId() ?: ""),
+            ),
+        )
     }
 
     /**
@@ -1635,8 +2300,40 @@ class GraniVpnService : android.net.VpnService() {
         val sid = lastConnectionSessionId ?: loadPersistedSessionId()
         val vpnNet = findVpnTransportNetwork()
         val bound = vpnNet != null
+        val networkDiagnostics =
+            NetworkDiagnostics.snapshot(applicationContext, runInternetProbe = false)
+        // API health is useful control-plane telemetry, but it must not add its
+        // full RTT after public traffic has already proved the dataplane. Run
+        // both probes concurrently and publish VERIFIED as soon as the public
+        // probe succeeds. COMMITTED and the complete diagnostic payload still
+        // wait for the API result below.
+        val apiTask = FutureTask { httpGetProbe(vpnNet, PROBE_API_HEALTH_URL) }
+        Thread(apiTask, "grani-api-health-probe").start()
         val publicAgg = runPublicInternetProbes(vpnNet)
-        val api = httpGetProbe(vpnNet, PROBE_API_HEALTH_URL)
+        val serviceStateBeforePromotion = serviceState
+        val canPromoteState =
+            isRunning &&
+                !orderedStopInProgress.get() &&
+                !wasIntentionallyStopped() &&
+                (
+                    serviceStateBeforePromotion == ServiceState.LOCAL_UP ||
+                        serviceStateBeforePromotion == ServiceState.DATAPLANE_VERIFIED ||
+                        serviceStateBeforePromotion == ServiceState.COMMITTED
+                    )
+        val statePromotionSkipped = publicAgg.success && !canPromoteState
+        if (publicAgg.success && canPromoteState && serviceState == ServiceState.LOCAL_UP) {
+            setServiceState(ServiceState.DATAPLANE_VERIFIED)
+        }
+        val api = try {
+            apiTask.get()
+        } catch (e: Exception) {
+            HttpProbeResult(
+                success = false,
+                rttMs = 0L,
+                httpStatus = -1,
+                error = e.javaClass.simpleName + ":" + (e.message?.take(120) ?: ""),
+            )
+        }
         // Treat dataplane validation as primary commit gate:
         // if public internet is reachable, we keep the tunnel committed even when
         // control-plane API probe is temporarily degraded (e.g., DNS transient).
@@ -1647,11 +2344,16 @@ class GraniVpnService : android.net.VpnService() {
             !publicAgg.success && api.success -> "degraded"
             else -> "failed"
         }
-        if (publicAgg.success && serviceState == ServiceState.LOCAL_UP) {
-            setServiceState(ServiceState.DATAPLANE_VERIFIED)
-        }
-        if (publicAgg.success && serviceState != ServiceState.COMMITTED) {
+        if (publicAgg.success && canPromoteState && serviceState != ServiceState.COMMITTED) {
             setServiceState(ServiceState.COMMITTED)
+        }
+        if (statePromotionSkipped) {
+            Log.i(
+                TAG,
+                "$CONNECTIVITY_PROBE_LOG state_promotion_skipped=1 " +
+                    "state_before=$serviceStateBeforePromotion isRunning=$isRunning " +
+                    "ordered_stop=${orderedStopInProgress.get()} intentionally_stopped=${wasIntentionallyStopped()}",
+            )
         }
         val publicDetails = if (publicAgg.details.isNotEmpty()) {
             publicAgg.details.joinToString(separator = ";") { detail ->
@@ -1671,6 +2373,8 @@ class GraniVpnService : android.net.VpnService() {
                 (publicAgg.error?.let { " err=$it" } ?: "") +
                 " control_plane_degraded=${if (controlPlaneDegraded) 1 else 0}" +
                 " public_details=[$publicDetails]" +
+                " underlying_network_type=${networkDiagnostics["underlying_network_type"] ?: "unknown"}" +
+                " underlying_network_available=${networkDiagnostics["underlying_network_available"] ?: false}" +
                 " api_health ok=${api.success} rtt_ms=${api.rttMs} http_status=${api.httpStatus}" +
                 (api.error?.let { " err=$it" } ?: ""),
         )
@@ -1691,35 +2395,15 @@ class GraniVpnService : android.net.VpnService() {
             "api_rtt_ms" to api.rttMs,
             "api_http_status" to api.httpStatus,
             "api_fallback_unbound" to if (api.fallbackUnbound) 1 else 0,
+            "service_state_before_promotion" to serviceStateBeforePromotion.name.lowercase(Locale.US),
+            "state_promotion_allowed" to if (canPromoteState) 1 else 0,
+            "state_promotion_skipped" to if (statePromotionSkipped) 1 else 0,
         )
+        probePayload.putAll(networkDiagnostics)
         if (publicAgg.error != null) probePayload["public_err"] = publicAgg.error!!
         if (api.error != null) probePayload["api_err"] = api.error!!
         VpnNativeStateEmitter.emitConnectivityProbe(probePayload)
         return status
-    }
-
-    private fun detectUnderlyingNetworkType(): String {
-        val cm = connectivityManager ?: return "unknown"
-        return try {
-            var hasWifi = false
-            var hasMobile = false
-            var hasEthernet = false
-            cm.allNetworks.forEach { network ->
-                val caps = cm.getNetworkCapabilities(network) ?: return@forEach
-                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return@forEach
-                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) hasWifi = true
-                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) hasMobile = true
-                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) hasEthernet = true
-            }
-            when {
-                hasWifi -> "wifi"
-                hasMobile -> "mobile"
-                hasEthernet -> "ethernet"
-                else -> "unknown"
-            }
-        } catch (_: Exception) {
-            "unknown"
-        }
     }
 
     private fun selectMtuForNetworkType(networkType: String): Int {

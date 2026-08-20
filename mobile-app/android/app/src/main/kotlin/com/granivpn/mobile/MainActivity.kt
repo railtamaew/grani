@@ -1,14 +1,24 @@
 package com.granivpn.mobile
 
+import android.Manifest
 import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import com.android.installreferrer.api.InstallReferrerClient
+import com.android.installreferrer.api.InstallReferrerStateListener
+import com.android.installreferrer.api.InstallReferrerClient.InstallReferrerResponse
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
@@ -18,15 +28,32 @@ import io.flutter.plugin.common.PluginRegistry
 
 class MainActivity: FlutterFragmentActivity() {
     private var vpnPlugin: VpnPlugin? = null
+    private var appLinksChannel: MethodChannel? = null
+    private var pendingAppLink: String? = null
+    private var pendingNotificationPermissionResult: MethodChannel.Result? = null
     private val activityResultListeners = mutableListOf<PluginRegistry.ActivityResultListener>()
+    private val postNotificationsPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) {
+        val pendingResult = pendingNotificationPermissionResult
+        pendingNotificationPermissionResult = null
+        pendingResult?.success(notificationPermissionSnapshot())
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        pendingAppLink = verifiedAppLink(intent)
         Log.d("ACTIVITY", "onCreate ts=${System.currentTimeMillis()} saved=${savedInstanceState != null}")
         super.onCreate(savedInstanceState)
     }
 
     override fun onDestroy() {
         Log.d("ACTIVITY", "onDestroy ts=${System.currentTimeMillis()}")
+        pendingNotificationPermissionResult?.error(
+            "activity_destroyed",
+            "Notification permission request was interrupted",
+            null,
+        )
+        pendingNotificationPermissionResult = null
         try {
             FlutterEngineCache.getInstance().remove(EntitlementAuthSyncBridge.ENGINE_CACHE_ID)
         } catch (_: Exception) {
@@ -45,6 +72,10 @@ class MainActivity: FlutterFragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        verifiedAppLink(intent)?.let { link ->
+            pendingAppLink = link
+            appLinksChannel?.invokeMethod("onAppLink", link)
+        }
         Log.d(
             "ACTIVITY",
             "onNewIntent quick_tile_action=${intent.getStringExtra(QuickTileService.EXTRA_QUICK_TILE_ACTION) ?: "-"}",
@@ -60,23 +91,50 @@ class MainActivity: FlutterFragmentActivity() {
         // the plugin currently crashes on FlutterFragmentActivity with ClassCastException.
         SafePluginRegistrant.registerWith(flutterEngine)
 
+        appLinksChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.granivpn.mobile/app_links",
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getInitialLink" -> {
+                        val link = pendingAppLink
+                        pendingAppLink = null
+                        result.success(link)
+                    }
+                    "getInstallReferrer" -> readInstallReferrer(result)
+                    else -> result.notImplemented()
+                }
+            }
+        }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.granivpn.mobile/notifications")
             .setMethodCallHandler { call, result ->
-                if (call.method == "createNotificationChannel") {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        val id = call.argument<String>("id") ?: "grani_notifications"
-                        val name = call.argument<String>("name") ?: "GRANI"
-                        val desc = call.argument<String>("description") ?: ""
-                        val importance = call.argument<Int>("importance") ?: NotificationManager.IMPORTANCE_HIGH
-                        val channel = NotificationChannel(id, name, importance).apply {
-                            description = desc
+                when (call.method) {
+                    "createNotificationChannel" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            val id = call.argument<String>("id") ?: "grani_notifications"
+                            val name = call.argument<String>("name") ?: "GRANI"
+                            val desc = call.argument<String>("description") ?: ""
+                            val importance = call.argument<Int>("importance") ?: NotificationManager.IMPORTANCE_HIGH
+                            val channel = NotificationChannel(id, name, importance).apply {
+                                description = desc
+                            }
+                            val nm = getSystemService(NotificationManager::class.java)
+                            nm.createNotificationChannel(channel)
                         }
-                        val nm = getSystemService(NotificationManager::class.java)
-                        nm.createNotificationChannel(channel)
+                        result.success(null)
                     }
-                    result.success(null)
-                } else {
-                    result.notImplemented()
+                    "openNotificationSettings" -> {
+                        result.success(openNotificationSettings())
+                    }
+                    "notificationPermissionSnapshot" -> {
+                        result.success(notificationPermissionSnapshot())
+                    }
+                    "requestPostNotificationsPermission" -> {
+                        requestPostNotificationsPermission(result)
+                    }
+                    else -> result.notImplemented()
                 }
             }
 
@@ -153,6 +211,104 @@ class MainActivity: FlutterFragmentActivity() {
                     result.notImplemented()
                 }
             }
+    }
+
+    private fun openNotificationSettings(): Boolean {
+        return try {
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                }
+            } else {
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", packageName, null),
+                )
+            }
+            startActivity(intent)
+            true
+        } catch (error: Exception) {
+            Log.w("MainActivity", "Unable to open notification settings", error)
+            false
+        }
+    }
+
+    private fun notificationPermissionSnapshot(): Map<String, Any> {
+        val runtimePermissionRequired =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        val runtimePermissionGranted = !runtimePermissionRequired ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+        return mapOf(
+            "enabled" to NotificationManagerCompat.from(this).areNotificationsEnabled(),
+            "runtime_permission_required" to runtimePermissionRequired,
+            "runtime_permission_granted" to runtimePermissionGranted,
+            "sdk_int" to Build.VERSION.SDK_INT,
+        )
+    }
+
+    private fun requestPostNotificationsPermission(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            result.success(notificationPermissionSnapshot())
+            return
+        }
+        if (pendingNotificationPermissionResult != null) {
+            result.error(
+                "request_in_progress",
+                "Notification permission request is already in progress",
+                null,
+            )
+            return
+        }
+        pendingNotificationPermissionResult = result
+        postNotificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun verifiedAppLink(intent: Intent?): String? {
+        val uri = intent?.data ?: return null
+        val path = uri.path ?: return null
+        if (!uri.scheme.equals("https", ignoreCase = true)) return null
+        if (!uri.host.equals("granilink.com", ignoreCase = true)) return null
+        if (path != "/open" && !path.startsWith("/open/")) return null
+        return uri.toString()
+    }
+
+    private fun readInstallReferrer(result: MethodChannel.Result) {
+        val client = InstallReferrerClient.newBuilder(applicationContext).build()
+        client.startConnection(object : InstallReferrerStateListener {
+            override fun onInstallReferrerSetupFinished(responseCode: Int) {
+                try {
+                    if (responseCode != InstallReferrerResponse.OK) {
+                        result.success(null)
+                        return
+                    }
+                    val details = client.installReferrer
+                    result.success(
+                        mapOf(
+                            "install_referrer" to details.installReferrer,
+                            "click_timestamp_seconds" to details.referrerClickTimestampSeconds,
+                            "install_timestamp_seconds" to details.installBeginTimestampSeconds,
+                        ),
+                    )
+                } catch (error: Exception) {
+                    Log.w("MainActivity", "Install Referrer unavailable", error)
+                    result.success(null)
+                } finally {
+                    client.endConnection()
+                }
+            }
+
+            override fun onInstallReferrerServiceDisconnected() {
+                // A later cold start may retry until the Dart side marks the read complete.
+            }
+        })
     }
     
     // Устаревший метод onActivityResult оставлен для обратной совместимости

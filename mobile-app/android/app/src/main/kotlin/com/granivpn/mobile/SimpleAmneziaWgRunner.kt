@@ -11,6 +11,8 @@ import java.io.ByteArrayInputStream
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicLong
 
 object SimpleAmneziaWgRunner {
     private const val TAG = "SimpleAmneziaWG"
@@ -20,12 +22,30 @@ object SimpleAmneziaWgRunner {
     private const val MAX_DIRECT_DOMAIN_IPS = 16
     private const val MAX_ALLOWED_IPS_CIDRS = 640
     private const val FORCE_GRANIWG_FULL_TUNNEL = false
+    private const val SET_STATE_UP_MAX_ATTEMPTS = 2
+    private const val SET_STATE_UP_RETRY_DELAY_MS = 650L
+    private const val VERIFY_TRAFFIC_TIMEOUT_MS = 25_000L
+    private const val VERIFY_TRAFFIC_POLL_MS = 250L
     private val lock = Any()
+    private val connectionGeneration = AtomicLong(0L)
     private var backend: GoBackend? = null
     private var lastAppContext: Context? = null
+    @Volatile
+    private var lastKnownState: Tunnel.State = Tunnel.State.DOWN
     private val tunnel = SimpleTunnel("grani-awg")
 
+    data class VerificationResult(
+        val verified: Boolean,
+        val generation: Long,
+        val rxBytes: Long,
+        val txBytes: Long,
+        val latestHandshakeEpochMillis: Long,
+        val elapsedMs: Long,
+        val reason: String,
+    )
+
     fun connect(context: Context, configText: String): Tunnel.State = synchronized(lock) {
+        connectionGeneration.incrementAndGet()
         val appContext = context.applicationContext
         lastAppContext = appContext
         val normalizedConfig = normalizeAmneziaObfuscation(configText)
@@ -36,15 +56,213 @@ object SimpleAmneziaWgRunner {
         }
         val activeBackend = backend ?: GoBackend(appContext).also { backend = it }
         Log.i(TAG, "connect: parsed AmneziaWG config, peers=${parsedConfig.peers.size}")
-        val state = activeBackend.setState(tunnel, Tunnel.State.UP, parsedConfig)
-        if (state == Tunnel.State.UP) {
-            NativeVpnRuntimeState.markAwgExpectedUp(appContext, true)
+        NativeVpnRuntimeState.markAwgExpectedUp(appContext, true)
+        try {
             GraniAwgNotificationService.start(appContext)
-            NativeVpnRuntimeState.notifyQuickTile(appContext)
-        } else {
-            NativeVpnRuntimeState.markAwgExpectedUp(appContext, false)
+        } catch (e: Exception) {
+            Log.w(TAG, "connect: foreground holder start before setState failed", e)
         }
+        val state = try {
+            setStateUpWithRetries(activeBackend, parsedConfig)
+        } catch (e: Exception) {
+            lastKnownState = Tunnel.State.DOWN
+            NativeVpnRuntimeState.markAwgExpectedUp(appContext, false)
+            GraniAwgNotificationService.stop(appContext)
+            NativeVpnRuntimeState.notifyQuickTile(appContext)
+            throw e
+        }
+        lastKnownState = state
+        if (state != Tunnel.State.UP) {
+            NativeVpnRuntimeState.markAwgExpectedUp(appContext, false)
+            GraniAwgNotificationService.stop(appContext)
+        }
+        NativeVpnRuntimeState.notifyQuickTile(appContext)
         state
+    }
+
+    fun currentGeneration(): Long = connectionGeneration.get()
+
+    /**
+     * Tunnel.State.UP only proves that Android created a TUN interface. It does
+     * not prove that the peer answered. Treat the AWG data plane as ready only
+     * after the active generation has received a handshake and inbound bytes.
+     */
+    fun awaitVerifiedTraffic(
+        generation: Long,
+        timeoutMs: Long = VERIFY_TRAFFIC_TIMEOUT_MS,
+        shouldCancel: () -> Boolean = { false },
+    ): VerificationResult {
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        val deadline = startedAt + timeoutMs.coerceAtLeast(0L)
+        var lastRx = 0L
+        var lastTx = 0L
+        var lastHandshake = 0L
+        var lastStatsError: Throwable? = null
+
+        while (android.os.SystemClock.elapsedRealtime() <= deadline) {
+            if (shouldCancel()) {
+                return VerificationResult(
+                    verified = false,
+                    generation = generation,
+                    rxBytes = lastRx,
+                    txBytes = lastTx,
+                    latestHandshakeEpochMillis = lastHandshake,
+                    elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt,
+                    reason = "connect_superseded_by_disconnect",
+                )
+            }
+            if (connectionGeneration.get() != generation) {
+                return VerificationResult(
+                    verified = false,
+                    generation = generation,
+                    rxBytes = lastRx,
+                    txBytes = lastTx,
+                    latestHandshakeEpochMillis = lastHandshake,
+                    elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt,
+                    reason = "stale_generation",
+                )
+            }
+
+            val activeBackend = synchronized(lock) { backend }
+            if (activeBackend == null || lastKnownState != Tunnel.State.UP) {
+                return VerificationResult(
+                    verified = false,
+                    generation = generation,
+                    rxBytes = lastRx,
+                    txBytes = lastTx,
+                    latestHandshakeEpochMillis = lastHandshake,
+                    elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt,
+                    reason = "tunnel_down",
+                )
+            }
+
+            try {
+                val statistics = activeBackend.getStatistics(tunnel)
+                lastRx = statistics.totalRx()
+                lastTx = statistics.totalTx()
+                lastHandshake = statistics.peers()
+                    .mapNotNull { peer -> statistics.peer(peer)?.latestHandshakeEpochMillis() }
+                    .maxOrNull() ?: 0L
+                if (isVerifiedTraffic(lastHandshake, lastRx)) {
+                    val elapsed = android.os.SystemClock.elapsedRealtime() - startedAt
+                    Log.i(
+                        TAG,
+                        "dataplane verified generation=$generation elapsed_ms=$elapsed " +
+                            "handshake_ms=$lastHandshake rx_bytes=$lastRx tx_bytes=$lastTx",
+                    )
+                    return VerificationResult(
+                        verified = true,
+                        generation = generation,
+                        rxBytes = lastRx,
+                        txBytes = lastTx,
+                        latestHandshakeEpochMillis = lastHandshake,
+                        elapsedMs = elapsed,
+                        reason = "handshake_and_rx",
+                    )
+                }
+            } catch (error: Throwable) {
+                lastStatsError = error
+                Log.w(TAG, "dataplane statistics read failed: ${error.message}")
+            }
+
+            try {
+                Thread.sleep(VERIFY_TRAFFIC_POLL_MS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return VerificationResult(
+                    verified = false,
+                    generation = generation,
+                    rxBytes = lastRx,
+                    txBytes = lastTx,
+                    latestHandshakeEpochMillis = lastHandshake,
+                    elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt,
+                    reason = "interrupted",
+                )
+            }
+        }
+
+        val reason = if (lastStatsError == null) {
+            "handshake_timeout"
+        } else {
+            "statistics_error_${lastStatsError.javaClass.simpleName}"
+        }
+        return VerificationResult(
+            verified = false,
+            generation = generation,
+            rxBytes = lastRx,
+            txBytes = lastTx,
+            latestHandshakeEpochMillis = lastHandshake,
+            elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt,
+            reason = reason,
+        )
+    }
+
+    internal fun isVerifiedTraffic(latestHandshakeEpochMillis: Long, rxBytes: Long): Boolean {
+        return latestHandshakeEpochMillis > 0L && rxBytes > 0L
+    }
+
+    private fun setStateUpWithRetries(
+        activeBackend: GoBackend,
+        parsedConfig: Config,
+    ): Tunnel.State {
+        var lastError: Exception? = null
+        for (attempt in 1..SET_STATE_UP_MAX_ATTEMPTS) {
+            try {
+                if (attempt > 1) {
+                    Log.i(TAG, "connect: retry setState UP attempt=$attempt")
+                }
+                return activeBackend.setState(tunnel, Tunnel.State.UP, parsedConfig)
+            } catch (e: Exception) {
+                lastError = e
+                if (!isTransientSetStateUpError(e) || attempt == SET_STATE_UP_MAX_ATTEMPTS) {
+                    throw e
+                }
+                Log.w(
+                    TAG,
+                    "connect: transient setState UP failure attempt=$attempt/${SET_STATE_UP_MAX_ATTEMPTS}: " +
+                        "${e.javaClass.simpleName}:${e.message}",
+                )
+                val lateState = try {
+                    activeBackend.getState(tunnel)
+                } catch (_: Exception) {
+                    null
+                }
+                if (lateState == Tunnel.State.UP) {
+                    Log.i(TAG, "connect: setState UP completed after timeout attempt=$attempt")
+                    return Tunnel.State.UP
+                }
+                try {
+                    Log.i(TAG, "connect: cleanup DOWN before retry attempt=$attempt")
+                    activeBackend.setState(tunnel, Tunnel.State.DOWN, null)
+                } catch (cleanupError: Exception) {
+                    Log.w(
+                        TAG,
+                        "connect: cleanup DOWN before retry failed attempt=$attempt: " +
+                            "${cleanupError.javaClass.simpleName}:${cleanupError.message}",
+                    )
+                }
+                try {
+                    Thread.sleep(SET_STATE_UP_RETRY_DELAY_MS * attempt)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw e
+                }
+            }
+        }
+        throw lastError ?: IllegalStateException("setState UP did not return")
+    }
+
+    private fun isTransientSetStateUpError(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            if (current is TimeoutException) return true
+            val name = current.javaClass.simpleName
+            val message = current.message.orEmpty()
+            if (name.contains("Timeout", ignoreCase = true)) return true
+            if (message.contains("Timeout", ignoreCase = true)) return true
+            current = current.cause
+        }
+        return false
     }
 
     private fun normalizeAmneziaObfuscation(configText: String): String {
@@ -411,14 +629,17 @@ object SimpleAmneziaWgRunner {
     }
 
     fun disconnect(context: Context? = null) = synchronized(lock) {
+        connectionGeneration.incrementAndGet()
         val appContext = context?.applicationContext ?: lastAppContext
         val activeBackend = backend ?: appContext?.let { GoBackend(it).also { backend = it } } ?: return@synchronized
         try {
             activeBackend.setState(tunnel, Tunnel.State.DOWN, null)
+            lastKnownState = Tunnel.State.DOWN
             Log.i(TAG, "disconnect: AmneziaWG tunnel down")
         } catch (e: Exception) {
             Log.w(TAG, "disconnect: failed", e)
         } finally {
+            lastKnownState = Tunnel.State.DOWN
             appContext?.let {
                 NativeVpnRuntimeState.markAwgExpectedUp(it, false)
                 GraniAwgNotificationService.stop(it)
@@ -427,14 +648,13 @@ object SimpleAmneziaWgRunner {
         }
     }
 
-    fun isUp(): Boolean = synchronized(lock) {
-        backend?.getState(tunnel) == Tunnel.State.UP
-    }
+    fun isUp(): Boolean = lastKnownState == Tunnel.State.UP
 
     private class SimpleTunnel(private val tunnelName: String) : Tunnel {
         override fun getName(): String = tunnelName
 
         override fun onStateChange(newState: Tunnel.State) {
+            lastKnownState = newState
             Log.i(TAG, "tunnel state changed: $newState")
         }
     }

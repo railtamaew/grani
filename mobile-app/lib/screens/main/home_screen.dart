@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../services/auth_service.dart';
@@ -14,7 +13,6 @@ import '../../widgets/error_banner.dart';
 import '../../widgets/snackbar_utils.dart';
 import '../../widgets/vpn_top_bar.dart';
 import '../../config/app_config.dart';
-import '../../core/vpn_state_machine.dart';
 import '../../core/vpn/connection_action_orchestrator.dart';
 import '../../core/vpn/button_connection_state_mapper.dart';
 import '../../core/vpn/connection_ui_action_applier.dart';
@@ -116,7 +114,8 @@ class _HomeScreenState extends State<HomeScreen> {
         final flowBadge =
             VpnShellUiHelpers.connectionFlowBadge(vpnService, context.l10n);
         final isConnecting = buttonState == ButtonConnectionState.connecting;
-        final isDisconnecting = buttonState == ButtonConnectionState.disconnecting;
+        final isDisconnecting =
+            buttonState == ButtonConnectionState.disconnecting;
         final isConnectingOrDisconnecting = isConnecting || isDisconnecting;
         final titleBlockWidth = 347 * scaleX;
 
@@ -146,7 +145,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       right: 0,
                       bottom: 0,
                       child: Container(
-                        height: safeBottom + GraniTheme.navigationBarHeight * scaleY,
+                        height: safeBottom +
+                            GraniTheme.navigationBarHeight * scaleY,
                         color: const Color(0xFFF7F9FA),
                       ),
                     ),
@@ -157,11 +157,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       onShareTap: () async {
                         try {
                           await Share.share(
-                            context.l10n.profileSharePlayStoreMessage(AppConfig.sharePlayStoreUrl),
+                            context.l10n.profileSharePlayStoreMessage(
+                                AppConfig.sharePlayStoreUrl),
                           );
                         } catch (_) {
                           if (context.mounted) {
-                            showErrorSnackBar(context, context.l10n.profileShareFailed);
+                            showErrorSnackBar(
+                                context, context.l10n.profileShareFailed);
                           }
                         }
                       },
@@ -169,7 +171,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     // Заголовок и подзаголовок привязаны (не скроллятся) в состояниях off/on
                     if (!isConnectingOrDisconnecting)
                       Positioned(
-                        top: (12 + 39 + 12 + GraniTheme.trialTitleBlockTopGap) * scaleY,
+                        top: (12 + 39 + 12 + GraniTheme.trialTitleBlockTopGap) *
+                            scaleY,
                         left: (screenWidth - titleBlockWidth) / 2,
                         child: SizedBox(
                           width: titleBlockWidth,
@@ -184,12 +187,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: TextStyle(
                                   fontFamily: 'Montserrat',
                                   fontWeight: FontWeight.w400,
-                                  fontSize: GraniTheme.trialTitleFontSize * scaleX,
+                                  fontSize:
+                                      GraniTheme.trialTitleFontSize * scaleX,
                                   height: 28.8 / GraniTheme.trialTitleFontSize,
                                   letterSpacing: -1.28 * scaleX,
                                   color: const Color(0xFF192F3F),
                                 ),
-                              textAlign: TextAlign.center,
+                                textAlign: TextAlign.center,
                               ),
                               SizedBox(height: tokens.textGap * scaleY),
                               AdaptiveSubtitleText(
@@ -198,12 +202,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: TextStyle(
                                   fontFamily: 'Montserrat',
                                   fontWeight: FontWeight.w300,
-                                  fontSize: 16 * scaleX,
-                                  height: 15.52 / 16,
-                                  letterSpacing: 0.96 * scaleX,
+                                  fontSize: 15 * scaleX,
+                                  height: 1.12,
+                                  letterSpacing: 0,
                                   color: const Color(0xFF192F3F),
                                 ),
-                              textAlign: TextAlign.center,
+                                textAlign: TextAlign.center,
                               ),
                               if (flowBadge != null) ...[
                                 SizedBox(height: 8 * scaleY),
@@ -218,15 +222,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ),
                                   child: Text(
                                     flowBadge,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                       fontFamily: 'Montserrat',
                                       fontWeight: FontWeight.w500,
                                       fontSize: 12 * scaleX,
                                       color: const Color(0xFF192F3F),
                                     ),
-                                  textAlign: TextAlign.center,
+                                    textAlign: TextAlign.center,
                                   ),
                                 ),
                               ],
@@ -236,7 +240,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     if (isConnectingOrDisconnecting)
                       Positioned(
-                        top: (12 + 39 + 12 + GraniTheme.trialTitleBlockTopGap) * scaleY,
+                        top: (12 + 39 + 12 + GraniTheme.trialTitleBlockTopGap) *
+                            scaleY,
                         left: (screenWidth - titleBlockWidth) / 2,
                         child: SizedBox(
                           width: titleBlockWidth,
@@ -251,7 +256,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: TextStyle(
                                   fontFamily: 'Montserrat',
                                   fontWeight: FontWeight.w400,
-                                  fontSize: GraniTheme.trialTitleFontSize * scaleX,
+                                  fontSize:
+                                      GraniTheme.trialTitleFontSize * scaleX,
                                   height: 28.8 / GraniTheme.trialTitleFontSize,
                                   letterSpacing: -1.28 * scaleX,
                                   color: const Color(0xFF192F3F),
@@ -272,9 +278,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: TextStyle(
                                   fontFamily: 'Montserrat',
                                   fontWeight: FontWeight.w300,
-                                  fontSize: 16 * scaleX,
-                                  height: 15.52 / 16,
-                                  letterSpacing: 0.96 * scaleX,
+                                  fontSize: 15 * scaleX,
+                                  height: 1.12,
+                                  letterSpacing: 0,
                                   color: const Color(0xFF192F3F),
                                   shadows: [
                                     Shadow(
@@ -314,9 +320,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     // Блок подключения: Selector — rebuild только при изменении state/progress/speed
                     Positioned(
-                      bottom: GraniTheme.vpnCardBottomMargin * scaleY + safeBottom,
-                      left: (screenWidth - GraniTheme.backgroundBoxWidth * scaleX) / 2,
-                      child: Selector<VpnService,
+                      bottom:
+                          GraniTheme.vpnCardBottomMargin * scaleY + safeBottom,
+                      left: (screenWidth -
+                              GraniTheme.backgroundBoxWidth * scaleX) /
+                          2,
+                      child: Selector<
+                          VpnService,
                           (
                             ButtonConnectionState,
                             String?,
@@ -347,7 +357,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             speedMbps: data.$4,
                             hasEverSeenTraffic: data.$5,
                             connectionState: data.$1,
-                            progressMessage: VpnShellUiHelpers.friendlyProgressMessage(
+                            progressMessage:
+                                VpnShellUiHelpers.friendlyProgressMessage(
                               data.$2,
                               l10n,
                             ),
@@ -365,12 +376,15 @@ class _HomeScreenState extends State<HomeScreen> {
                         alignment: Alignment.bottomCenter,
                         child: Padding(
                           padding: EdgeInsets.only(
-                            bottom: GraniTheme.navigationBarHeight * scaleY + safeBottom + 20,
+                            bottom: GraniTheme.navigationBarHeight * scaleY +
+                                safeBottom +
+                                20,
                           ),
                           child: ErrorBanner(
                             message: _errorMessage ?? '',
                             visible: _errorMessage != null,
-                            onDismiss: () => setState(() => _errorMessage = null),
+                            onDismiss: () =>
+                                setState(() => _errorMessage = null),
                           ),
                         ),
                       ),

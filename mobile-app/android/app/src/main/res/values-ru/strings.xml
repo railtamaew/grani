@@ -1,12 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">GRANI</string>
+    <string name="asset_statements" translatable="false">[{"include":"https://granilink.com/.well-known/assetlinks.json"}]</string>
     <string name="quick_tile_label">GRANI</string>
-    <string name="quick_tile_no_config">Сначала подключитесь в приложении</string>
+    <string name="quick_tile_no_config">Откройте GRANI для первого подключения</string>
+    <string name="quick_tile_access_not_ready">Откройте GRANI, чтобы обновить доступ аккаунта</string>
+    <string name="quick_tile_missing_config">Один раз подключитесь в GRANI перед быстрой кнопкой</string>
+    <string name="quick_tile_permission_required">Откройте GRANI и разрешите VPN-подключение</string>
+    <string name="quick_tile_connect_failed">Не удалось подключиться. Откройте GRANI и попробуйте снова.</string>
     <string name="quick_tile_subscription_required">Требуется активная подписка. Оформите подписку в приложении.</string>
     <string name="vpn_notification_channel_name">GRANI VPN</string>
     <string name="vpn_notification_title">GRANI</string>
+    <string name="vpn_notification_connecting">Подключение…</string>
     <string name="vpn_notification_connected">VPN подключён</string>
+    <string name="vpn_notification_disconnecting">Отключение…</string>
+    <string name="vpn_notification_error">Сбой подключения VPN</string>
     <string name="vpn_notification_recovering">Восстановление…</string>
     <string name="vpn_notification_reconnecting">Переподключение сети…</string>
+    <string name="quick_tile_state_connecting">Подключение…</string>
+    <string name="quick_tile_state_connected">Подключено</string>
+    <string name="quick_tile_state_disconnecting">Отключение…</string>
+    <string name="quick_tile_state_error">Ошибка</string>
+    <string name="quick_tile_state_off">Выключено</string>
 </resources>

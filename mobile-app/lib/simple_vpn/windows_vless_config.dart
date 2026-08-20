@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'simple_vpn_api.dart';
+import 'windows_sing_box_tun.dart';
+import 'windows_split_tunnel_settings.dart';
 
 class WindowsVlessConfigException implements Exception {
   const WindowsVlessConfigException(this.message);
@@ -11,7 +13,11 @@ class WindowsVlessConfigException implements Exception {
   String toString() => message;
 }
 
-String buildWindowsVlessConfig(SimpleVpnConfig config) {
+String buildWindowsVlessConfig(
+  SimpleVpnConfig config, {
+  WindowsSplitTunnelSettingsData splitTunnel =
+      const WindowsSplitTunnelSettingsData(),
+}) {
   final source = config.jsonConfig;
   final protocol = _requiredString(source, 'protocol').toLowerCase();
   if (protocol != 'vless') {
@@ -52,7 +58,6 @@ String buildWindowsVlessConfig(SimpleVpnConfig config) {
     'server': server,
     'server_port': port,
     'uuid': uuid,
-    'network': 'tcp',
     'transport': <String, dynamic>{
       'type': 'ws',
       'path': path,
@@ -68,33 +73,15 @@ String buildWindowsVlessConfig(SimpleVpnConfig config) {
     };
   }
 
-  return jsonEncode(<String, dynamic>{
-    'log': <String, dynamic>{
-      'level': 'info',
-      'timestamp': true,
-    },
-    'inbounds': <Map<String, dynamic>>[
-      <String, dynamic>{
-        'type': 'tun',
-        'tag': 'tun-in',
-        'interface_name': 'grani-vless',
-        'address': <String>['172.20.0.1/30'],
-        'mtu': 1280,
-        'auto_route': true,
-        'strict_route': true,
-        'route_exclude_address': <String>['$nodeIpv4/32'],
-        'stack': 'system',
-      },
-    ],
-    'outbounds': <Map<String, dynamic>>[
-      outbound,
-      <String, dynamic>{'type': 'direct', 'tag': 'direct'},
-    ],
-    'route': <String, dynamic>{
-      'auto_detect_interface': true,
-      'final': 'proxy',
-    },
-  });
+  return jsonEncode(
+    buildWindowsSingBoxTun(
+      proxyOutbound: outbound,
+      nodeIpv4: nodeIpv4,
+      interfaceName: 'grani-vless',
+      address: '172.20.0.1/30',
+      splitTunnel: splitTunnel,
+    ),
+  );
 }
 
 String _requiredString(Map<String, dynamic> source, String key) {

@@ -14,6 +14,7 @@ import '../services/vpn_service.dart';
 import '../services/push_notification_service.dart';
 import '../services/analytics_service.dart';
 import '../config/app_config.dart';
+import '../core/session/post_auth_preparation_coordinator.dart';
 import '../core/session/device_limit_flow.dart'
     show registerDeviceUntilOkWithModal;
 import '../l10n/l10n.dart';
@@ -441,6 +442,41 @@ class _StartScreenState extends State<StartScreen>
     });
 
     final authService = Provider.of<AuthService>(context, listen: false);
+    var postAuthPreparationOpened = false;
+    var screenTimerStopped = false;
+
+    void stopAndLogNavigation(String route, String reason) {
+      if (screenTimerStopped) return;
+      screenTimerStopped = true;
+      screenTotalSw.stop();
+      _logStartAuthTiming('navigation_done', {
+        'total_ms': screenTotalSw.elapsedMilliseconds,
+        'route': route,
+        'reason': reason,
+      });
+    }
+
+    void openPostAuthPreparation(String reason) {
+      if (!AppConfig.enablePostAuthPreparationScreen) return;
+      if (postAuthPreparationOpened) return;
+      if (!context.mounted) return;
+
+      postAuthPreparationOpened = true;
+      _logStartAuthTiming('post_auth_preparation_open_requested', {
+        'total_so_far_ms': screenTotalSw.elapsedMilliseconds,
+        'reason': reason,
+      });
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/post-auth-preparation',
+        (_) => false,
+        arguments: const PostAuthPreparationArguments(source: 'google'),
+      );
+      stopAndLogNavigation('/post-auth-preparation', reason);
+      debugPrint(
+        'StartScreen: Navigator.pushNamedAndRemoveUntil done -> /post-auth-preparation reason=$reason',
+      );
+    }
 
     try {
       debugPrint('=== НАЧАЛО GOOGLE OAUTH ===');
@@ -452,7 +488,11 @@ class _StartScreenState extends State<StartScreen>
       }
 
       final authServiceSw = Stopwatch()..start();
-      final result = await authService.signInWithGoogle();
+      final result = await authService.signInWithGoogle(
+        onGoogleAccountSelected: () {
+          openPostAuthPreparation('google_account_selected');
+        },
+      );
       authServiceSw.stop();
       _logStartAuthTiming('auth_service_done', {
         'elapsed_ms': authServiceSw.elapsedMilliseconds,
@@ -486,8 +526,13 @@ class _StartScreenState extends State<StartScreen>
         // ASCII: logcat on some devices mangles Cyrillic in debugPrint.
         debugPrint(
           'StartScreen: Google OAuth OK user=${result.user?.id} '
-          'build=${AppConfig.buildNumber} targetRoute=$targetRoute (nav after post-frame)',
+          'build=${AppConfig.buildNumber} marker=${AppConfig.diagnosticBuildMarker} targetRoute=$targetRoute (nav after post-frame)',
         );
+
+        if (AppConfig.enablePostAuthPreparationScreen) {
+          openPostAuthPreparation('google_success_fallback');
+          return;
+        }
 
         try {
           AnalyticsService().logLogin('google');
@@ -551,11 +596,7 @@ class _StartScreenState extends State<StartScreen>
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!context.mounted) return;
           Navigator.pushNamedAndRemoveUntil(context, route, (_) => false);
-          screenTotalSw.stop();
-          _logStartAuthTiming('navigation_done', {
-            'total_ms': screenTotalSw.elapsedMilliseconds,
-            'route': route,
-          });
+          stopAndLogNavigation(route, 'google_success');
           debugPrint(
               'StartScreen: Navigator.pushNamedAndRemoveUntil done -> $route');
         });

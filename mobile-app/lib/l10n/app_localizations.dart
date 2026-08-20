@@ -1288,7 +1288,7 @@ abstract class AppLocalizations {
   /// No description provided for @vpnConnectPatienceWarm.
   ///
   /// In en, this message translates to:
-  /// **'Reconnecting is taking longer than usual — please wait, we are still connecting.'**
+  /// **'Reconnection is taking longer. Still connecting...'**
   String get vpnConnectPatienceWarm;
 
   /// No description provided for @vpnRetryRouteWarm.
@@ -1300,13 +1300,13 @@ abstract class AppLocalizations {
   /// No description provided for @vpnSlowNetworkWarm.
   ///
   /// In en, this message translates to:
-  /// **'Connection may take longer due to the network.'**
+  /// **'Network is unstable. Connecting...'**
   String get vpnSlowNetworkWarm;
 
   /// No description provided for @vpnConnectPatienceCold.
   ///
   /// In en, this message translates to:
-  /// **'First-time setup on a slow network can take up to a minute — please wait, this is normal.'**
+  /// **'First-time setup may take up to a minute.'**
   String get vpnConnectPatienceCold;
 
   /// No description provided for @vpnOptimizeRoute.
@@ -1318,7 +1318,7 @@ abstract class AppLocalizations {
   /// No description provided for @vpnSlowNetworkCold.
   ///
   /// In en, this message translates to:
-  /// **'Slow network is normal, still connecting...'**
+  /// **'Network is unstable. Still connecting...'**
   String get vpnSlowNetworkCold;
 
   /// No description provided for @connectionStagesProgressSemantic.
@@ -1489,6 +1489,48 @@ abstract class AppLocalizations {
   /// **'Notifications from GRANI'**
   String get notificationChannelDescription;
 
+  /// No description provided for @notificationPermissionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Don\'t miss access updates'**
+  String get notificationPermissionTitle;
+
+  /// No description provided for @notificationPermissionBody.
+  ///
+  /// In en, this message translates to:
+  /// **'GRANI will remind you when the trial ends and notify you about important access changes. No ads.'**
+  String get notificationPermissionBody;
+
+  /// No description provided for @notificationPermissionAllow.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow notifications'**
+  String get notificationPermissionAllow;
+
+  /// No description provided for @notificationPermissionLater.
+  ///
+  /// In en, this message translates to:
+  /// **'Not now'**
+  String get notificationPermissionLater;
+
+  /// No description provided for @notificationPermissionSettingsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on notifications in Settings'**
+  String get notificationPermissionSettingsTitle;
+
+  /// No description provided for @notificationPermissionSettingsBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications for GRANI are currently off. Turn them on to receive payment, access expiry, and important subscription updates.'**
+  String get notificationPermissionSettingsBody;
+
+  /// No description provided for @notificationPermissionOpenSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Settings'**
+  String get notificationPermissionOpenSettings;
+
   /// No description provided for @profileLogoutDisconnectWarning.
   ///
   /// In en, this message translates to:
@@ -1564,7 +1606,7 @@ abstract class AppLocalizations {
   /// No description provided for @trialUiSubtitleInitial.
   ///
   /// In en, this message translates to:
-  /// **'You have 24 hours of protected access.'**
+  /// **'Your protected trial access is active.'**
   String get trialUiSubtitleInitial;
 
   /// No description provided for @trialUiSubtitleDisconnected.
@@ -1858,37 +1900,49 @@ abstract class AppLocalizations {
   /// No description provided for @tariffPriceMonthly.
   ///
   /// In en, this message translates to:
-  /// **'\$8/mo'**
+  /// **'Google Play price'**
   String get tariffPriceMonthly;
 
   /// No description provided for @tariffPriceSixMonth.
   ///
   /// In en, this message translates to:
-  /// **'\$6.8/mo'**
+  /// **'Google Play price'**
   String get tariffPriceSixMonth;
 
   /// No description provided for @tariffPriceYearly.
   ///
   /// In en, this message translates to:
-  /// **'\$5.6/mo'**
+  /// **'Google Play price'**
   String get tariffPriceYearly;
+
+  /// No description provided for @tariffPriceLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading price…'**
+  String get tariffPriceLoading;
+
+  /// No description provided for @tariffPriceUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Price unavailable'**
+  String get tariffPriceUnavailable;
 
   /// No description provided for @tariffDescMonthly.
   ///
   /// In en, this message translates to:
-  /// **'For those who want to start without commitment.'**
+  /// **'Flexible access for 1 month'**
   String get tariffDescMonthly;
 
   /// No description provided for @tariffDescSixMonth.
   ///
   /// In en, this message translates to:
-  /// **'\$40.8 — 15% off\nBalance of benefit and flexibility'**
+  /// **'Great value for 6 months'**
   String get tariffDescSixMonth;
 
   /// No description provided for @tariffDescYearly.
   ///
   /// In en, this message translates to:
-  /// **'\$67.2 — 30% off\nBest value'**
+  /// **'Best value for 12 months'**
   String get tariffDescYearly;
 
   /// No description provided for @subscriptionSnackbarPlanChanged.
@@ -1921,11 +1975,119 @@ abstract class AppLocalizations {
   /// **'Payment error. Please try again.'**
   String get subscriptionPurchaseError;
 
+  /// No description provided for @subscriptionDifferentGraniAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'The current Google Play subscription is already linked to another GRANI account. Sign in to that GRANI account or use a different Google Play account.'**
+  String get subscriptionDifferentGraniAccount;
+
+  /// No description provided for @subscriptionPreflightUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'We could not safely verify the current subscription. The purchase was not started; check your connection and try again.'**
+  String get subscriptionPreflightUnavailable;
+
+  /// No description provided for @subscriptionSamePlanAlreadyActive.
+  ///
+  /// In en, this message translates to:
+  /// **'This plan is already active in Google Play and renews automatically. To pay for a new period now, choose the 6- or 12-month plan.'**
+  String get subscriptionSamePlanAlreadyActive;
+
   /// No description provided for @subscriptionGooglePlayUnavailable.
   ///
   /// In en, this message translates to:
   /// **'Google Play purchases are not available on this device.'**
   String get subscriptionGooglePlayUnavailable;
+
+  /// No description provided for @subscriptionPayOnAndroidPrice.
+  ///
+  /// In en, this message translates to:
+  /// **'Google Play price'**
+  String get subscriptionPayOnAndroidPrice;
+
+  /// No description provided for @subscriptionPayOnAndroidTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Pay on Android'**
+  String get subscriptionPayOnAndroidTitle;
+
+  /// No description provided for @subscriptionPayOnAndroidBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan the QR code with your Android phone. In the GRANI app, sign in to the same account and pay for the selected period through Google Play.'**
+  String get subscriptionPayOnAndroidBody;
+
+  /// No description provided for @subscriptionPayOnAndroidSameAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Important: Android and Windows must use the same GRANI account.'**
+  String get subscriptionPayOnAndroidSameAccount;
+
+  /// No description provided for @subscriptionPayOnAndroidWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep this window open after payment — Windows will check the subscription automatically.'**
+  String get subscriptionPayOnAndroidWaiting;
+
+  /// No description provided for @subscriptionPayOnAndroidOpenStore.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Google Play'**
+  String get subscriptionPayOnAndroidOpenStore;
+
+  /// No description provided for @subscriptionPayOnAndroidCheck.
+  ///
+  /// In en, this message translates to:
+  /// **'Check payment'**
+  String get subscriptionPayOnAndroidCheck;
+
+  /// No description provided for @subscriptionPayOnAndroidChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking subscription…'**
+  String get subscriptionPayOnAndroidChecking;
+
+  /// No description provided for @subscriptionPayOnAndroidNotFound.
+  ///
+  /// In en, this message translates to:
+  /// **'The new payment has not appeared yet. Complete the purchase on Android and check again.'**
+  String get subscriptionPayOnAndroidNotFound;
+
+  /// No description provided for @subscriptionPayOnAndroidLinkCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Android link copied'**
+  String get subscriptionPayOnAndroidLinkCopied;
+
+  /// No description provided for @subscriptionPayOnAndroidCopyLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy link'**
+  String get subscriptionPayOnAndroidCopyLink;
+
+  /// No description provided for @splitTunnelWindowsProcessHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Process name, for example chrome.exe'**
+  String get splitTunnelWindowsProcessHint;
+
+  /// No description provided for @splitTunnelWindowsProcessAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add process'**
+  String get splitTunnelWindowsProcessAdd;
+
+  /// No description provided for @splitTunnelWindowsProcessInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid Windows process name ending in .exe.'**
+  String get splitTunnelWindowsProcessInvalid;
+
+  /// No description provided for @splitTunnelWindowsProcessAlreadyAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'This process is already added.'**
+  String get splitTunnelWindowsProcessAlreadyAdded;
 
   /// No description provided for @vpnDisconnectedAccessExpired.
   ///
@@ -1996,37 +2158,37 @@ abstract class AppLocalizations {
   /// No description provided for @paymentTariffPriceMonthly.
   ///
   /// In en, this message translates to:
-  /// **'399 ₽/mo'**
+  /// **'Google Play price'**
   String get paymentTariffPriceMonthly;
 
   /// No description provided for @paymentTariffPriceSixMonth.
   ///
   /// In en, this message translates to:
-  /// **'340 ₽/mo'**
+  /// **'Google Play price'**
   String get paymentTariffPriceSixMonth;
 
   /// No description provided for @paymentTariffPriceYearly.
   ///
   /// In en, this message translates to:
-  /// **'279 ₽/mo'**
+  /// **'Google Play price'**
   String get paymentTariffPriceYearly;
 
   /// No description provided for @paymentTariffDescMonthly.
   ///
   /// In en, this message translates to:
-  /// **'For those who want to start without commitment.'**
+  /// **'Flexible access for 1 month'**
   String get paymentTariffDescMonthly;
 
   /// No description provided for @paymentTariffDescSixMonth.
   ///
   /// In en, this message translates to:
-  /// **'2,035 ₽ — 15% off\nBalance of benefit and flexibility'**
+  /// **'Great value for 6 months'**
   String get paymentTariffDescSixMonth;
 
   /// No description provided for @paymentTariffDescYearly.
   ///
   /// In en, this message translates to:
-  /// **'3,352 ₽ — 30% off\nBest value'**
+  /// **'Best value for 12 months'**
   String get paymentTariffDescYearly;
 
   /// No description provided for @termsOfUseLink.
@@ -2136,6 +2298,193 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'You can resend in {seconds} s'**
   String authCodeResendWaitSeconds(int seconds);
+
+  /// No description provided for @paywallChoosePlanTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose access period'**
+  String get paywallChoosePlanTitle;
+
+  /// No description provided for @paywallChoosePlanSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a period. No auto-renewal.'**
+  String get paywallChoosePlanSubtitle;
+
+  /// No description provided for @paywallPlanOneMonth.
+  ///
+  /// In en, this message translates to:
+  /// **'1 month'**
+  String get paywallPlanOneMonth;
+
+  /// No description provided for @paywallPlanSixMonths.
+  ///
+  /// In en, this message translates to:
+  /// **'6 months'**
+  String get paywallPlanSixMonths;
+
+  /// No description provided for @paywallPlanTwelveMonths.
+  ///
+  /// In en, this message translates to:
+  /// **'12 months'**
+  String get paywallPlanTwelveMonths;
+
+  /// No description provided for @paywallPerMonth.
+  ///
+  /// In en, this message translates to:
+  /// **'/ mo'**
+  String get paywallPerMonth;
+
+  /// No description provided for @paywallTotal.
+  ///
+  /// In en, this message translates to:
+  /// **'Total'**
+  String get paywallTotal;
+
+  /// No description provided for @paywallBestValue.
+  ///
+  /// In en, this message translates to:
+  /// **'Best value'**
+  String get paywallBestValue;
+
+  /// No description provided for @paywallSavePercent.
+  ///
+  /// In en, this message translates to:
+  /// **'Save {percent}%'**
+  String paywallSavePercent(int percent);
+
+  /// No description provided for @paywallContinuePrice.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue — {price}'**
+  String paywallContinuePrice(String price);
+
+  /// No description provided for @paywallLoadingPlans.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading plans…'**
+  String get paywallLoadingPlans;
+
+  /// No description provided for @paywallOpeningGooglePlay.
+  ///
+  /// In en, this message translates to:
+  /// **'Opening Google Play…'**
+  String get paywallOpeningGooglePlay;
+
+  /// No description provided for @paywallVerifyingPayment.
+  ///
+  /// In en, this message translates to:
+  /// **'Verifying payment…'**
+  String get paywallVerifyingPayment;
+
+  /// No description provided for @paywallPaymentPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Payment is processing'**
+  String get paywallPaymentPending;
+
+  /// No description provided for @paywallPaymentPendingHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Access will start after the payment is confirmed.'**
+  String get paywallPaymentPendingHint;
+
+  /// No description provided for @paywallAccessActivated.
+  ///
+  /// In en, this message translates to:
+  /// **'Access activated'**
+  String get paywallAccessActivated;
+
+  /// No description provided for @paywallPaymentCanceled.
+  ///
+  /// In en, this message translates to:
+  /// **'Purchase canceled'**
+  String get paywallPaymentCanceled;
+
+  /// No description provided for @paywallPaymentErrorOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not open payment. Please try again.'**
+  String get paywallPaymentErrorOpen;
+
+  /// No description provided for @paywallStoreUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Google Play is temporarily unavailable.'**
+  String get paywallStoreUnavailable;
+
+  /// No description provided for @paywallProductsUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load plans. Check your connection.'**
+  String get paywallProductsUnavailable;
+
+  /// No description provided for @paywallVerificationFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Payment was received, but access is not confirmed yet. Try restoring it.'**
+  String get paywallVerificationFailed;
+
+  /// No description provided for @paywallRestoreFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not check the purchase. Please try again.'**
+  String get paywallRestoreFailed;
+
+  /// No description provided for @paywallRestorePurchase.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore purchase'**
+  String get paywallRestorePurchase;
+
+  /// No description provided for @paywallPrivacy.
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy'**
+  String get paywallPrivacy;
+
+  /// No description provided for @paywallTrustGooglePlay.
+  ///
+  /// In en, this message translates to:
+  /// **'Payment via Google Play'**
+  String get paywallTrustGooglePlay;
+
+  /// No description provided for @paywallTrustNoRenewals.
+  ///
+  /// In en, this message translates to:
+  /// **'No auto-renewal'**
+  String get paywallTrustNoRenewals;
+
+  /// No description provided for @paywallTrustRestore.
+  ///
+  /// In en, this message translates to:
+  /// **'Access is restored'**
+  String get paywallTrustRestore;
+
+  /// No description provided for @paywallRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get paywallRetry;
+
+  /// No description provided for @paywallTariffSemantics.
+  ///
+  /// In en, this message translates to:
+  /// **'{title}. {monthlyPrice} per month. Total {totalPrice}. {saving}. {selection}'**
+  String paywallTariffSemantics(String title, String monthlyPrice,
+      String totalPrice, String saving, String selection);
+
+  /// No description provided for @paywallSelected.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected'**
+  String get paywallSelected;
+
+  /// No description provided for @paywallNotSelected.
+  ///
+  /// In en, this message translates to:
+  /// **'Not selected'**
+  String get paywallNotSelected;
 }
 
 class _AppLocalizationsDelegate

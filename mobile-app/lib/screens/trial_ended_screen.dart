@@ -1,497 +1,359 @@
 import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
-import 'package:share_plus/share_plus.dart';
-import '../theme.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+
 import '../config/app_config.dart';
-import '../services/auth_service.dart';
-import '../services/subscription_service.dart';
-import '../config/subscription_products.dart';
 import '../config/app_navigation.dart';
-import 'bottom_sheet_profile.dart';
-import '../widgets/snackbar_utils.dart';
-import '../services/analytics_service.dart';
-import '../services/native_vpn_service.dart';
-import '../services/vpn_service.dart';
+import '../config/subscription_products.dart';
+import '../features/paywall/controller/paywall_controller.dart';
+import '../features/paywall/model/paywall_ui_state.dart';
+import '../features/paywall/model/tariff_ui_model.dart';
+import '../features/paywall/widgets/paywall_header.dart';
+import '../features/paywall/widgets/paywall_top_bar.dart';
+import '../features/paywall/widgets/premium_action_surface.dart';
+import '../features/paywall/widgets/tariff_card.dart';
+import '../features/paywall/widgets/trust_items.dart';
 import '../l10n/l10n.dart';
+import '../services/auth_service.dart';
+import '../services/native_vpn_service.dart';
+import '../services/subscription_service.dart';
+import '../services/vpn_service.dart';
+import '../widgets/snackbar_utils.dart';
 
-/// Контекст открытия экрана тарифов.
-enum SubscriptionScreenMode {
-  /// Триал/подписка закончились — пользователь не может уйти без оплаты.
-  expired,
+enum SubscriptionScreenMode { expired, upgrade, manage }
 
-  /// Активный триал — пользователь хочет оформить подписку заранее.
-  upgrade,
+bool canDismissSubscriptionScreen(SubscriptionScreenMode mode) =>
+    mode != SubscriptionScreenMode.expired;
 
-  /// Активная подписка (Premium) — продление или смена тарифа.
-  manage,
-}
-
-/// Интервал опроса статуса подписки (ручная подписка из админки)
 const _subscriptionPollInterval = Duration(seconds: 25);
 
-/// Экран тарифов (Figma 562:488).
-/// Предлагает оформить подписку. Три тарифа (1, 6, 12 мес.) для интеграции с Google Play.
-/// [mode] определяет заголовки, видимость таймера и возможность возврата назад.
+/// Conversion paywall for the three repeatable Google Play one-time products.
 class TrialEndedScreen extends StatefulWidget {
-  final SubscriptionScreenMode mode;
+  const TrialEndedScreen({
+    super.key,
+    this.mode = SubscriptionScreenMode.expired,
+  });
 
-  const TrialEndedScreen(
-      {super.key, this.mode = SubscriptionScreenMode.expired});
+  final SubscriptionScreenMode mode;
 
   @override
   State<TrialEndedScreen> createState() => _TrialEndedScreenState();
 }
 
-class _TrialEndedScreenState extends State<TrialEndedScreen> with RouteAware {
-  String? _purchasingProductId;
+class _TrialEndedScreenState extends State<TrialEndedScreen>
+    with RouteAware, WidgetsBindingObserver, SingleTickerProviderStateMixin {
+  static bool _entrancePlayedThisSession = false;
+
+  late final AnimationController _entranceController;
+  PaywallController? _paywallController;
   Timer? _subscriptionPollTimer;
+  Timer? _androidPaymentPollTimer;
   AuthService? _authServiceForListener;
+  DateTime? _androidPaymentBaselineExpiresAt;
+  bool _androidPaymentBaselineActive = false;
+  bool _androidPaymentDialogOpen = false;
+  bool _androidPaymentCheckInFlight = false;
+  int _pulseKey = 0;
+  String? _lastSelectedPlanId;
+  PaywallBillingState? _lastBillingState;
+  bool _didConfigureEntrance = false;
+
+  bool get _canPop => canDismissSubscriptionScreen(widget.mode);
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addObserver(this);
+    _entranceController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 480),
+      value: _entrancePlayedThisSession ? 1 : 0,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initializeScreen());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_didConfigureEntrance) return;
+    _didConfigureEntrance = true;
+    final reducedMotion = MediaQuery.disableAnimationsOf(context);
+    if (reducedMotion || _entrancePlayedThisSession) {
+      _entranceController.value = 1;
+    } else {
+      _entrancePlayedThisSession = true;
+      _entranceController.forward();
+    }
+    final route = ModalRoute.of(context);
+    if (route is ModalRoute<void>) appRouteObserver.subscribe(this, route);
+  }
+
+  Future<void> _initializeScreen() async {
+    if (!mounted) return;
+    if (widget.mode == SubscriptionScreenMode.expired) {
+      final disconnected = await _ensureVpnDisconnected();
+      // The mandatory paywall must always ask the backend for the current
+      // entitlement. A recent cached refresh must not strand a user here after
+      // access was restored on another device or by a delayed Play callback.
+      await _refreshAndNavigate(force: true);
       if (!mounted) return;
-      final route = ModalRoute.of(context);
-      if (route is ModalRoute<void>) {
-        appRouteObserver.subscribe(this, route);
+      if (disconnected) {
+        showInfoSnackBar(context, context.l10n.vpnDisconnectedAccessExpired);
       }
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (widget.mode == SubscriptionScreenMode.expired) {
-        final wasDisconnected = await _ensureVpnDisconnected();
-        await _refreshAndNavigate();
+      final auth = context.read<AuthService>();
+      _authServiceForListener = auth;
+      auth.addListener(_onAuthSubscriptionUpdate);
+      _subscriptionPollTimer = Timer.periodic(
+        _subscriptionPollInterval,
+        (_) => _refreshAndNavigate(),
+      );
+    }
+    if (!mounted || Platform.isWindows) return;
+    final auth = context.read<AuthService>();
+    final locale = Localizations.localeOf(context);
+    final controller = PaywallController(
+      subscriptionService: context.read<SubscriptionService>(),
+      authService: auth,
+      locale: locale.toLanguageTag(),
+      defaultPlanId: AppConfig.paywallDefaultPlanId,
+      paywallSource: widget.mode.name,
+      trialState: widget.mode == SubscriptionScreenMode.expired
+          ? 'expired'
+          : auth.hasActiveSubscription
+              ? 'paid_active'
+              : 'trial_active',
+      appLanguage: locale.languageCode,
+      experimentVariant: AppConfig.paywallExperimentVariant,
+      onNotice: _handleNotice,
+      onEntitlementGranted: () async {
         if (!mounted) return;
-        if (wasDisconnected) {
-          showInfoSnackBar(context, context.l10n.vpnDisconnectedAccessExpired);
-        }
-        final authService = Provider.of<AuthService>(context, listen: false);
-        _authServiceForListener = authService;
-        authService.addListener(_onAuthSubscriptionUpdate);
-        _subscriptionPollTimer = Timer.periodic(
-            _subscriptionPollInterval, (_) => _refreshAndNavigate());
-      }
-      if (!mounted) return;
-      final sub = Provider.of<SubscriptionService>(context, listen: false);
-      if (SubscriptionService.supported) sub.initialize();
-    });
+        Navigator.pushNamedAndRemoveUntil(context, '/main', (_) => false);
+      },
+    );
+    controller.addListener(_handlePaywallState);
+    _paywallController = controller;
+    setState(() {});
+    await controller.initialize();
+  }
+
+  void _handlePaywallState() {
+    final controller = _paywallController;
+    if (!mounted || controller == null) return;
+    final state = controller.state;
+    if (_lastSelectedPlanId != null &&
+        _lastSelectedPlanId != state.selectedPlanId) {
+      _pulseKey++;
+    }
+    if (_lastBillingState != PaywallBillingState.success &&
+        state.billingState == PaywallBillingState.success) {
+      _pulseKey++;
+      unawaited(HapticFeedback.heavyImpact());
+    }
+    _lastSelectedPlanId = state.selectedPlanId;
+    _lastBillingState = state.billingState;
+    setState(() {});
+  }
+
+  void _handleNotice(PaywallNotice notice) {
+    if (!mounted) return;
+    switch (notice) {
+      case PaywallNotice.purchaseCanceled:
+        showInfoSnackBar(context, context.l10n.paywallPaymentCanceled);
+        return;
+      case PaywallNotice.purchasePending:
+        showInfoSnackBar(context, context.l10n.paywallPaymentPendingHint);
+        return;
+      case PaywallNotice.purchaseError:
+        showErrorSnackBar(context, _errorText(_paywallController?.state));
+        return;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_paywallController?.onAppResumed());
+    }
   }
 
   @override
   void didPopNext() {
-    // Вернулись на этот экран (например, закрыли Billing UI) — сбрасываем loading.
-    if (mounted && _purchasingProductId != null) {
-      debugPrint('TrialEndedScreen: didPopNext, reset loading');
-      setState(() => _purchasingProductId = null);
-    }
-  }
-
-  void _onAuthSubscriptionUpdate() {
-    if (!mounted) return;
-    final auth = _authServiceForListener;
-    if (auth != null &&
-        (auth.hasActiveSubscription || ((auth.trialSecondsLeft ?? 0) > 0))) {
-      _subscriptionPollTimer?.cancel();
-      _subscriptionPollTimer = null;
-      auth.removeListener(_onAuthSubscriptionUpdate);
-      _authServiceForListener = null;
-      if (!auth.hasActiveSubscription && (auth.trialSecondsLeft ?? 0) > 0) {
-        showInfoSnackBar(context, context.l10n.trialAccessActivatedSnackbar);
-      }
-      Navigator.pushReplacementNamed(context, '/main');
-    }
+    unawaited(_paywallController?.onAppResumed());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     appRouteObserver.unsubscribe(this);
+    _entranceController.dispose();
     _subscriptionPollTimer?.cancel();
+    _androidPaymentPollTimer?.cancel();
     _authServiceForListener?.removeListener(_onAuthSubscriptionUpdate);
+    _paywallController?.removeListener(_handlePaywallState);
+    _paywallController?.dispose();
     super.dispose();
-  }
-
-  Future<void> _purchase(String productId) async {
-    if (_purchasingProductId != null) return;
-    setState(() => _purchasingProductId = productId);
-    debugPrint(
-        'TrialEndedScreen: _purchase start productId=$productId mode=${widget.mode}');
-    final sub = Provider.of<SubscriptionService>(context, listen: false);
-    final auth = Provider.of<AuthService>(context, listen: false);
-    try {
-      bool success;
-      final isUpgrade = widget.mode == SubscriptionScreenMode.manage ||
-          widget.mode == SubscriptionScreenMode.upgrade;
-
-      if (isUpgrade) {
-        final oldPurchase = await sub.getActiveSubscriptionPurchase();
-        if (!mounted) return;
-        if (oldPurchase != null && oldPurchase.productID != productId) {
-          debugPrint(
-              'TrialEndedScreen: upgrading from ${oldPurchase.productID} to $productId');
-          success = await sub.buyUpgrade(productId, oldPurchase);
-        } else {
-          debugPrint(
-              'TrialEndedScreen: no active subscription found or same product, using regular buy');
-          success = await sub.buy(productId);
-        }
-      } else {
-        success = await sub.buy(productId);
-      }
-
-      if (!mounted) return;
-      if (success) {
-        final verifyData = sub.lastPurchaseForVerification;
-        bool verified = false;
-        if (verifyData != null) {
-          verified = await auth.verifyGooglePlayPurchase(
-            purchaseToken: verifyData['purchase_token']!,
-            productId: verifyData['product_id']!,
-            orderId: verifyData['order_id'],
-          );
-          if (!verified && mounted) {
-            debugPrint('TrialEndedScreen: верификация на бэкенде не прошла');
-          }
-        }
-        await auth.refreshUserStatus(force: true);
-        if (!mounted) return;
-        if (verified || auth.hasActiveSubscription) {
-          final msg = isUpgrade
-              ? context.l10n.subscriptionSnackbarPlanChanged
-              : context.l10n.subscriptionSnackbarActivated;
-          showInfoSnackBar(context, msg);
-          final price = sub.getProductPrice(productId);
-          try {
-            AnalyticsService().logPurchase(
-              planName: productId,
-              amount: price ?? 0,
-              transactionId: verifyData?['order_id'],
-            );
-          } catch (e) {
-            debugPrint('Analytics error (non-critical): $e');
-          }
-          Navigator.pushReplacementNamed(context, '/main');
-        } else {
-          showErrorSnackBar(
-              context, context.l10n.subscriptionPaymentNotVerified);
-        }
-      } else {
-        if (mounted) {
-          showErrorSnackBar(
-              context, context.l10n.subscriptionPurchaseIncomplete);
-        }
-      }
-    } catch (e) {
-      if (!mounted) return;
-      if (mounted) {
-        showErrorSnackBar(context, context.l10n.subscriptionPurchaseError);
-      }
-    } finally {
-      if (mounted) {
-        debugPrint('TrialEndedScreen: _purchase reset loading');
-        setState(() => _purchasingProductId = null);
-      }
-    }
-  }
-
-  Future<void> _refreshAndNavigate() async {
-    if (!mounted) return;
-    final authService = Provider.of<AuthService>(context, listen: false);
-    await authService.refreshUserStatus();
-    if (!mounted) return;
-    if (authService.hasActiveSubscription) {
-      Navigator.pushReplacementNamed(context, '/main');
-      return;
-    }
-    if ((authService.trialSecondsLeft ?? 0) > 0) {
-      Navigator.pushReplacementNamed(context, '/main');
-      return;
-    }
-  }
-
-  Future<bool> _ensureVpnDisconnected() async {
-    if (!mounted) return false;
-    var requestedDisconnect = false;
-    try {
-      final vpnService = Provider.of<VpnService>(context, listen: false);
-      if (vpnService.isVpnSessionPotentiallyActive) {
-        requestedDisconnect = true;
-        await vpnService
-            .disconnect(source: 'trial_ended_paywall')
-            .timeout(const Duration(seconds: 4));
-      }
-    } catch (_) {
-      // Best-effort disconnect: paywall должен открыться даже если отключение не удалось мгновенно.
-    }
-    try {
-      final amneziaWasConnected = await NativeVpnService.getAmneziaWgStatus()
-              .timeout(const Duration(seconds: 2)) ==
-          true;
-      if (amneziaWasConnected) requestedDisconnect = true;
-      await NativeVpnService.disconnectAmneziaWg(
-        reason: 'access_expired',
-        source: 'trial_ended_paywall',
-      ).timeout(const Duration(seconds: 4));
-    } catch (_) {
-      // Best-effort direct Simple/GRANIwg disconnect.
-    }
-    try {
-      final nativeWasConnected =
-          await NativeVpnService.getNativeConnectionStatus()
-                  .timeout(const Duration(seconds: 2)) ==
-              true;
-      if (nativeWasConnected) requestedDisconnect = true;
-      await NativeVpnService.disconnect(
-        reason: 'access_expired',
-        source: 'trial_ended_paywall',
-      ).timeout(const Duration(seconds: 4));
-    } catch (_) {
-      // Best-effort legacy/native disconnect.
-    }
-    return requestedDisconnect;
   }
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final screenHeight = MediaQuery.of(context).size.height;
-    final designWidth = 412.0;
-    final designHeight = 917.0;
-    final scaleX = screenWidth / designWidth;
-    final scaleY = screenHeight / designHeight;
-    final topBarHeight = (12 + 39 + 12) * scaleY;
-    final contentTopFromHeader = GraniTheme.trialTitleBlockTopGap * scaleY;
-
-    final safeBottom = MediaQuery.of(context).padding.bottom;
-    final canPop = widget.mode != SubscriptionScreenMode.expired;
-
-    String title;
-    String subtitle;
-    bool showTimer;
-    final l10n = context.l10n;
-    switch (widget.mode) {
-      case SubscriptionScreenMode.expired:
-        title = l10n.trialExpiredTitle;
-        subtitle = l10n.trialExpiredSubtitle;
-        showTimer = true;
-      case SubscriptionScreenMode.upgrade:
-        title = l10n.trialUpgradeTitle;
-        subtitle = l10n.trialUpgradeSubtitle;
-        showTimer = false;
-      case SubscriptionScreenMode.manage:
-        title = l10n.trialManageTitle;
-        subtitle = l10n.trialManageSubtitle;
-        showTimer = false;
-    }
-
+    if (Platform.isWindows) return _buildWindowsHandoff(context);
+    final controller = _paywallController;
+    final state = controller?.state ?? const PaywallUiState();
+    final reducedMotion = MediaQuery.disableAnimationsOf(context);
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
-        statusBarColor: Color(0xFFFFFFFF),
+        statusBarColor: Colors.transparent,
         statusBarIconBrightness: Brightness.dark,
         statusBarBrightness: Brightness.light,
         systemNavigationBarColor: Color(0xFFF7F9FA),
         systemNavigationBarIconBrightness: Brightness.dark,
-        systemNavigationBarDividerColor: Colors.transparent,
       ),
       child: PopScope(
-        canPop: canPop,
+        canPop: _canPop,
         child: Scaffold(
-          backgroundColor: Colors.transparent,
-          body: Container(
+          backgroundColor: const Color(0xFFF7F9FB),
+          body: DecoratedBox(
             decoration: const BoxDecoration(
-              gradient: GraniTheme.startScreenBackgroundGradient,
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xFFFFFFFF), Color(0xFFF4F7F9)],
+              ),
             ),
             child: SafeArea(
-              bottom: false,
-              child: Stack(
+              child: Column(
                 children: [
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      height:
-                          safeBottom + GraniTheme.navigationBarHeight * scaleY,
-                      color: const Color(0xFFF7F9FA),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    child: PaywallTopBar(
+                      onBack: _canPop
+                          ? () => Navigator.of(context).maybePop()
+                          : null,
                     ),
                   ),
-                  // Верхняя панель по макету 562:488: меню (слева), лого (центр), поделиться (справа)
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: Padding(
-                      padding: EdgeInsets.fromLTRB(
-                          20 * scaleX, 12 * scaleY, 20 * scaleX, 12 * scaleY),
-                      child: Row(
-                        children: [
-                          if (canPop)
-                            GestureDetector(
-                              onTap: () => Navigator.of(context).pop(),
-                              child: SizedBox(
-                                width: 32 * scaleX,
-                                height: 29 * scaleY,
-                                child: Icon(Icons.arrow_back_ios_new,
-                                    size: 22 * scaleX,
-                                    color: GraniTheme.primaryText),
-                              ),
-                            )
-                          else
-                            GestureDetector(
-                              onTap: () => showProfileDrawer(context),
-                              child: SizedBox(
-                                width: 32 * scaleX,
-                                height: 33 * scaleY,
-                                child: SvgPicture.asset(
-                                  'assets/images/figma/profile/menu_new.svg',
-                                  fit: BoxFit.contain,
-                                ),
-                              ),
-                            ),
-                          const Spacer(),
-                          SizedBox(
-                            width: 154 * scaleX,
-                            height: 39 * scaleY,
-                            child: Image.asset(
-                              'assets/images/figma/logo_grani_new.png',
-                              fit: BoxFit.contain,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Icon(Icons.vpn_key,
-                                    size: 40, color: GraniTheme.primaryText);
-                              },
-                            ),
-                          ),
-                          const Spacer(),
-                          GestureDetector(
-                            onTap: () async {
-                              try {
-                                await Share.share(
-                                  l10n.profileSharePlayStoreMessage(
-                                      AppConfig.sharePlayStoreUrl),
-                                );
-                              } catch (_) {
-                                if (context.mounted) {
-                                  showErrorSnackBar(
-                                      context, l10n.profileShareFailed);
-                                }
-                              }
-                            },
-                            child: SizedBox(
-                              width: 32 * scaleX,
-                              height: 33 * scaleY,
-                              child: Image.asset(
-                                'assets/images/figma/share_icon.png',
-                                fit: BoxFit.contain,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return Icon(Icons.share,
-                                      size: 24 * scaleX,
-                                      color: GraniTheme.primaryText);
-                                },
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // Единый скролл: заголовок + таймер + карточки тарифов
-                  Positioned(
-                    top: topBarHeight,
-                    left: 0,
-                    right: 0,
-                    bottom:
-                        GraniTheme.navigationBarHeight * scaleY + safeBottom,
+                  Expanded(
                     child: SingleChildScrollView(
                       padding: EdgeInsets.fromLTRB(
-                        32 * scaleX,
-                        24 * scaleY,
-                        32 * scaleX,
-                        24 * scaleY,
+                        20,
+                        8,
+                        20,
+                        18 + MediaQuery.paddingOf(context).bottom,
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Center(
-                            child: Column(
-                              children: [
-                                Text(
-                                  title,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontFamily: 'Montserrat',
-                                    fontWeight: FontWeight.w400,
-                                    fontSize: 24 * scaleX,
-                                    height: 21.6 / 24,
-                                    letterSpacing: -0.96 * scaleX,
-                                    color: const Color(0xFF192F3F),
-                                  ),
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 480),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _entranceItem(
+                                interval: const Interval(0, 0.48),
+                                child: PaywallHeader(
+                                  title: context.l10n.paywallChoosePlanTitle,
+                                  subtitle:
+                                      context.l10n.paywallChoosePlanSubtitle,
                                 ),
-                                SizedBox(height: 8 * scaleY),
+                              ),
+                              const SizedBox(height: 24),
+                              if (state.productsState ==
+                                  PaywallProductsState.loading)
+                                for (var index = 0; index < 3; index++) ...[
+                                  _entranceItem(
+                                    interval: Interval(
+                                      0.12 + index * 0.10,
+                                      0.60 + index * 0.10,
+                                      curve: Curves.easeOutCubic,
+                                    ),
+                                    child: const _TariffSkeleton(),
+                                  ),
+                                  if (index < 2) const SizedBox(height: 12),
+                                ]
+                              else if (state.plans.isNotEmpty)
+                                for (var index = 0;
+                                    index < state.plans.length;
+                                    index++) ...[
+                                  _entranceItem(
+                                    interval: Interval(
+                                      0.12 + index * 0.10,
+                                      0.60 + index * 0.10,
+                                      curve: Curves.easeOutCubic,
+                                    ),
+                                    child: _buildTariffCard(
+                                      state.plans[index],
+                                      state,
+                                      reducedMotion,
+                                    ),
+                                  ),
+                                  if (index < state.plans.length - 1)
+                                    const SizedBox(height: 12),
+                                ]
+                              else
+                                _PaywallError(
+                                  message: _errorText(state),
+                                  retryLabel: context.l10n.paywallRetry,
+                                  onRetry: () => controller?.retryProducts(),
+                                ),
+                              const SizedBox(height: 22),
+                              _entranceItem(
+                                interval: const Interval(
+                                  0.55,
+                                  1,
+                                  curve: Curves.easeOutCubic,
+                                ),
+                                child: PremiumActionSurface(
+                                  label: _ctaLabel(state),
+                                  enabled: _ctaEnabled(state),
+                                  loading: state.isBusy,
+                                  success: state.billingState ==
+                                      PaywallBillingState.success,
+                                  pulseKey: _pulseKey,
+                                  reducedMotion: reducedMotion,
+                                  onPressed: () =>
+                                      controller?.purchaseSelected(),
+                                ),
+                              ),
+                              if (state.billingState ==
+                                  PaywallBillingState.pending) ...[
+                                const SizedBox(height: 4),
                                 Text(
-                                  subtitle,
+                                  context.l10n.paywallPaymentPendingHint,
                                   textAlign: TextAlign.center,
-                                  style: TextStyle(
+                                  style: const TextStyle(
                                     fontFamily: 'Montserrat',
-                                    fontWeight: FontWeight.w300,
-                                    fontSize: 16 * scaleX,
-                                    height: 15.52 / 16,
-                                    letterSpacing: 0.96 * scaleX,
-                                    color: const Color(0xFF192F3F),
+                                    fontSize: 13,
+                                    color: Color(0xFF657487),
                                   ),
                                 ),
                               ],
-                            ),
-                          ),
-                          if (showTimer) ...[
-                            SizedBox(height: 16 * scaleY),
-                            Center(
-                              child: Text(
-                                l10n.trialTimeLeft,
-                                style: TextStyle(
-                                  fontFamily: 'Montserrat',
-                                  fontWeight: GraniTheme.trialTimerFontWeight,
-                                  fontSize:
-                                      GraniTheme.trialTimerFontSize * scaleX,
-                                  height: 18 / GraniTheme.trialTimerFontSize,
-                                  letterSpacing: -0.8 * scaleX,
-                                  color: GraniTheme.trialEndedTimer,
+                              if (state.productsState ==
+                                      PaywallProductsState.ready &&
+                                  state.billingState ==
+                                      PaywallBillingState.error) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  _errorText(state),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontFamily: 'Montserrat',
+                                    fontSize: 13,
+                                    color: Color(0xFFB64232),
+                                  ),
                                 ),
+                              ],
+                              const SizedBox(height: 18),
+                              TrustItems(
+                                googlePlay: context.l10n.paywallTrustGooglePlay,
+                                noRenewals: context.l10n.paywallTrustNoRenewals,
+                                restore: context.l10n.paywallTrustRestore,
                               ),
-                            ),
-                          ],
-                          SizedBox(height: 24 * scaleY),
-                          _buildTariffCard(
-                            '1',
-                            l10n.tariffBadgeMonthOne,
-                            l10n.tariffPriceMonthly,
-                            l10n.tariffDescMonthly,
-                            scaleX,
-                            scaleY,
-                            SubscriptionProducts.monthly,
+                              const SizedBox(height: 8),
+                              _buildLegalLinks(),
+                            ],
                           ),
-                          SizedBox(height: 10 * scaleY),
-                          _buildTariffCard(
-                            '6',
-                            l10n.tariffBadgeMonthsMany,
-                            l10n.tariffPriceSixMonth,
-                            l10n.tariffDescSixMonth,
-                            scaleX,
-                            scaleY,
-                            SubscriptionProducts.sixMonths,
-                          ),
-                          SizedBox(height: 10 * scaleY),
-                          _buildTariffCard(
-                            '12',
-                            l10n.tariffBadgeMonthsMany,
-                            l10n.tariffPriceYearly,
-                            l10n.tariffDescYearly,
-                            scaleX,
-                            scaleY,
-                            SubscriptionProducts.yearly,
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -505,151 +367,431 @@ class _TrialEndedScreenState extends State<TrialEndedScreen> with RouteAware {
   }
 
   Widget _buildTariffCard(
-    String number,
-    String period,
-    String price,
-    String description,
-    double scaleX,
-    double scaleY,
-    String productId,
+    TariffUiModel plan,
+    PaywallUiState state,
+    bool reducedMotion,
   ) {
-    final isPurchasing = _purchasingProductId == productId;
-    return Stack(
+    final selected = state.selectedPlanId == plan.id;
+    final title = switch (plan.periodMonths) {
+      1 => context.l10n.paywallPlanOneMonth,
+      6 => context.l10n.paywallPlanSixMonths,
+      _ => context.l10n.paywallPlanTwelveMonths,
+    };
+    final savings = plan.savingsPercent == null
+        ? null
+        : context.l10n.paywallSavePercent(plan.savingsPercent!);
+    return TariffCard(
+      plan: plan,
+      selected: selected,
+      enabled: !state.isBusy,
+      title: title,
+      perMonthLabel: context.l10n.paywallPerMonth,
+      totalLabel: context.l10n.paywallTotal,
+      bestValueLabel: context.l10n.paywallBestValue,
+      savingsLabel: savings,
+      semanticsLabel: context.l10n.paywallTariffSemantics(
+        title,
+        plan.formattedMonthlyPrice,
+        plan.formattedTotalPrice,
+        savings ?? '',
+        selected
+            ? context.l10n.paywallSelected
+            : context.l10n.paywallNotSelected,
+      ),
+      reducedMotion: reducedMotion,
+      onSelected: () => _paywallController?.selectPlan(plan.id),
+    );
+  }
+
+  Widget _buildLegalLinks() {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        GestureDetector(
-          onTap: isPurchasing
-              ? null
-              : () {
-                  if (SubscriptionService.supported) {
-                    _purchase(productId);
-                  } else {
-                    showErrorSnackBar(context,
-                        context.l10n.subscriptionGooglePlayUnavailable);
-                  }
-                },
-          child: Container(
-            width: 348 * scaleX,
-            padding: EdgeInsets.all(12 * scaleX),
-            decoration: BoxDecoration(
-              gradient: GraniTheme.surfaceControlGradient,
-              borderRadius: BorderRadius.circular(25 * scaleX),
-              border: Border.all(
-                color: GraniTheme.surfaceControlBorder.withOpacity(0.86),
-              ),
-              boxShadow: GraniTheme.surfaceControlShadowStrong
-                  .map((shadow) => BoxShadow(
-                        color: shadow.color,
-                        offset: Offset(shadow.offset.dx * scaleX,
-                            shadow.offset.dy * scaleY),
-                        blurRadius: shadow.blurRadius * scaleX,
-                        spreadRadius: shadow.spreadRadius * scaleX,
-                      ))
-                  .toList(),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 64 * scaleX,
-                  padding: EdgeInsets.symmetric(vertical: 18 * scaleY),
-                  decoration: BoxDecoration(
-                    gradient: GraniTheme.surfaceControlGradient,
-                    borderRadius: BorderRadius.circular(20 * scaleX),
-                    border: Border.all(
-                      color: GraniTheme.surfaceControlBorder.withOpacity(0.74),
+        TextButton(
+          onPressed: () => Navigator.pushNamed(context, '/privacy'),
+          child: Text(context.l10n.paywallPrivacy),
+        ),
+      ],
+    );
+  }
+
+  String _ctaLabel(PaywallUiState state) {
+    switch (state.productsState) {
+      case PaywallProductsState.loading:
+        return context.l10n.paywallLoadingPlans;
+      case PaywallProductsState.error:
+        return context.l10n.paywallLoadingPlans;
+      case PaywallProductsState.ready:
+        switch (state.billingState) {
+          case PaywallBillingState.launching:
+          case PaywallBillingState.awaitingResult:
+            return context.l10n.paywallOpeningGooglePlay;
+          case PaywallBillingState.verifying:
+          case PaywallBillingState.restoring:
+            return context.l10n.paywallVerifyingPayment;
+          case PaywallBillingState.pending:
+            return context.l10n.paywallPaymentPending;
+          case PaywallBillingState.success:
+            return context.l10n.paywallAccessActivated;
+          case PaywallBillingState.ready:
+          case PaywallBillingState.error:
+            final price = state.selectedPlan?.formattedTotalPrice;
+            return price == null
+                ? context.l10n.paywallLoadingPlans
+                : context.l10n.paywallContinuePrice(price);
+        }
+    }
+  }
+
+  bool _ctaEnabled(PaywallUiState state) =>
+      state.productsState == PaywallProductsState.ready &&
+      state.selectedPlan != null &&
+      !state.isBusy &&
+      state.billingState != PaywallBillingState.success;
+
+  String _errorText(PaywallUiState? state) {
+    return switch (state?.errorKind) {
+      PaywallErrorKind.storeUnavailable => context.l10n.paywallStoreUnavailable,
+      PaywallErrorKind.productsUnavailable =>
+        context.l10n.paywallProductsUnavailable,
+      PaywallErrorKind.verificationFailed =>
+        context.l10n.paywallVerificationFailed,
+      PaywallErrorKind.restoreFailed => context.l10n.paywallRestoreFailed,
+      _ => context.l10n.paywallPaymentErrorOpen,
+    };
+  }
+
+  Widget _entranceItem({
+    required Interval interval,
+    required Widget child,
+  }) {
+    final curved = CurvedAnimation(
+      parent: _entranceController,
+      curve: interval,
+    );
+    return FadeTransition(
+      opacity: curved,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, -0.025),
+          end: Offset.zero,
+        ).animate(curved),
+        child: child,
+      ),
+    );
+  }
+
+  void _onAuthSubscriptionUpdate() {
+    if (!mounted) return;
+    final auth = _authServiceForListener;
+    if (auth == null) return;
+    if (auth.hasActiveSubscription || (auth.trialSecondsLeft ?? 0) > 0) {
+      _subscriptionPollTimer?.cancel();
+      _subscriptionPollTimer = null;
+      auth.removeListener(_onAuthSubscriptionUpdate);
+      _authServiceForListener = null;
+      Navigator.pushNamedAndRemoveUntil(context, '/main', (_) => false);
+    }
+  }
+
+  Future<void> _refreshAndNavigate({bool force = false}) async {
+    if (!mounted) return;
+    final auth = context.read<AuthService>();
+    await auth.refreshUserStatus(force: force);
+    if (!mounted) return;
+    if (auth.hasActiveSubscription || (auth.trialSecondsLeft ?? 0) > 0) {
+      Navigator.pushNamedAndRemoveUntil(context, '/main', (_) => false);
+    }
+  }
+
+  Future<bool> _ensureVpnDisconnected() async {
+    if (!mounted) return false;
+    var requested = false;
+    try {
+      final vpn = context.read<VpnService>();
+      if (vpn.isVpnSessionPotentiallyActive) {
+        requested = true;
+        await vpn
+            .disconnect(source: 'trial_ended_paywall')
+            .timeout(const Duration(seconds: 4));
+      }
+    } catch (_) {}
+    try {
+      if (await NativeVpnService.getAmneziaWgStatus()
+              .timeout(const Duration(seconds: 2)) ==
+          true) {
+        requested = true;
+      }
+      await NativeVpnService.disconnectAmneziaWg(
+        reason: 'access_expired',
+        source: 'trial_ended_paywall',
+      ).timeout(const Duration(seconds: 4));
+    } catch (_) {}
+    try {
+      if (await NativeVpnService.getNativeConnectionStatus()
+              .timeout(const Duration(seconds: 2)) ==
+          true) {
+        requested = true;
+      }
+      await NativeVpnService.disconnect(
+        reason: 'access_expired',
+        source: 'trial_ended_paywall',
+      ).timeout(const Duration(seconds: 4));
+    } catch (_) {}
+    return requested;
+  }
+
+  Widget _buildWindowsHandoff(BuildContext context) {
+    final products = <({String title, String productId})>[
+      (
+        title: context.l10n.paywallPlanOneMonth,
+        productId: SubscriptionProducts.extension30Days,
+      ),
+      (
+        title: context.l10n.paywallPlanSixMonths,
+        productId: SubscriptionProducts.extension180Days,
+      ),
+      (
+        title: context.l10n.paywallPlanTwelveMonths,
+        productId: SubscriptionProducts.extension365Days,
+      ),
+    ];
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7F9FB),
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  PaywallHeader(
+                    title: context.l10n.paywallChoosePlanTitle,
+                    subtitle: context.l10n.subscriptionPayOnAndroidBody,
+                  ),
+                  const SizedBox(height: 24),
+                  for (final product in products)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: SizedBox(
+                        width: double.infinity,
+                        height: 56,
+                        child: FilledButton(
+                          onPressed: () => _showPayOnAndroid(product.productId),
+                          child: Text(product.title),
+                        ),
+                      ),
                     ),
-                    boxShadow: GraniTheme.surfaceControlShadow
-                        .map((shadow) => BoxShadow(
-                              color: shadow.color,
-                              offset: Offset(shadow.offset.dx * scaleX,
-                                  shadow.offset.dy * scaleY),
-                              blurRadius: shadow.blurRadius * scaleX,
-                              spreadRadius: shadow.spreadRadius * scaleX,
-                            ))
-                        .toList(),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        number,
-                        style: TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontWeight: FontWeight.w600,
-                          fontSize: 40 * scaleX,
-                          height: 1.1,
-                          color: GraniTheme.trialEndedTariffBadgeText,
-                        ),
-                      ),
-                      Text(
-                        period,
-                        style: TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14 * scaleX,
-                          height: 1.1,
-                          color: GraniTheme.trialEndedTariffBadgeText,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                SizedBox(width: 12 * scaleX),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        price,
-                        style: TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontWeight: FontWeight.w400,
-                          fontSize: 24 * scaleX,
-                          height: 1.1,
-                          letterSpacing: 1.44 * scaleX,
-                          color: GraniTheme.trialEndedTariffPrice,
-                        ),
-                      ),
-                      SizedBox(height: 5 * scaleY),
-                      Text(
-                        description,
-                        style: TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontWeight: FontWeight.w300,
-                          fontSize: 12 * scaleX,
-                          height: 0.84,
-                          letterSpacing: 0.72 * scaleX,
-                          color: GraniTheme.trialEndedTariffDescription,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
-        if (isPurchasing)
-          Positioned.fill(
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.black26,
-                borderRadius: BorderRadius.circular(25 * scaleX),
-              ),
-              child: Center(
-                child: SizedBox(
-                  width: 32 * scaleX,
-                  height: 32 * scaleY,
-                  child: const CircularProgressIndicator(strokeWidth: 2),
-                ),
+      ),
+    );
+  }
+
+  String _androidPaymentUrl(String productId) {
+    final base = Uri.parse(AppConfig.androidPaymentHandoffUrl);
+    return base.replace(queryParameters: {
+      ...base.queryParameters,
+      'plan': productId,
+    }).toString();
+  }
+
+  Future<void> _showPayOnAndroid(String productId) async {
+    if (!Platform.isWindows || _androidPaymentDialogOpen) return;
+    final auth = context.read<AuthService>();
+    _androidPaymentBaselineActive = auth.hasActiveSubscription;
+    _androidPaymentBaselineExpiresAt = auth.subscriptionExpiresAt;
+    _androidPaymentDialogOpen = true;
+    final handoffUrl = _androidPaymentUrl(productId);
+    _androidPaymentPollTimer?.cancel();
+    _androidPaymentPollTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => unawaited(_checkAndroidPayment(showNotFound: false)),
+    );
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(context.l10n.subscriptionPayOnAndroidTitle),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(context.l10n.subscriptionPayOnAndroidBody),
+                  const SizedBox(height: 16),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: QrImageView(
+                        data: handoffUrl,
+                        size: 220,
+                        backgroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(context.l10n.subscriptionPayOnAndroidSameAccount),
+                  const SizedBox(height: 8),
+                  Text(context.l10n.subscriptionPayOnAndroidWaiting),
+                ],
               ),
             ),
           ),
-      ],
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: handoffUrl));
+                if (mounted) {
+                  showInfoSnackBar(
+                    context,
+                    context.l10n.subscriptionPayOnAndroidLinkCopied,
+                  );
+                }
+              },
+              child: Text(context.l10n.subscriptionPayOnAndroidCopyLink),
+            ),
+            FilledButton(
+              onPressed: () => _checkAndroidPayment(showNotFound: true),
+              child: Text(context.l10n.subscriptionPayOnAndroidCheck),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _androidPaymentDialogOpen = false;
+      _androidPaymentPollTimer?.cancel();
+      _androidPaymentPollTimer = null;
+    }
+  }
+
+  Future<void> _checkAndroidPayment({required bool showNotFound}) async {
+    if (!_androidPaymentDialogOpen ||
+        _androidPaymentCheckInFlight ||
+        !mounted) {
+      return;
+    }
+    _androidPaymentCheckInFlight = true;
+    final auth = context.read<AuthService>();
+    try {
+      await auth.refreshUserStatus(force: true);
+      if (!mounted || !_androidPaymentDialogOpen) return;
+      final expiresAt = auth.subscriptionExpiresAt;
+      final activated =
+          !_androidPaymentBaselineActive && auth.hasActiveSubscription;
+      final extended = _androidPaymentBaselineActive &&
+          expiresAt != null &&
+          (_androidPaymentBaselineExpiresAt == null ||
+              expiresAt.isAfter(_androidPaymentBaselineExpiresAt!));
+      if (activated || extended) {
+        _androidPaymentDialogOpen = false;
+        _androidPaymentPollTimer?.cancel();
+        Navigator.of(context, rootNavigator: true).pop();
+        Navigator.pushNamedAndRemoveUntil(context, '/main', (_) => false);
+      } else if (showNotFound) {
+        showInfoSnackBar(
+          context,
+          context.l10n.subscriptionPayOnAndroidNotFound,
+        );
+      }
+    } finally {
+      _androidPaymentCheckInFlight = false;
+    }
+  }
+}
+
+class _TariffSkeleton extends StatelessWidget {
+  const _TariffSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 116,
+      decoration: BoxDecoration(
+        color: const Color(0xFFFBFCFD),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFE3E9ED)),
+      ),
+      padding: const EdgeInsets.all(20),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SkeletonLine(width: 110, height: 16),
+          SizedBox(height: 14),
+          _SkeletonLine(width: 180, height: 24),
+          SizedBox(height: 10),
+          _SkeletonLine(width: 130, height: 13),
+        ],
+      ),
+    );
+  }
+}
+
+class _SkeletonLine extends StatelessWidget {
+  const _SkeletonLine({required this.width, required this.height});
+
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: const Color(0xFFE8EDF0),
+        borderRadius: BorderRadius.circular(height / 2),
+      ),
+    );
+  }
+}
+
+class _PaywallError extends StatelessWidget {
+  const _PaywallError({
+    required this.message,
+    required this.retryLabel,
+    required this.onRetry,
+  });
+
+  final String message;
+  final String retryLabel;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7F3),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFFFD4BC)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 14,
+              color: Color(0xFF8A3A1A),
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextButton(onPressed: onRetry, child: Text(retryLabel)),
+        ],
+      ),
     );
   }
 }

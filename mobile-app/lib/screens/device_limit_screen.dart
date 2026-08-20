@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../config/app_navigation.dart';
 import '../core/api/dio_error_detail.dart';
 import '../core/api/network_timeouts.dart';
 import '../theme.dart';
@@ -21,15 +22,26 @@ enum DeviceLimitResult {
   loggedOutCurrentDevice,
 }
 
+BuildContext _resolveDeviceLimitModalContext(BuildContext context) {
+  if (Navigator.maybeOf(context) != null) {
+    return context;
+  }
+  return appNavigatorKey.currentState?.overlay?.context ??
+      appNavigatorKey.currentContext ??
+      context;
+}
+
 /// Показывает blocking modal bottom sheet «Лимит устройств».
 /// По ТЗ: высота 85–90%, закрыть нельзя, единственный выход — удаление устройства.
 Future<DeviceLimitResult?> showDeviceLimitModal(
   BuildContext context, {
   required List<dynamic> initialDevices,
   required int maxDevices,
+  int? initialDeviceCount,
 }) {
+  final modalContext = _resolveDeviceLimitModalContext(context);
   return showModalBottomSheet<DeviceLimitResult>(
-    context: context,
+    context: modalContext,
     isScrollControlled: true,
     isDismissible: false,
     enableDrag: false,
@@ -38,6 +50,7 @@ Future<DeviceLimitResult?> showDeviceLimitModal(
     builder: (ctx) => _DeviceLimitSheet(
       initialDevices: initialDevices,
       maxDevices: maxDevices,
+      initialDeviceCount: initialDeviceCount,
     ),
   );
 }
@@ -46,6 +59,7 @@ Future<DeviceLimitResult?> showDeviceLimitModal(
 class _DeviceLimitSheet extends StatefulWidget {
   final List<dynamic> initialDevices;
   final int maxDevices;
+  final int? initialDeviceCount;
 
   /// true = полноэкранный route (нельзя закрыть), false = modal bottom sheet.
   final bool fullScreen;
@@ -53,6 +67,7 @@ class _DeviceLimitSheet extends StatefulWidget {
   const _DeviceLimitSheet({
     required this.initialDevices,
     required this.maxDevices,
+    this.initialDeviceCount,
     this.fullScreen = false,
   });
 
@@ -68,15 +83,19 @@ class _DeviceLimitSheetState extends State<_DeviceLimitSheet> {
   String? _confirmDeviceId; // устройство в режиме подтверждения
   String? _inlineError; // ошибка удаления для конкретной карточки
   Future<void>? _loadDevicesInFlight;
+  int? _knownDeviceCount;
 
   @override
   void initState() {
     super.initState();
     _devices = widget.initialDevices.whereType<Map<String, dynamic>>().toList();
+    _knownDeviceCount = widget.initialDeviceCount ?? _devices.length;
     if (_devices.isEmpty) {
       _loadDevices();
     }
   }
+
+  int get _displayDeviceCount => _knownDeviceCount ?? _devices.length;
 
   String? get _currentDeviceId {
     try {
@@ -107,6 +126,7 @@ class _DeviceLimitSheetState extends State<_DeviceLimitSheet> {
         final devices = list.whereType<Map<String, dynamic>>().toList();
         setState(() {
           _devices = devices;
+          _knownDeviceCount = devices.length;
           _isLoading = false;
           if (devices.isEmpty) {
             _loadError = context.l10n.deviceLimitEmptyList;
@@ -180,8 +200,9 @@ class _DeviceLimitSheetState extends State<_DeviceLimitSheet> {
         d['last_connected'] ??
         d['updated_at'];
     if (lastSeen is int) return lastSeen;
-    if (lastSeen is String)
+    if (lastSeen is String) {
       return DateTime.tryParse(lastSeen)?.millisecondsSinceEpoch ?? 0;
+    }
     return 0;
   }
 
@@ -220,6 +241,7 @@ class _DeviceLimitSheetState extends State<_DeviceLimitSheet> {
         _devices = _devices
             .where((d) => (d['device_id'] as String?) != deviceId)
             .toList();
+        _knownDeviceCount = _devices.length;
         _confirmDeviceId = null;
         _deletingDeviceId = null;
       });
@@ -250,6 +272,7 @@ class _DeviceLimitSheetState extends State<_DeviceLimitSheet> {
           _devices = _devices
               .where((d) => (d['device_id'] as String?) != deviceId)
               .toList();
+          _knownDeviceCount = _devices.length;
           _confirmDeviceId = null;
           _deletingDeviceId = null;
           _inlineError = null;
@@ -279,7 +302,7 @@ class _DeviceLimitSheetState extends State<_DeviceLimitSheet> {
         ),
         decoration: BoxDecoration(
           gradient: GraniTheme.startScreenBackgroundGradient,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           border: Border.all(
             color: GraniTheme.surfaceControlBorder.withOpacity(0.78),
           ),
@@ -341,7 +364,7 @@ class _DeviceLimitSheetState extends State<_DeviceLimitSheet> {
           const SizedBox(height: 8),
           Text(
             l10n.deviceLimitSubtitle(
-              _devices.length.toString(),
+              _displayDeviceCount.toString(),
               widget.maxDevices.toString(),
             ),
             style: GraniTheme.bodyMedium.copyWith(
@@ -357,7 +380,7 @@ class _DeviceLimitSheetState extends State<_DeviceLimitSheet> {
 
   Widget _buildLimitIndicator() {
     final l10n = context.l10n;
-    final count = _devices.length;
+    final count = _displayDeviceCount;
     final limit = widget.maxDevices;
     final isExceeded = count > limit;
     return SliverToBoxAdapter(

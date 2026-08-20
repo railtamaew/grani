@@ -142,7 +142,11 @@ void main() {
   }
 
   group('TrialUnifiedScreen', () {
-    testWidgets('отображает заголовок «Тестовый период»', (tester) async {
+    testWidgets('отображает актуальный заголовок готовности', (tester) async {
+      tester.view.physicalSize = const Size(412, 917);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       await prefillServersCache();
       await tester.pumpWidget(buildTestWidget());
       await tester.pump();
@@ -150,12 +154,16 @@ void main() {
       // postFrameCallback: refreshServers с timeout 20s — дожимаем fake-async, затем отмена таймеров в dispose.
       await tester.pump(const Duration(seconds: 21));
 
-      expect(find.text('Тестовый период'), findsWidgets);
+      expect(find.text('Готово'), findsWidgets);
       await tester.pumpWidget(const SizedBox());
       await tester.pump();
     });
 
     testWidgets('экран успешно строится', (tester) async {
+      tester.view.physicalSize = const Size(412, 917);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       await prefillServersCache();
       await tester.pumpWidget(buildTestWidget());
       await tester.pump();
@@ -188,5 +196,5 @@ class _FakeAuthForTrialScreen extends AuthService {
   Future<void> waitForTokenLoad() async {}
 
   @override
-  Future<void> refreshUserStatus() async {}
+  Future<void> refreshUserStatus({bool force = false}) async {}
 }

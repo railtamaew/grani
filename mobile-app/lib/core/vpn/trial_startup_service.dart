@@ -28,9 +28,13 @@ class TrialStartupService {
     Duration refreshTimeout = const Duration(seconds: 20),
   }) async {
     try {
-      await vpnService.syncConnectionStateWithNative();
+      // Tunnel state belongs to SimpleVpnController in the production shell.
+      // Startup here only hydrates control-plane data; observing the same
+      // native tunnel from legacy VpnService reintroduces a second state owner.
       if (authService != null) {
-        await vpnService.refreshControlPlaneSnapshot(authService).timeout(
+        await vpnService
+            .refreshControlPlaneSnapshot(authService)
+            .timeout(
               refreshTimeout,
               onTimeout: () => throw TimeoutException(
                 'Превышено время ожидания загрузки snapshot',
@@ -38,11 +42,11 @@ class TrialStartupService {
             );
       } else {
         await vpnService.refreshServers().timeout(
-            refreshTimeout,
-            onTimeout: () => throw TimeoutException(
-              'Превышено время ожидания загрузки серверов',
-            ),
-          );
+          refreshTimeout,
+          onTimeout: () => throw TimeoutException(
+            'Превышено время ожидания загрузки серверов',
+          ),
+        );
       }
       if (vpnService.servers.isEmpty) {
         return const TrialStartupResult(

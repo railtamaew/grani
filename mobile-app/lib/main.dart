@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -34,6 +35,7 @@ import 'core/storage/storage_service.dart';
 import 'core/storage/shared_preferences_holder.dart';
 import 'core/errors/error_handler.dart';
 import 'core/session/app_session_controller.dart';
+import 'core/session/post_auth_preparation_coordinator.dart';
 import 'core/vpn/lifecycle_network_controller.dart';
 import 'core/session/locale_controller.dart';
 import 'core/perf/perf_logger.dart';
@@ -42,8 +44,11 @@ import 'l10n/app_localizations.dart';
 import 'services/connection_logger.dart';
 import 'services/app_update_service.dart';
 import 'services/push_notification_service.dart';
+import 'services/in_app_event_banner_service.dart';
 import 'services/entitlement_native_sync.dart';
 import 'services/notification_journal_service.dart';
+import 'services/install_attribution_service.dart';
+import 'services/analytics_service.dart';
 import 'screens/notification_journal_screen.dart';
 import 'widgets/pending_device_limit_listener.dart';
 
@@ -54,6 +59,161 @@ bool get _isMobileTarget =>
     !kIsWeb &&
     (defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.iOS);
+
+bool get _isWindowsTarget =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+
+const Duration _windowsStartupStepTimeout = Duration(seconds: 8);
+
+void _writeWindowsStartupTrace(
+  String message, [
+  Object? error,
+  StackTrace? stackTrace,
+]) {
+  if (!_isWindowsTarget) return;
+  try {
+    final localAppData = Platform.environment['LOCALAPPDATA'];
+    if (localAppData == null || localAppData.isEmpty) return;
+    final directory = Directory('$localAppData\\GRANI');
+    directory.createSync(recursive: true);
+    final safeMessage = message.replaceAll(RegExp(r'[\r\n]+'), ' ');
+    final rawError = error?.toString().replaceAll(RegExp(r'[\r\n]+'), ' ');
+    final safeError = rawError != null && rawError.length > 1000
+        ? rawError.substring(0, 1000)
+        : rawError;
+    final rawStack = stackTrace?.toString() ?? '';
+    final normalizedStack = rawStack.replaceAll(RegExp(r'[\r\n]+'), ' ');
+    final safeStack = normalizedStack.length > 4000
+        ? normalizedStack.substring(0, 4000)
+        : normalizedStack;
+    File('${directory.path}\\startup.log').writeAsStringSync(
+      '${DateTime.now().toIso8601String()} $safeMessage'
+      '${safeError == null ? '' : ' error=$safeError'}'
+      '${safeStack.isEmpty ? '' : ' stack=$safeStack'}\n',
+      mode: FileMode.append,
+      flush: true,
+    );
+  } catch (_) {
+    // Startup diagnostics must never block application startup.
+  }
+}
+
+Future<bool> _runStartupStep(
+  String name,
+  Future<void> Function() action,
+) async {
+  if (!_isWindowsTarget) {
+    await action();
+    return true;
+  }
+
+  _writeWindowsStartupTrace('step=$name state=begin');
+  try {
+    await action().timeout(_windowsStartupStepTimeout);
+    _writeWindowsStartupTrace('step=$name state=ok');
+    return true;
+  } on TimeoutException catch (error, stackTrace) {
+    _writeWindowsStartupTrace('step=$name state=timeout', error, stackTrace);
+    return false;
+  } catch (error, stackTrace) {
+    _writeWindowsStartupTrace('step=$name state=error', error, stackTrace);
+    return false;
+  }
+}
+
+class _WindowsStartupApp extends StatelessWidget {
+  const _WindowsStartupApp();
+
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: Color(0xFFF7F9FA),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'GRANI',
+                style: TextStyle(
+                  color: Color(0xFF0A4F5C),
+                  fontSize: 34,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 4,
+                ),
+              ),
+              SizedBox(height: 24),
+              CircularProgressIndicator(color: Color(0xFFFF6A00)),
+              SizedBox(height: 18),
+              Text(
+                'Запуск приложения…',
+                style: TextStyle(color: Color(0xFF314A55), fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StartupFailureApp extends StatelessWidget {
+  const _StartupFailureApp({required this.error});
+
+  final String error;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: const Color(0xFFF7F9FA),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.error_outline,
+                  color: Color(0xFFFF6A00),
+                  size: 52,
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Не удалось завершить запуск GRANI',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFF17313D),
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Диагностика сохранена в '
+                  '%LOCALAPPDATA%\\GRANI\\startup.log',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Color(0xFF526873)),
+                ),
+                const SizedBox(height: 12),
+                SelectableText(
+                  error,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF7A3131),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 Future<void> _disconnectVpnAfterAuthLoss() async {
   const source = 'auth_logout_callback';
@@ -71,10 +231,7 @@ Future<void> _disconnectVpnAfterAuthLoss() async {
     final vpn = GetIt.instance<VpnService>();
     vpn.resetSession();
     unawaited(
-      vpn.disconnect(
-        reason: VpnDisconnectReason.authLost,
-        source: source,
-      ),
+      vpn.disconnect(reason: VpnDisconnectReason.authLost, source: source),
     );
   } catch (_) {
     // VpnService может быть ещё не зарегистрирован при logout до первого открытия экрана с VPN.
@@ -170,112 +327,125 @@ VpnService _createVpnServiceInternal(AuthService auth) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final perf = PerfLogger();
-  perf.start('app_startup');
-  if (_isMobileTarget) {
-    perf.start('firebase_core_init');
-    await Firebase.initializeApp();
-    perf.stop('firebase_core_init');
-  }
 
-  // Инициализация AppConfig (загрузка версии из package_info)
-  perf.start('app_config_init');
-  await AppConfig.init();
-  perf.stop('app_config_init', details: {
-    'version': AppConfig.getFullVersion(),
-  });
-
-  // Инициализация core компонентов: один экземпляр SharedPreferences, параллельно Storage + Cache, затем ApiClient
-  perf.start('core_init');
-  await _initializeCoreComponents();
-  await NotificationJournalService.instance.ensureLoaded();
-  perf.stop('core_init');
-
-  // Единый singleton AuthService: создаём один раз, ждём загрузку токенов, регистрируем в GetIt
-  perf.start('auth_init');
-  final authService = AuthService();
-  await authService.waitForTokenLoad();
-  try {
-    GetIt.instance.registerSingleton<AuthService>(authService);
-  } catch (e) {
-    GetIt.instance.unregister<AuthService>();
-    GetIt.instance.registerSingleton<AuthService>(authService);
-  }
-  ApiClient().setTokenProvider(() => authService.token);
-  ApiClient().setRefreshTokenProvider(authService.refreshAccessToken);
-  authService.setOnLogoutCallback(() {
-    unawaited(_disconnectVpnAfterAuthLoss());
-  });
-  perf.stop('auth_init');
-
-  final localeController = LocaleController();
-  await localeController.init();
-  LocalizedMessages.bind(localeController);
-  // Синхронизация языка с бэкендом/FCM — только из UI выбора языка (см. LanguageSelectorBottomSheet),
-  // без глобального listener на LocaleController (избегаем лишних запросов при любом notify).
-
-  // Push/FCM синхронизируем после первого кадра, чтобы не держать старт UI.
-
-  // Глобальный обработчик ошибок Flutter
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
-    Logger().error('Flutter Error: ${details.exception}', 'FlutterError',
-        details.exception, details.stack);
+    Logger().error(
+      'Flutter Error: ${details.exception}',
+      'FlutterError',
+      details.exception,
+      details.stack,
+    );
+    _writeWindowsStartupTrace(
+      'flutter_error',
+      details.exception,
+      details.stack,
+    );
   };
 
-  if (_isMobileTarget) {
-    // Статус-бар и навбар = фон приложения на всех экранах (градиент: верх #FFFFFF, низ #F7F9FA)
-    SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.edgeToEdge,
-    );
-    SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
-        statusBarColor:
-            Color(0xFFFFFFFF), // верх градиента (как у стартового экрана)
-        statusBarIconBrightness: Brightness.dark,
-        statusBarBrightness: Brightness.light,
-        systemNavigationBarColor: Color(0xFFF7F9FA), // низ градиента
-        systemNavigationBarIconBrightness: Brightness.dark,
-        systemNavigationBarDividerColor: Colors.transparent,
-      ),
-    );
-
-    // Только портрет: вёрстка рассчитана на книжную ориентацию (см. Home/Trial).
-    await SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-    ]);
+  if (_isWindowsTarget) {
+    _writeWindowsStartupTrace('app_start');
+    runApp(const _WindowsStartupApp());
   }
 
-  // Предзагрузка изображений в фоне (не блокирует запуск)
-  _precacheImages();
-
+  final perf = PerfLogger();
+  perf.start('app_startup');
   try {
+    if (_isMobileTarget) {
+      perf.start('firebase_core_init');
+      await Firebase.initializeApp();
+      perf.stop('firebase_core_init');
+    }
+
+    // Инициализация AppConfig (загрузка версии из package_info).
+    perf.start('app_config_init');
+    await _runStartupStep('app_config_init', AppConfig.init);
+    perf.stop(
+      'app_config_init',
+      details: {'version': AppConfig.getFullVersion()},
+    );
+
+    // Core components use the same SharedPreferences instance. On Windows a
+    // failed plugin must not leave the native window permanently blank.
+    perf.start('core_init');
+    final coreReady = await _runStartupStep('core_init', () async {
+      await _initializeCoreComponents();
+      await InstallAttributionService.instance.initialize();
+    });
+    if (coreReady) {
+      await _runStartupStep(
+        'notification_journal_init',
+        NotificationJournalService.instance.ensureLoaded,
+      );
+    }
+    perf.stop('core_init');
+
+    // Единый singleton AuthService: создаём один раз, ждём загрузку токенов,
+    // но на Windows ограничиваем ожидание, чтобы UI всё равно открылся.
+    perf.start('auth_init');
+    final authService = AuthService();
+    await _runStartupStep('auth_token_load', authService.waitForTokenLoad);
+    try {
+      GetIt.instance.registerSingleton<AuthService>(authService);
+    } catch (e) {
+      GetIt.instance.unregister<AuthService>();
+      GetIt.instance.registerSingleton<AuthService>(authService);
+    }
+    ApiClient().setTokenProvider(() => authService.token);
+    ApiClient().setRefreshTokenProvider(authService.refreshAccessToken);
+    authService.setOnLogoutCallback(() {
+      unawaited(AnalyticsService().setUserId(null));
+      unawaited(_disconnectVpnAfterAuthLoss());
+    });
+    unawaited(AnalyticsService().initialize(userId: authService.user?.id));
+    perf.stop('auth_init');
+
+    final localeController = LocaleController();
+    await _runStartupStep('locale_init', localeController.init);
+    LocalizedMessages.bind(localeController);
+    // Синхронизация языка с бэкендом/FCM — только из UI выбора языка (см. LanguageSelectorBottomSheet),
+    // без глобального listener на LocaleController (избегаем лишних запросов при любом notify).
+
+    // Push/FCM синхронизируем после первого кадра, чтобы не держать старт UI.
+
+    if (_isMobileTarget) {
+      // Статус-бар и навбар = фон приложения на всех экранах (градиент: верх #FFFFFF, низ #F7F9FA)
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      SystemChrome.setSystemUIOverlayStyle(
+        const SystemUiOverlayStyle(
+          statusBarColor: Color(
+            0xFFFFFFFF,
+          ), // верх градиента (как у стартового экрана)
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+          systemNavigationBarColor: Color(0xFFF7F9FA), // низ градиента
+          systemNavigationBarIconBrightness: Brightness.dark,
+          systemNavigationBarDividerColor: Colors.transparent,
+        ),
+      );
+
+      // Только портрет: вёрстка рассчитана на книжную ориентацию (см. Home/Trial).
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+      ]);
+    }
+
+    // Предзагрузка изображений в фоне (не блокирует запуск).
+    _precacheImages();
+
     runApp(
-        GraniApp(authService: authService, localeController: localeController));
+      GraniApp(authService: authService, localeController: localeController),
+    );
+    _writeWindowsStartupTrace('ui_started');
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _writeWindowsStartupTrace('first_frame');
       perf.stop('app_startup');
       _syncPushAfterFirstFrame(authService);
     });
   } catch (e, stack) {
     Logger().error('Fatal error during app startup', 'main', e, stack);
-    // Показываем простой экран ошибки
-    runApp(
-      MaterialApp(
-        locale: const Locale('en'),
-        supportedLocales: const [Locale('en'), Locale('ru')],
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          GlobalMaterialLocalizations.delegate,
-          GlobalWidgetsLocalizations.delegate,
-          GlobalCupertinoLocalizations.delegate,
-        ],
-        home: Scaffold(
-          body: Center(
-            child: Text('Startup error: $e'),
-          ),
-        ),
-      ),
-    );
+    _writeWindowsStartupTrace('startup_fatal', e, stack);
+    runApp(_StartupFailureApp(error: e.toString()));
   }
 }
 
@@ -286,15 +456,24 @@ void _syncPushAfterFirstFrame(AuthService authService) {
     final perf = PerfLogger();
     perf.start('push_sync_after_first_frame');
     try {
+      // Keep Firebase Messaging/token work out of the first-frame and account
+      // preparation critical path. New logins use the same delay in the
+      // post-auth coordinator; this branch covers an authenticated cold start.
+      await Future<void>.delayed(const Duration(seconds: 20));
+      if (!authService.isAuthenticated) {
+        perf.stop(
+          'push_sync_after_first_frame',
+          details: {'result': 'session_ended_before_sync'},
+        );
+        return;
+      }
       await PushNotificationService().syncPushTokenWithCurrentSession();
-      perf.stop('push_sync_after_first_frame', details: {
-        'result': 'success',
-      });
+      perf.stop('push_sync_after_first_frame', details: {'result': 'success'});
     } catch (e) {
-      perf.stop('push_sync_after_first_frame', details: {
-        'result': 'error',
-        'error': e.toString(),
-      });
+      perf.stop(
+        'push_sync_after_first_frame',
+        details: {'result': 'error', 'error': e.toString()},
+      );
       Logger().warning('Push sync after first frame failed: $e', 'main');
     }
   }());
@@ -351,12 +530,14 @@ class _AppLifecycleHandler extends StatefulWidget {
 class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
     with WidgetsBindingObserver {
   Timer? _inactiveVpnSyncDebounce;
+  bool _resumeRefreshInFlight = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scheduleResumeRefresh();
       unawaited(
         Future<void>.delayed(const Duration(seconds: 2), () {
           return AppUpdateService.instance.checkForPlayUpdate(
@@ -384,10 +565,14 @@ class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
       _inactiveVpnSyncDebounce?.cancel();
       _inactiveVpnSyncDebounce = null;
       ConnectionLogger().flushPendingAfterResumeIfAny();
+      _scheduleResumeRefresh();
+      if (_isMobileTarget) {
+        unawaited(
+          PushNotificationService().syncAnalyticsIdentityWithCurrentSession(),
+        );
+      }
       unawaited(
-        AppUpdateService.instance.checkForPlayUpdate(
-          trigger: 'resume',
-        ),
+        AppUpdateService.instance.checkForPlayUpdate(trigger: 'resume'),
       );
     } else if (state == AppLifecycleState.inactive) {
       // Шторка уведомлений / системный оверлей часто даёт только inactive без paused —
@@ -402,12 +587,15 @@ class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
     }
   }
 
-  void _pollVpnStateSync() {
-    if (!mounted) return;
-    try {
-      final vpnService = Provider.of<VpnService>(context, listen: false);
-      vpnService.syncConnectionStateWithNative();
-    } catch (_) {}
+  void _scheduleResumeRefresh() {
+    if (_resumeRefreshInFlight) return;
+    _resumeRefreshInFlight = true;
+    _markResumeSyncStart();
+    unawaited(
+      _refreshServersIfNeeded().whenComplete(() {
+        _resumeRefreshInFlight = false;
+      }),
+    );
   }
 
   Future<void> _refreshServersIfNeeded() async {
@@ -424,8 +612,10 @@ class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
       await vpnService.revalidateDeviceQuotaFromServer();
       if (!mounted) return;
     } catch (e) {
-      Logger()
-          .warning('Ошибка при возврате из фона: $e', 'AppLifecycleHandler');
+      Logger().warning(
+        'Ошибка при возврате из фона: $e',
+        'AppLifecycleHandler',
+      );
     } finally {
       _markResumeSyncEnd();
     }
@@ -449,29 +639,6 @@ class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
     } catch (_) {}
   }
 
-  Future<void> _syncConnectionStateOnPause() async {
-    if (!mounted) return;
-
-    try {
-      final vpnService = Provider.of<VpnService>(context, listen: false);
-      unawaited(
-        vpnService.setNativeTrafficTelemetryForAppLifecycle(inBackground: true),
-      );
-
-      // Если VPN подключен, но приложение закрывается - отключаем на сервере
-      // Не отключаем локальный туннель: по продуктовой логике VPN должен оставаться активным в фоне/после закрытия UI.
-      if (vpnService.isVpnSessionPotentiallyActive) {
-        Logger().debug(
-          'Приложение ушло в background/detached, VPN активен — туннель сохраняем (без auto-disconnect)',
-          'AppLifecycleHandler',
-        );
-      }
-    } catch (e) {
-      Logger()
-          .warning('Ошибка синхронизации состояния: $e', 'AppLifecycleHandler');
-    }
-  }
-
   @override
   Widget build(BuildContext context) => widget.child;
 }
@@ -480,10 +647,7 @@ class _AuthRedirectListener extends StatefulWidget {
   final AuthService authService;
   final Widget child;
 
-  const _AuthRedirectListener({
-    required this.authService,
-    required this.child,
-  });
+  const _AuthRedirectListener({required this.authService, required this.child});
 
   @override
   State<_AuthRedirectListener> createState() => _AuthRedirectListenerState();
@@ -511,8 +675,9 @@ class _AuthRedirectListenerState extends State<_AuthRedirectListener> {
       _wasAuthenticated = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && context.mounted) {
-          Navigator.maybeOf(context)
-              ?.pushNamedAndRemoveUntil('/', (_) => false);
+          Navigator.maybeOf(
+            context,
+          )?.pushNamedAndRemoveUntil('/', (_) => false);
         }
       });
     } else {
@@ -540,8 +705,11 @@ const _kRoutesToMainContentShell = <String>{
 };
 
 class GraniApp extends StatefulWidget {
-  GraniApp(
-      {super.key, required this.authService, required this.localeController});
+  GraniApp({
+    super.key,
+    required this.authService,
+    required this.localeController,
+  });
   final AuthService authService;
   final LocaleController localeController;
 
@@ -554,12 +722,39 @@ class _GraniAppState extends State<GraniApp> {
   bool _isDeterminingRoute = true;
   bool _initialRouteError = false;
   final PerfLogger _perfLogger = PerfLogger();
+  StreamSubscription<String>? _appLinkSubscription;
 
   @override
   void initState() {
     super.initState();
     EntitlementNativeSync.registerDartSideHandler();
+    _appLinkSubscription = InstallAttributionService.instance.links.listen(
+      _handleAppLink,
+    );
     _determineInitialRoute();
+  }
+
+  void _handleAppLink(String route) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!widget.authService.isAuthenticated) {
+        appNavigatorKey.currentState?.pushNamedAndRemoveUntil(
+          '/',
+          (_) => false,
+        );
+        return;
+      }
+      appNavigatorKey.currentState?.pushNamedAndRemoveUntil(
+        route,
+        (_) => false,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _appLinkSubscription?.cancel();
+    super.dispose();
   }
 
   /// Определяет начальный маршрут: по кэшу сразу (без блокировки на refreshUserStatus), затем обновление в фоне.
@@ -578,10 +773,13 @@ class _GraniAppState extends State<GraniApp> {
       );
     } on TimeoutException {
       if (_useAuthenticatedRouteFallback('timeout')) {
-        _perfLogger.stop('route_determination', details: {
-          'route': _initialRoute ?? '/',
-          'fallback': 'authenticated_timeout',
-        });
+        _perfLogger.stop(
+          'route_determination',
+          details: {
+            'route': _initialRoute ?? '/',
+            'fallback': 'authenticated_timeout',
+          },
+        );
         return;
       }
       if (mounted) {
@@ -596,11 +794,14 @@ class _GraniAppState extends State<GraniApp> {
     } catch (e) {
       Logger().error('Ошибка определения маршрута', 'GraniApp', e);
       if (_useAuthenticatedRouteFallback(e.toString())) {
-        _perfLogger.stop('route_determination', details: {
-          'route': _initialRoute ?? '/',
-          'fallback': 'authenticated_error',
-          'error': e.toString(),
-        });
+        _perfLogger.stop(
+          'route_determination',
+          details: {
+            'route': _initialRoute ?? '/',
+            'fallback': 'authenticated_error',
+            'error': e.toString(),
+          },
+        );
         return;
       }
       if (mounted) {
@@ -619,13 +820,16 @@ class _GraniAppState extends State<GraniApp> {
         _initialRouteError = false;
       });
     }
-    _perfLogger.stop('route_determination', details: {
-      'route': _initialRoute ?? '/',
-    });
+    _perfLogger.stop(
+      'route_determination',
+      details: {'route': _initialRoute ?? '/'},
+    );
   }
 
   Future<void> _determineInitialRouteInternal(AuthService authService) async {
     if (authService.isAuthenticated && authService.token != null) {
+      final appLinkRoute = await InstallAttributionService.instance
+          .takePendingRouteIfAuthorized(true);
       String? platformRoute;
       try {
         platformRoute = await const MethodChannel('com.granivpn.mobile/vpn')
@@ -634,9 +838,11 @@ class _GraniAppState extends State<GraniApp> {
       } catch (_) {
         platformRoute = null;
       }
-      _initialRoute = (platformRoute != null && platformRoute.isNotEmpty)
-          ? platformRoute
-          : _getTargetRoute(authService);
+      _initialRoute =
+          appLinkRoute ??
+          ((platformRoute != null && platformRoute.isNotEmpty)
+              ? platformRoute
+              : _getTargetRoute(authService));
       Logger().debug(
         'Начальный маршрут: $_initialRoute${platformRoute != null ? " (с плитки)" : ""}',
         'GraniApp',
@@ -645,7 +851,9 @@ class _GraniAppState extends State<GraniApp> {
     } else {
       _initialRoute = '/';
       Logger().debug(
-          'Пользователь не авторизован, начальный маршрут: /', 'GraniApp');
+        'Пользователь не авторизован, начальный маршрут: /',
+        'GraniApp',
+      );
     }
   }
 
@@ -677,7 +885,9 @@ class _GraniAppState extends State<GraniApp> {
       final ctx = appNavigatorKey.currentContext;
       if (ctx == null) {
         Logger().debug(
-            'Navigator context недоступен для snapshot при старте', 'GraniApp');
+          'Navigator context недоступен для snapshot при старте',
+          'GraniApp',
+        );
         return;
       }
       _refreshControlPlaneInBackground(ctx, authService);
@@ -686,39 +896,52 @@ class _GraniAppState extends State<GraniApp> {
 
   /// Обновляет control-plane snapshot в фоне; при смене на trial-ended — переходит на соответствующий экран.
   void _refreshControlPlaneInBackground(
-      BuildContext providerContext, AuthService authService) {
+    BuildContext providerContext,
+    AuthService authService,
+  ) {
     if (!mounted) return;
     VpnService vpnService;
     try {
       vpnService = Provider.of<VpnService>(providerContext, listen: false);
     } catch (e) {
       Logger().debug(
-          'VpnService недоступен для snapshot при старте: $e', 'GraniApp');
+        'VpnService недоступен для snapshot при старте: $e',
+        'GraniApp',
+      );
       return;
     }
-    vpnService.refreshControlPlaneSnapshot(authService).timeout(
-      const Duration(seconds: 3),
-      onTimeout: () {
-        Logger()
-            .debug('Таймаут snapshot при старте, используем кеш', 'GraniApp');
-      },
-    ).then((_) {
-      if (!mounted) return;
-      final newRoute = _getTargetRoute(authService);
-      if (newRoute == '/trial-ended' && _initialRoute == '/main') {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
+    vpnService
+        .refreshControlPlaneSnapshot(authService)
+        .timeout(
+          const Duration(seconds: 3),
+          onTimeout: () {
+            Logger().debug(
+              'Таймаут snapshot при старте, используем кеш',
+              'GraniApp',
+            );
+          },
+        )
+        .then((_) {
           if (!mounted) return;
-          final ctx = appNavigatorKey.currentContext;
-          if (ctx != null) {
-            Navigator.maybeOf(ctx)
-                ?.pushNamedAndRemoveUntil('/trial-ended', (_) => false);
+          final newRoute = _getTargetRoute(authService);
+          if (newRoute == '/trial-ended' && _initialRoute == '/main') {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              final ctx = appNavigatorKey.currentContext;
+              if (ctx != null) {
+                Navigator.maybeOf(
+                  ctx,
+                )?.pushNamedAndRemoveUntil('/trial-ended', (_) => false);
+              }
+            });
           }
+        })
+        .catchError((e) {
+          Logger().debug(
+            'Ошибка snapshot при старте: $e, используем кеш',
+            'GraniApp',
+          );
         });
-      }
-    }).catchError((e) {
-      Logger()
-          .debug('Ошибка snapshot при старте: $e, используем кеш', 'GraniApp');
-    });
   }
 
   /// Определяет целевой маршрут на основе статуса пользователя
@@ -734,11 +957,11 @@ class _GraniAppState extends State<GraniApp> {
   }
 
   List<LocalizationsDelegate<dynamic>> get _localizationDelegates => const [
-        AppLocalizations.delegate,
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ];
+    AppLocalizations.delegate,
+    GlobalMaterialLocalizations.delegate,
+    GlobalWidgetsLocalizations.delegate,
+    GlobalCupertinoLocalizations.delegate,
+  ];
 
   List<Locale> get _supportedLocales => const [Locale('en'), Locale('ru')];
 
@@ -747,6 +970,7 @@ class _GraniAppState extends State<GraniApp> {
     // Ошибка определения маршрута (таймаут и т.п.) — показываем fallback с «Повторить» (BUG-005)
     if (_initialRouteError) {
       return MaterialApp(
+        scaffoldMessengerKey: appScaffoldMessengerKey,
         title: 'GRANI',
         locale: widget.localeController.locale,
         supportedLocales: _supportedLocales,
@@ -760,8 +984,11 @@ class _GraniAppState extends State<GraniApp> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.error_outline,
-                      size: 48, color: GraniTheme.warningOrange),
+                  const Icon(
+                    Icons.error_outline,
+                    size: 48,
+                    color: GraniTheme.warningOrange,
+                  ),
                   const SizedBox(height: 16),
                   Text(
                     AppLocalizations.of(context)?.errorConnection ??
@@ -772,8 +999,9 @@ class _GraniAppState extends State<GraniApp> {
                   const SizedBox(height: 16),
                   TextButton(
                     onPressed: _retryInitialRoute,
-                    child: Text(AppLocalizations.of(context)?.authTryAgain ??
-                        'Try again'),
+                    child: Text(
+                      AppLocalizations.of(context)?.authTryAgain ?? 'Try again',
+                    ),
                   ),
                 ],
               ),
@@ -786,6 +1014,7 @@ class _GraniAppState extends State<GraniApp> {
     // Показываем загрузку пока определяем маршрут
     if (_isDeterminingRoute) {
       return MaterialApp(
+        scaffoldMessengerKey: appScaffoldMessengerKey,
         title: 'GRANI',
         locale: widget.localeController.locale,
         supportedLocales: _supportedLocales,
@@ -793,9 +1022,7 @@ class _GraniAppState extends State<GraniApp> {
         theme: GraniTheme.theme,
         home: Scaffold(
           backgroundColor: GraniTheme.primaryBackground,
-          body: const Center(
-            child: CircularProgressIndicator(),
-          ),
+          body: const Center(child: CircularProgressIndicator()),
         ),
         debugShowCheckedModeBanner: false,
       );
@@ -816,15 +1043,14 @@ class _GraniAppState extends State<GraniApp> {
           ),
           update: (_, __, previous) => previous!,
         ),
-        ChangeNotifierProvider(
-          create: (_) => SubscriptionService(),
-        ),
+        ChangeNotifierProvider(create: (_) => SubscriptionService()),
         ChangeNotifierProvider<NotificationJournalService>.value(
           value: NotificationJournalService.instance,
         ),
       ],
       child: Builder(
         builder: (context) => MaterialApp(
+          scaffoldMessengerKey: appScaffoldMessengerKey,
           navigatorKey: appNavigatorKey,
           navigatorObservers: [appRouteObserver],
           title: 'GRANI',
@@ -835,12 +1061,14 @@ class _GraniAppState extends State<GraniApp> {
           initialRoute: _initialRoute ?? '/',
           builder: (context, child) {
             // Оборачиваем в lifecycle handler и auth redirect (logout → экран входа)
-            return _AppLifecycleHandler(
-              child: _AuthRedirectListener(
-                authService: widget.authService,
-                child: PendingDeviceLimitListener(
-                  child: _PreloadVpnWidget(
-                    child: child ?? const SizedBox.shrink(),
+            return InAppEventBannerHost(
+              child: _AppLifecycleHandler(
+                child: _AuthRedirectListener(
+                  authService: widget.authService,
+                  child: PendingDeviceLimitListener(
+                    child: _PreloadVpnWidget(
+                      child: child ?? const SizedBox.shrink(),
+                    ),
                   ),
                 ),
               ),
@@ -880,8 +1108,9 @@ class _GraniAppState extends State<GraniApp> {
                 } else if (args is String) {
                   parsedArgs = AuthCodeScreenArguments(email: args);
                 } else {
-                  parsedArgs =
-                      const AuthCodeScreenArguments(email: 'user@example.com');
+                  parsedArgs = const AuthCodeScreenArguments(
+                    email: 'user@example.com',
+                  );
                 }
                 // Переходы между экранами авторизации - без анимации (instant)
                 return MaterialPageRoute(
@@ -891,6 +1120,16 @@ class _GraniAppState extends State<GraniApp> {
                     initialSeconds: parsedArgs.initialSeconds,
                     dailyRemaining: parsedArgs.dailyRemaining,
                   ),
+                  settings: settings,
+                );
+              case '/post-auth-preparation':
+                final args = settings.arguments;
+                final source = args is PostAuthPreparationArguments
+                    ? args.source
+                    : 'unknown';
+                return MaterialPageRoute(
+                  builder: (_) =>
+                      PostAuthPreparationCoordinatorScreen(source: source),
                   settings: settings,
                 );
               case '/trial-ended':
@@ -916,9 +1155,9 @@ class _GraniAppState extends State<GraniApp> {
                 final args = settings.arguments;
                 final devices = args is List ? args : <dynamic>[];
                 return MaterialPageRoute(
-                  builder: (_) => DeviceLimitScreen(
+                  builder: (ctx) => DeviceLimitScreen(
                     initialDevices: devices,
-                    maxDevices: AppConfig.maxDevices,
+                    maxDevices: ctx.read<AuthService>().maxDevices,
                   ),
                   settings: settings,
                 );
@@ -938,11 +1177,12 @@ class _GraniAppState extends State<GraniApp> {
                 return SlideFadePageRoute(
                   child: FutureBuilder<void>(
                     future: devices_screen.loadLibrary(),
-                    builder: (_, snap) => snap.connectionState ==
-                            ConnectionState.done
+                    builder: (_, snap) =>
+                        snap.connectionState == ConnectionState.done
                         ? devices_screen.DevicesScreen()
                         : const Scaffold(
-                            body: Center(child: CircularProgressIndicator())),
+                            body: Center(child: CircularProgressIndicator()),
+                          ),
                   ),
                   slideFromRight: true,
                   settings: settings,
@@ -951,11 +1191,12 @@ class _GraniAppState extends State<GraniApp> {
                 return SlideFadePageRoute(
                   child: FutureBuilder<void>(
                     future: payment_screen.loadLibrary(),
-                    builder: (_, snap) => snap.connectionState ==
-                            ConnectionState.done
+                    builder: (_, snap) =>
+                        snap.connectionState == ConnectionState.done
                         ? payment_screen.PaymentScreen()
                         : const Scaffold(
-                            body: Center(child: CircularProgressIndicator())),
+                            body: Center(child: CircularProgressIndicator()),
+                          ),
                   ),
                   slideFromRight: true,
                   settings: settings,
@@ -964,11 +1205,12 @@ class _GraniAppState extends State<GraniApp> {
                 return SlideFadePageRoute(
                   child: FutureBuilder<void>(
                     future: privacy_policy_screen.loadLibrary(),
-                    builder: (_, snap) => snap.connectionState ==
-                            ConnectionState.done
+                    builder: (_, snap) =>
+                        snap.connectionState == ConnectionState.done
                         ? privacy_policy_screen.PrivacyPolicyScreen()
                         : const Scaffold(
-                            body: Center(child: CircularProgressIndicator())),
+                            body: Center(child: CircularProgressIndicator()),
+                          ),
                   ),
                   slideFromRight: true,
                   settings: settings,

@@ -671,25 +671,23 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get vpnConnectPatienceWarm =>
-      'Reconnecting is taking longer than usual — please wait, we are still connecting.';
+      'Reconnection is taking longer. Still connecting...';
 
   @override
   String get vpnRetryRouteWarm => 'Trying another connection route...';
 
   @override
-  String get vpnSlowNetworkWarm =>
-      'Connection may take longer due to the network.';
+  String get vpnSlowNetworkWarm => 'Network is unstable. Connecting...';
 
   @override
   String get vpnConnectPatienceCold =>
-      'First-time setup on a slow network can take up to a minute — please wait, this is normal.';
+      'First-time setup may take up to a minute.';
 
   @override
   String get vpnOptimizeRoute => 'Optimizing route...';
 
   @override
-  String get vpnSlowNetworkCold =>
-      'Slow network is normal, still connecting...';
+  String get vpnSlowNetworkCold => 'Network is unstable. Still connecting...';
 
   @override
   String get connectionStagesProgressSemantic => 'VPN connection progress';
@@ -780,6 +778,30 @@ class AppLocalizationsEn extends AppLocalizations {
   String get notificationChannelDescription => 'Notifications from GRANI';
 
   @override
+  String get notificationPermissionTitle => 'Don\'t miss access updates';
+
+  @override
+  String get notificationPermissionBody =>
+      'GRANI will remind you when the trial ends and notify you about important access changes. No ads.';
+
+  @override
+  String get notificationPermissionAllow => 'Allow notifications';
+
+  @override
+  String get notificationPermissionLater => 'Not now';
+
+  @override
+  String get notificationPermissionSettingsTitle =>
+      'Turn on notifications in Settings';
+
+  @override
+  String get notificationPermissionSettingsBody =>
+      'Notifications for GRANI are currently off. Turn them on to receive payment, access expiry, and important subscription updates.';
+
+  @override
+  String get notificationPermissionOpenSettings => 'Open Settings';
+
+  @override
   String get profileLogoutDisconnectWarning =>
       'Could not disconnect cleanly. You are signed out.';
 
@@ -818,7 +840,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get trialUiConnectedTitle => 'Protected';
 
   @override
-  String get trialUiSubtitleInitial => 'You have 24 hours of protected access.';
+  String get trialUiSubtitleInitial => 'Your protected trial access is active.';
 
   @override
   String get trialUiSubtitleDisconnected => 'Tap to connect and start testing.';
@@ -983,24 +1005,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tariffBadgeMonthsMany => 'months';
 
   @override
-  String get tariffPriceMonthly => '\$8/mo';
+  String get tariffPriceMonthly => 'Google Play price';
 
   @override
-  String get tariffPriceSixMonth => '\$6.8/mo';
+  String get tariffPriceSixMonth => 'Google Play price';
 
   @override
-  String get tariffPriceYearly => '\$5.6/mo';
+  String get tariffPriceYearly => 'Google Play price';
 
   @override
-  String get tariffDescMonthly =>
-      'For those who want to start without commitment.';
+  String get tariffPriceLoading => 'Loading price…';
 
   @override
-  String get tariffDescSixMonth =>
-      '\$40.8 — 15% off\nBalance of benefit and flexibility';
+  String get tariffPriceUnavailable => 'Price unavailable';
 
   @override
-  String get tariffDescYearly => '\$67.2 — 30% off\nBest value';
+  String get tariffDescMonthly => 'Flexible access for 1 month';
+
+  @override
+  String get tariffDescSixMonth => 'Great value for 6 months';
+
+  @override
+  String get tariffDescYearly => 'Best value for 12 months';
 
   @override
   String get subscriptionSnackbarPlanChanged => 'Plan updated successfully';
@@ -1020,8 +1046,72 @@ class AppLocalizationsEn extends AppLocalizations {
   String get subscriptionPurchaseError => 'Payment error. Please try again.';
 
   @override
+  String get subscriptionDifferentGraniAccount =>
+      'The current Google Play subscription is already linked to another GRANI account. Sign in to that GRANI account or use a different Google Play account.';
+
+  @override
+  String get subscriptionPreflightUnavailable =>
+      'We could not safely verify the current subscription. The purchase was not started; check your connection and try again.';
+
+  @override
+  String get subscriptionSamePlanAlreadyActive =>
+      'This plan is already active in Google Play and renews automatically. To pay for a new period now, choose the 6- or 12-month plan.';
+
+  @override
   String get subscriptionGooglePlayUnavailable =>
       'Google Play purchases are not available on this device.';
+
+  @override
+  String get subscriptionPayOnAndroidPrice => 'Google Play price';
+
+  @override
+  String get subscriptionPayOnAndroidTitle => 'Pay on Android';
+
+  @override
+  String get subscriptionPayOnAndroidBody =>
+      'Scan the QR code with your Android phone. In the GRANI app, sign in to the same account and pay for the selected period through Google Play.';
+
+  @override
+  String get subscriptionPayOnAndroidSameAccount =>
+      'Important: Android and Windows must use the same GRANI account.';
+
+  @override
+  String get subscriptionPayOnAndroidWaiting =>
+      'Keep this window open after payment — Windows will check the subscription automatically.';
+
+  @override
+  String get subscriptionPayOnAndroidOpenStore => 'Open Google Play';
+
+  @override
+  String get subscriptionPayOnAndroidCheck => 'Check payment';
+
+  @override
+  String get subscriptionPayOnAndroidChecking => 'Checking subscription…';
+
+  @override
+  String get subscriptionPayOnAndroidNotFound =>
+      'The new payment has not appeared yet. Complete the purchase on Android and check again.';
+
+  @override
+  String get subscriptionPayOnAndroidLinkCopied => 'Android link copied';
+
+  @override
+  String get subscriptionPayOnAndroidCopyLink => 'Copy link';
+
+  @override
+  String get splitTunnelWindowsProcessHint =>
+      'Process name, for example chrome.exe';
+
+  @override
+  String get splitTunnelWindowsProcessAdd => 'Add process';
+
+  @override
+  String get splitTunnelWindowsProcessInvalid =>
+      'Enter a valid Windows process name ending in .exe.';
+
+  @override
+  String get splitTunnelWindowsProcessAlreadyAdded =>
+      'This process is already added.';
 
   @override
   String get vpnDisconnectedAccessExpired =>
@@ -1059,24 +1149,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get paymentTariffTitleOneYear => '1 year';
 
   @override
-  String get paymentTariffPriceMonthly => '399 ₽/mo';
+  String get paymentTariffPriceMonthly => 'Google Play price';
 
   @override
-  String get paymentTariffPriceSixMonth => '340 ₽/mo';
+  String get paymentTariffPriceSixMonth => 'Google Play price';
 
   @override
-  String get paymentTariffPriceYearly => '279 ₽/mo';
+  String get paymentTariffPriceYearly => 'Google Play price';
 
   @override
-  String get paymentTariffDescMonthly =>
-      'For those who want to start without commitment.';
+  String get paymentTariffDescMonthly => 'Flexible access for 1 month';
 
   @override
-  String get paymentTariffDescSixMonth =>
-      '2,035 ₽ — 15% off\nBalance of benefit and flexibility';
+  String get paymentTariffDescSixMonth => 'Great value for 6 months';
 
   @override
-  String get paymentTariffDescYearly => '3,352 ₽ — 30% off\nBest value';
+  String get paymentTariffDescYearly => 'Best value for 12 months';
 
   @override
   String get termsOfUseLink => 'Terms of use';
@@ -1136,4 +1224,110 @@ class AppLocalizationsEn extends AppLocalizations {
   String authCodeResendWaitSeconds(int seconds) {
     return 'You can resend in $seconds s';
   }
+
+  @override
+  String get paywallChoosePlanTitle => 'Choose access period';
+
+  @override
+  String get paywallChoosePlanSubtitle => 'Choose a period. No auto-renewal.';
+
+  @override
+  String get paywallPlanOneMonth => '1 month';
+
+  @override
+  String get paywallPlanSixMonths => '6 months';
+
+  @override
+  String get paywallPlanTwelveMonths => '12 months';
+
+  @override
+  String get paywallPerMonth => '/ mo';
+
+  @override
+  String get paywallTotal => 'Total';
+
+  @override
+  String get paywallBestValue => 'Best value';
+
+  @override
+  String paywallSavePercent(int percent) {
+    return 'Save $percent%';
+  }
+
+  @override
+  String paywallContinuePrice(String price) {
+    return 'Continue — $price';
+  }
+
+  @override
+  String get paywallLoadingPlans => 'Loading plans…';
+
+  @override
+  String get paywallOpeningGooglePlay => 'Opening Google Play…';
+
+  @override
+  String get paywallVerifyingPayment => 'Verifying payment…';
+
+  @override
+  String get paywallPaymentPending => 'Payment is processing';
+
+  @override
+  String get paywallPaymentPendingHint =>
+      'Access will start after the payment is confirmed.';
+
+  @override
+  String get paywallAccessActivated => 'Access activated';
+
+  @override
+  String get paywallPaymentCanceled => 'Purchase canceled';
+
+  @override
+  String get paywallPaymentErrorOpen =>
+      'Could not open payment. Please try again.';
+
+  @override
+  String get paywallStoreUnavailable =>
+      'Google Play is temporarily unavailable.';
+
+  @override
+  String get paywallProductsUnavailable =>
+      'Could not load plans. Check your connection.';
+
+  @override
+  String get paywallVerificationFailed =>
+      'Payment was received, but access is not confirmed yet. Try restoring it.';
+
+  @override
+  String get paywallRestoreFailed =>
+      'Could not check the purchase. Please try again.';
+
+  @override
+  String get paywallRestorePurchase => 'Restore purchase';
+
+  @override
+  String get paywallPrivacy => 'Privacy';
+
+  @override
+  String get paywallTrustGooglePlay => 'Payment via Google Play';
+
+  @override
+  String get paywallTrustNoRenewals => 'No auto-renewal';
+
+  @override
+  String get paywallTrustRestore => 'Access is restored';
+
+  @override
+  String get paywallRetry => 'Retry';
+
+  @override
+  String paywallTariffSemantics(String title, String monthlyPrice,
+      String totalPrice, String saving, String selection) {
+    return '$title. $monthlyPrice per month. Total $totalPrice. $saving. $selection';
+  }
+
+  @override
+  String get paywallSelected => 'Selected';
+
+  @override
+  String get paywallNotSelected => 'Not selected';
 }

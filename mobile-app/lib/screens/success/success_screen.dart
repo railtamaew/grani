@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../../services/auth_service.dart';
-import '../../config/app_config.dart';
-import '../../config/theme.dart';
+
+import '../../l10n/l10n.dart';
 import '../../widgets/custom_widgets.dart';
 
 class SuccessScreen extends StatefulWidget {
@@ -12,7 +10,8 @@ class SuccessScreen extends StatefulWidget {
   State<SuccessScreen> createState() => _SuccessScreenState();
 }
 
-class _SuccessScreenState extends State<SuccessScreen> with TickerProviderStateMixin {
+class _SuccessScreenState extends State<SuccessScreen>
+    with TickerProviderStateMixin {
   late AnimationController _animationController;
   late Animation<double> _progressAnimation;
 
@@ -41,6 +40,7 @@ class _SuccessScreenState extends State<SuccessScreen> with TickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       body: SafeArea(
@@ -49,30 +49,33 @@ class _SuccessScreenState extends State<SuccessScreen> with TickerProviderStateM
           child: Column(
             children: [
               const SizedBox(height: 60),
-              
+
               // Логотип
               _buildLogo(),
-              
+
               const SizedBox(height: 40),
-              
+
               // Маскот с большим пальцем
               _buildMascot(),
-              
+
               const SizedBox(height: 40),
-              
+
               // Заголовок успеха
-              _buildTitle(),
-              
+              _buildTitle(l10n.vpnProgressConnected),
+
               const SizedBox(height: 12),
-              
+
               // Описание
-              _buildDescription(),
-              
+              _buildDescription(l10n.vpnProgressProtocolStart),
+
               const Spacer(),
-              
+
               // Карточка с щитом и прогресс-кольцом
-              _buildSuccessCard(),
-              
+              _buildSuccessCard(
+                statusText: l10n.vpnProgressConnected,
+                descriptionText: l10n.homeProtectedSubtitle,
+              ),
+
               const SizedBox(height: 20),
             ],
           ),
@@ -101,11 +104,11 @@ class _SuccessScreenState extends State<SuccessScreen> with TickerProviderStateM
     );
   }
 
-  Widget _buildTitle() {
-    return const Text(
-      'Успешно!',
+  Widget _buildTitle(String title) {
+    return Text(
+      title,
       textAlign: TextAlign.center,
-      style: TextStyle(
+      style: const TextStyle(
         fontSize: 20,
         fontWeight: FontWeight.bold,
         color: Color(0xFF2C3E50),
@@ -114,11 +117,11 @@ class _SuccessScreenState extends State<SuccessScreen> with TickerProviderStateM
     );
   }
 
-  Widget _buildDescription() {
-    return const Text(
-      'Идет настройка безопасного подключения',
+  Widget _buildDescription(String description) {
+    return Text(
+      description,
       textAlign: TextAlign.center,
-      style: TextStyle(
+      style: const TextStyle(
         fontSize: 12,
         color: Color(0xFF7F8C8D),
         height: 1.3,
@@ -126,7 +129,10 @@ class _SuccessScreenState extends State<SuccessScreen> with TickerProviderStateM
     );
   }
 
-  Widget _buildSuccessCard() {
+  Widget _buildSuccessCard({
+    required String statusText,
+    required String descriptionText,
+  }) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -168,7 +174,7 @@ class _SuccessScreenState extends State<SuccessScreen> with TickerProviderStateM
                     );
                   },
                 ),
-                
+
                 // Щит с галочкой
                 Container(
                   width: 80,
@@ -193,24 +199,24 @@ class _SuccessScreenState extends State<SuccessScreen> with TickerProviderStateM
               ],
             ),
           ),
-          
+
           const SizedBox(height: 20),
-          
+
           // Текст статуса
-          const Text(
-            'Подключение установлено',
-            style: TextStyle(
+          Text(
+            statusText,
+            style: const TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
               color: Color(0xFF27AE60),
             ),
           ),
-          
+
           const SizedBox(height: 8),
-          
-          const Text(
-            'Ваше соединение защищено',
-            style: TextStyle(
+
+          Text(
+            descriptionText,
+            style: const TextStyle(
               fontSize: 12,
               color: Color(0xFF7F8C8D),
             ),

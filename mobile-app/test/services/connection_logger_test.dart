@@ -3,14 +3,18 @@ import 'package:mobile_app/services/connection_logger.dart';
 import 'package:dio/dio.dart';
 import 'package:mockito/mockito.dart';
 import 'package:mockito/annotations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // Генерируем моки
 @GenerateMocks([Dio])
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('ConnectionLogger', () {
     late ConnectionLogger logger;
 
     setUp(() {
+      SharedPreferences.setMockInitialValues({});
       logger = ConnectionLogger();
     });
 

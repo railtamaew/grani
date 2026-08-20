@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'simple_vpn_api.dart';
+import 'windows_sing_box_tun.dart';
+import 'windows_split_tunnel_settings.dart';
 
 class WindowsHysteria2ConfigException implements Exception {
   const WindowsHysteria2ConfigException(this.message);
@@ -44,9 +46,8 @@ String buildWindowsHysteria2Config(SimpleVpnConfig config) {
   }
 
   final rawTls = outbound['tls'];
-  final tls = rawTls is Map
-      ? Map<String, dynamic>.from(rawTls)
-      : <String, dynamic>{};
+  final tls =
+      rawTls is Map ? Map<String, dynamic>.from(rawTls) : <String, dynamic>{};
   final sni = tls['server_name']?.toString().trim();
   final nodeIpv4 = config.server?.ipAddress.trim() ?? '';
   if (!_isIpv4(nodeIpv4)) {
@@ -94,6 +95,53 @@ String buildWindowsHysteria2Config(SimpleVpnConfig config) {
     ..writeln('    ipv6: [${_yamlScalar('2000::/3')}]')
     ..writeln('    ipv4Exclude: [$nodeIpv4/32]');
   return buffer.toString();
+}
+
+String buildWindowsHysteria2SingBoxConfig(
+  SimpleVpnConfig config, {
+  WindowsSplitTunnelSettingsData splitTunnel =
+      const WindowsSplitTunnelSettingsData(),
+}) {
+  final decoded = _decodeConfig(config.config);
+  final rawOutbounds = decoded['outbounds'];
+  if (rawOutbounds is! List) {
+    throw const WindowsHysteria2ConfigException(
+      'Hysteria2 config does not contain outbounds',
+    );
+  }
+
+  Map<String, dynamic>? outbound;
+  for (final candidate in rawOutbounds.whereType<Map>()) {
+    final map = Map<String, dynamic>.from(candidate);
+    if (map['type']?.toString() == 'hysteria2') {
+      outbound = map;
+      break;
+    }
+  }
+  if (outbound == null) {
+    throw const WindowsHysteria2ConfigException(
+      'Hysteria2 outbound is missing',
+    );
+  }
+
+  _requiredString(outbound, 'server');
+  _requiredString(outbound, 'password');
+  final nodeIpv4 = config.server?.ipAddress.trim() ?? '';
+  if (!_isIpv4(nodeIpv4)) {
+    throw const WindowsHysteria2ConfigException(
+      'Hysteria2 Windows TUN requires the node IPv4 address',
+    );
+  }
+
+  return jsonEncode(
+    buildWindowsSingBoxTun(
+      proxyOutbound: outbound,
+      nodeIpv4: nodeIpv4,
+      interfaceName: 'grani-hy2',
+      address: '100.100.100.101/30',
+      splitTunnel: splitTunnel,
+    ),
+  );
 }
 
 Map<String, dynamic> _decodeConfig(String raw) {

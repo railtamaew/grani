@@ -613,51 +613,7 @@ class _ProfileDrawerContent extends StatelessWidget {
             Navigator.pushNamed(context, '/subscription', arguments: mode);
           },
         ),
-        if (isPremium) ...[
-          const SizedBox(height: 10),
-          _buildManageSubscriptionLink(context),
-        ],
       ],
-    );
-  }
-
-  Widget _buildManageSubscriptionLink(BuildContext context) {
-    return GestureDetector(
-      onTap: () async {
-        final uri = Uri.parse(
-          'https://play.google.com/store/account/subscriptions?package=com.granivpn.mobile',
-        );
-        try {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        } catch (_) {
-          if (context.mounted) {
-            showErrorSnackBar(
-                context, context.l10n.profileGooglePlayOpenFailed);
-          }
-        }
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: Row(
-          children: [
-            const Icon(
-              Icons.open_in_new,
-              size: 14,
-              color: GraniTheme.secondaryText,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              context.l10n.profileGooglePlayManage,
-              style: GraniTheme.bodyMedium.copyWith(
-                fontSize: 12,
-                color: GraniTheme.secondaryText,
-                decoration: TextDecoration.underline,
-                decorationColor: GraniTheme.secondaryText,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -842,7 +798,8 @@ class _SubscriptionCard extends StatelessWidget {
     required this.onTap,
   });
 
-  static const int _trialTotalSeconds = 24 * 60 * 60;
+  int get _trialTotalSeconds =>
+      auth.trialTotalSeconds > 0 ? auth.trialTotalSeconds : 24 * 60 * 60;
 
   Color _trialDateColor(int secondsLeft) {
     if (secondsLeft > 24 * 3600) return GraniTheme.primaryText;
@@ -1220,7 +1177,7 @@ class _AccountCardState extends State<_AccountCard> {
                 spacingAfterIcon: 14,
               ),
               const Divider(height: 1, color: GraniTheme.surfaceVariant),
-              if (Platform.isAndroid) ...[
+              if (Platform.isAndroid || Platform.isWindows) ...[
                 GraniSectionRow(
                   iconSvg: 'assets/images/figma/profile/split_tunnel_new.svg',
                   label: context.l10n.splitTunnelTitle,

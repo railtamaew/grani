@@ -10,6 +10,52 @@ class AppConfig {
   static bool get isEmailPrimaryAuth =>
       startScreenPrimaryAuth.toLowerCase() == 'email';
 
+  /// Paywall experiment/configuration boundary. UI cards never own the
+  /// default selection, so Remote Config/server values can replace this later.
+  static const String paywallDefaultPlanId = String.fromEnvironment(
+    'PAYWALL_DEFAULT_PLAN_ID',
+    defaultValue: '12_months',
+  );
+  static const String paywallExperimentVariant = String.fromEnvironment(
+    'PAYWALL_EXPERIMENT_VARIANT',
+    defaultValue: 'control',
+  );
+
+  /// Post-auth preparation screen between successful auth and the app shell.
+  ///
+  /// Rollback switch: build with
+  /// --dart-define=ENABLE_POST_AUTH_PREPARATION_SCREEN=false
+  /// to restore the previous direct navigation flow.
+  static const bool enablePostAuthPreparationScreen = bool.fromEnvironment(
+    'ENABLE_POST_AUTH_PREPARATION_SCREEN',
+    defaultValue: true,
+  );
+  static const Duration postAuthPreparationShowDelay = Duration(
+    milliseconds: 350,
+  );
+  static const Duration postAuthPreparationMinVisible = Duration(
+    milliseconds: 650,
+  );
+  static const Duration postAuthPreparationStepMinVisible = Duration(
+    milliseconds: 220,
+  );
+  static const Duration postAuthPreparationSoftTimeout = Duration(seconds: 15);
+  static const Duration postAuthPreparationAccountWaitTimeout = Duration(
+    seconds: 75,
+  );
+  static const Duration postAuthPreparationNetworkSoftTimeout = Duration(
+    seconds: 3,
+  );
+  static const Duration postAuthPreparationAccessSoftTimeout = Duration(
+    seconds: 4,
+  );
+  static const Duration postAuthPreparationServersSoftTimeout = Duration(
+    seconds: 6,
+  );
+  static const Duration postAuthPreparationProtocolWarmupSoftTimeout = Duration(
+    seconds: 10,
+  );
+
   // Use --dart-define=API_BASE_URL=... to override at build time.
   /// Основной API (Cloudflare-first) — api.granilink.com.
   static const String apiBaseUrl = String.fromEnvironment(
@@ -30,7 +76,8 @@ class AppConfig {
     final list = <String>[];
     if (raw.isNotEmpty) {
       list.addAll(
-          raw.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty));
+        raw.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty),
+      );
     }
     return list;
   }();
@@ -123,9 +170,13 @@ class AppConfig {
   static const String appName = 'GRANI';
 
   // Версия и информация о сборке (загружается из package_info)
-  static String appVersion = '1.0.4';
-  static String buildNumber = '23';
-  static String buildDate = '2026-04-27'; // Автоматически заменяется при сборке
+  static String appVersion = '1.0.39';
+  static String buildNumber = '39';
+  static String buildDate = '2026-08-05'; // Автоматически заменяется при сборке
+  static const String diagnosticBuildMarker = String.fromEnvironment(
+    'GRANI_BUILD_MARKER',
+    defaultValue: 'local-dev',
+  );
 
   // Инициализация версии из package_info
   static Future<void> init() async {
@@ -133,10 +184,13 @@ class AppConfig {
       final packageInfo = await PackageInfo.fromPlatform();
       appVersion = packageInfo.version;
       buildNumber = packageInfo.buildNumber;
+      debugPrint(
+        'GRANI_BUILD_MARKER marker=$diagnosticBuildMarker version=$appVersion build=$buildNumber',
+      );
     } catch (e) {
       // Если не удалось загрузить, используем значения по умолчанию
-      appVersion = '1.0.4';
-      buildNumber = '23';
+      appVersion = '1.0.39';
+      buildNumber = '39';
     }
   }
 
@@ -202,29 +256,34 @@ class AppConfig {
   static const Duration disconnectWaitConnectStep = Duration(milliseconds: 100);
 
   /// Debounce смены сети (Wi‑Fi ↔ мобильный) перед переподключением VPN. 1000 ms — быстрее реакция, меньше дрожания.
-  static const Duration networkChangeDebounceDuration =
-      Duration(milliseconds: 1000);
+  static const Duration networkChangeDebounceDuration = Duration(
+    milliseconds: 1000,
+  );
 
   /// В selectServer(): макс. число шагов ожидания завершения disconnect (шаг 100 ms) перед сменой сервера.
   static const int selectServerWaitDisconnectMaxAttempts = 50;
-  static const Duration selectServerWaitDisconnectStep =
-      Duration(milliseconds: 100);
+  static const Duration selectServerWaitDisconnectStep = Duration(
+    milliseconds: 100,
+  );
 
   /// Задержка перед повторным connect при смене сети (Wi‑Fi ↔ мобильный). 200 ms — баланс стабильности tun2socks и скорости.
-  static const Duration reconnectAfterNetworkChangeDelay =
-      Duration(milliseconds: 200);
+  static const Duration reconnectAfterNetworkChangeDelay = Duration(
+    milliseconds: 200,
+  );
 
   /// Только если первая попытка `/auth/*` упала по **таймауту** (connect/send/receive):
   /// пауза перед granilink fallback. При `connectionError` задержки нет.
   static const Duration authPathFallbackDelay = Duration(milliseconds: 600);
 
   /// В начале [VpnService.connect]: мягкая пауза (не замена очереди control-plane; полноценная сериализация — отдельная задача).
-  static const Duration controlPlaneSettleBeforeConnect =
-      Duration(milliseconds: 150);
+  static const Duration controlPlaneSettleBeforeConnect = Duration(
+    milliseconds: 150,
+  );
 
   /// Минимальный интервал после переподключения по смене сети, в течение которого новая смена сети не запускает disconnect→connect (снижает «дрожание»).
-  static const Duration reconnectMinIntervalAfterNetworkChange =
-      Duration(seconds: 2);
+  static const Duration reconnectMinIntervalAfterNetworkChange = Duration(
+    seconds: 2,
+  );
 
   /// После возврата из фона (resume/пробуждение экрана) смену сети не обрабатываем это время — избегаем ложного disconnect при «мигании» сети.
   static const Duration networkChangeIgnoreAfterResume = Duration(seconds: 5);
@@ -289,6 +348,15 @@ class AppConfig {
   /// URL Google Play для шаринга
   static const String sharePlayStoreUrl =
       'https://play.google.com/store/apps/details?id=com.granivpn.mobile';
+
+  /// App Link for handing a Windows payment off to the Android app.
+  ///
+  /// It intentionally contains no token, email address, or other PII.
+  static const String androidPaymentHandoffUrl =
+      'https://granilink.com/open/pay'
+      '?utm_source=windows_app'
+      '&utm_medium=qr'
+      '&utm_campaign=windows_pay_android';
 
   // UI
   static const double borderRadius = 12.0;

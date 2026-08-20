@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import 'simple_vpn_controller.dart';
 
 class SimpleVpnScreen extends StatefulWidget {
@@ -16,6 +17,11 @@ class _SimpleVpnScreenState extends State<SimpleVpnScreen> {
   void initState() {
     super.initState();
     _controller = SimpleVpnController();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _controller.restoreInitialNativeState(
+        source: 'simple_vpn_screen_initial',
+      );
+    });
   }
 
   @override
@@ -29,21 +35,24 @@ class _SimpleVpnScreenState extends State<SimpleVpnScreen> {
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, _) {
+        final l10n = context.l10n;
         final state = _controller.state;
         final isConnected = state == SimpleVpnState.connected;
         final isBusy = _controller.isBusy;
         final buttonText = isConnected
-            ? 'Отключить'
+            ? l10n.btnVpnCancel
             : isBusy
-                ? 'Подключаем...'
-                : 'Подключить';
-        final statusText = switch (state) {
-          SimpleVpnState.connected => 'Подключено',
-          SimpleVpnState.connecting => 'Подключение',
-          SimpleVpnState.disconnecting => 'Отключение',
-          SimpleVpnState.error => 'Ошибка подключения',
-          SimpleVpnState.disconnected => 'Отключено',
-        };
+            ? l10n.btnVpnConnecting
+            : l10n.btnVpnConnect;
+        final statusText = _controller.isRestoringNativeState
+            ? l10n.vpnProgressConfigProcessing
+            : switch (state) {
+                SimpleVpnState.connected => l10n.trialUiConnectedTitle,
+                SimpleVpnState.connecting => l10n.trialUiConnectingTitle,
+                SimpleVpnState.disconnecting => l10n.trialUiDisconnectingTitle,
+                SimpleVpnState.error => l10n.homeConnectionFailedTitle,
+                SimpleVpnState.disconnected => l10n.homeReadyTitle,
+              };
 
         return Scaffold(
           backgroundColor: const Color(0xFFF7F9FA),
@@ -162,15 +171,12 @@ class _StatusDot extends StatelessWidget {
     final color = busy
         ? const Color(0xFFF79009)
         : active
-            ? const Color(0xFF12B76A)
-            : const Color(0xFF98A2B3);
+        ? const Color(0xFF12B76A)
+        : const Color(0xFF98A2B3);
     return Container(
       width: 14,
       height: 14,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-      ),
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
   }
 }

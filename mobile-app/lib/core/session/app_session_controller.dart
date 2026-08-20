@@ -45,24 +45,19 @@ class AppSessionController extends ChangeNotifier {
   // После resume не штурмуем control-plane: минимум 60с между burst refresh.
   static const _apiRefreshDebounce = Duration(seconds: 60);
 
-  /// Возврат из фона: всегда нативный sync; burst запросов к API (статус + серверы) — с дебаунсом.
+  /// Возврат из фона обновляет только entitlement/control-plane.
+  ///
+  /// Состоянием Android-туннеля владеет native runtime, а активный UI проецирует
+  /// его через SimpleVpnController. Legacy VpnService не должен параллельно
+  /// восстанавливать/сбрасывать connection-state или очищать backend-сессию:
+  /// иначе два независимых контроллера принимают решения по разным снимкам.
   Future<void> performResumeCoordination(VpnService vpnService) async {
     vpnService.onAppResumedFromBackground();
-    await vpnService.syncConnectionStateWithNative();
-
-    if (_auth.isAuthenticated) {
-      // Не await: чтобы resume не ждал сетевой round-trip. Раньше бэкенд тянул Xray Stats по SSH (десятки сек);
-      // теперь /vpn/status по умолчанию только БД — всё равно не await. connect() может кратко ждать только
-      // если параллельно уже in-flight другой sync (см. VpnService._vpnStatusSyncInFlight).
-      vpnService.syncConnectionStateWithServer(force: true).catchError((e) {
-        Logger().debug('Синхронизация состояния с сервером при resume: $e',
-            'AppSessionController');
-      });
-    }
 
     try {
-      await const MethodChannel('com.granivpn.mobile/vpn')
-          .invokeMethod<void>('requestQuickTileRefresh');
+      await const MethodChannel(
+        'com.granivpn.mobile/vpn',
+      ).invokeMethod<void>('requestQuickTileRefresh');
     } catch (_) {}
 
     if (!_auth.isAuthenticated) return;
@@ -73,14 +68,16 @@ class AppSessionController extends ChangeNotifier {
         'AppSessionController',
       );
       try {
-        await const MethodChannel('com.granivpn.mobile/vpn')
-            .invokeMethod<void>('requestQuickTileRefresh');
+        await const MethodChannel(
+          'com.granivpn.mobile/vpn',
+        ).invokeMethod<void>('requestQuickTileRefresh');
       } catch (_) {}
       return;
     }
 
     final now = DateTime.now();
-    final skipApiBurst = _lastApiRefreshAfterResumeAt != null &&
+    final skipApiBurst =
+        _lastApiRefreshAfterResumeAt != null &&
         now.difference(_lastApiRefreshAfterResumeAt!) < _apiRefreshDebounce;
     _lastApiRefreshAfterResumeAt = now;
 
@@ -95,10 +92,12 @@ class AppSessionController extends ChangeNotifier {
       } else {
         vpnService
             .refreshControlPlaneSnapshot(_auth)
-            .catchError((e) => Logger().warning(
-                  'Ошибка snapshot control-plane: $e',
-                  'AppSessionController',
-                ));
+            .catchError(
+              (e) => Logger().warning(
+                'Ошибка snapshot control-plane: $e',
+                'AppSessionController',
+              ),
+            );
       }
       // Кардинальное сокращение шума: prewarm после resume отключён.
     }

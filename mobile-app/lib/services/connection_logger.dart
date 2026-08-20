@@ -15,6 +15,7 @@ import '../core/http/grani_request_id.dart';
 import '../core/vpn/control_plane_client.dart';
 import '../core/vpn/network_policy_engine.dart';
 import '../core/vpn/vpn_orchestration_spec.dart';
+import 'analytics_service.dart';
 
 /// Сервис для логирования подключений к VPN и отправки логов на сервер
 class ConnectionLogger {
@@ -234,11 +235,16 @@ class ConnectionLogger {
 
   /// Верхняя граница очереди: при переполнении отбрасыем старые записи (защита от RAM при длительных сетевых сбоях).
   static const int _maxPendingLogs = 100;
+  static const Duration _coalescedFlushDelay = Duration(seconds: 2);
+  static const Duration _alreadyFlushingLogInterval = Duration(seconds: 5);
 
   final List<Map<String, dynamic>> _pendingLogs = [];
   Timer? _flushTimer;
+  Timer? _coalescedFlushTimer;
+  bool _coalescedFlushForce = false;
   bool _isFlushing = false;
   bool _vpnTransitioning = false;
+  DateTime? _lastAlreadyFlushingSkipLogAt;
 
   // Кэш информации об устройстве
   String? _platform;
@@ -260,6 +266,31 @@ class ConnectionLogger {
   int _consecutive404Count = 0;
   DateTime? _last404At;
   String? _cachedFingerprint;
+
+  void _scheduleCoalescedFlush({bool force = false}) {
+    if (_pendingLogs.isEmpty) return;
+    _coalescedFlushForce = _coalescedFlushForce || force;
+    if (_coalescedFlushTimer?.isActive ?? false) return;
+
+    _coalescedFlushTimer = Timer(_coalescedFlushDelay, () {
+      final shouldForce = _coalescedFlushForce;
+      _coalescedFlushTimer = null;
+      _coalescedFlushForce = false;
+      if (_pendingLogs.isNotEmpty) {
+        unawaited(_flushLogs(force: shouldForce));
+      }
+    });
+  }
+
+  bool _shouldLogAlreadyFlushingSkip() {
+    final now = DateTime.now();
+    final last = _lastAlreadyFlushingSkipLogAt;
+    if (last != null && now.difference(last) < _alreadyFlushingLogInterval) {
+      return false;
+    }
+    _lastAlreadyFlushingSkipLogAt = now;
+    return true;
+  }
 
   /// Инициализация логгера
   Future<void> initialize() async {
@@ -379,6 +410,7 @@ class ConnectionLogger {
           : null,
       connectionFlowType: connectionFlowType,
     );
+    unawaited(AnalyticsService().logFirstConnectionSuccess(protocol));
   }
 
   /// Логирование ошибки подключения
@@ -486,6 +518,15 @@ class ConnectionLogger {
     String? apiErr,
     String? apiFailureClass,
     String? correlationSessionId,
+    String? networkType,
+    String? underlyingNetworkType,
+    bool? underlyingNetworkAvailable,
+    bool? internetWithoutVpnOk,
+    bool? underlyingInternetOk,
+    String? underlyingProbeUrl,
+    int? underlyingProbeRttMs,
+    int? underlyingProbeHttpStatus,
+    String? underlyingProbeError,
     String? clientId,
     int? serverId,
     String? connectionSessionId,
@@ -501,6 +542,24 @@ class ConnectionLogger {
       'api_http_status': apiHttpStatus,
       if (correlationSessionId != null && correlationSessionId.isNotEmpty)
         'correlation_session': correlationSessionId,
+      if (networkType != null && networkType.isNotEmpty)
+        'network_type': networkType,
+      if (underlyingNetworkType != null && underlyingNetworkType.isNotEmpty)
+        'underlying_network_type': underlyingNetworkType,
+      if (underlyingNetworkAvailable != null)
+        'underlying_network_available': underlyingNetworkAvailable,
+      if (internetWithoutVpnOk != null)
+        'internet_without_vpn_ok': internetWithoutVpnOk,
+      if (underlyingInternetOk != null)
+        'underlying_internet_ok': underlyingInternetOk,
+      if (underlyingProbeUrl != null && underlyingProbeUrl.isNotEmpty)
+        'underlying_probe_url': underlyingProbeUrl,
+      if (underlyingProbeRttMs != null)
+        'underlying_probe_rtt_ms': underlyingProbeRttMs,
+      if (underlyingProbeHttpStatus != null)
+        'underlying_probe_http_status': underlyingProbeHttpStatus,
+      if (underlyingProbeError != null && underlyingProbeError.isNotEmpty)
+        'underlying_probe_error': underlyingProbeError,
       if (publicErr != null && publicErr.isNotEmpty) 'public_err': publicErr,
       if (publicFailureClass != null && publicFailureClass.isNotEmpty)
         'public_failure_class': publicFailureClass,
@@ -739,11 +798,14 @@ class ConnectionLogger {
 
   /// Отправка накопленных логов на сервер.
   /// [force] = true пропускает проверку _vpnTransitioning (используется из scheduleFlush).
-  /// При пропуске всегда один лог с [skip_reason=...] для парсинга и аналитики.
+  /// При обычных пропусках пишет [skip_reason=...]; частые already_flushing объединяются.
   Future<void> _flushLogs({bool force = false}) async {
     if (_isFlushing) {
-      debugPrint(
-          'ConnectionLogger._flushLogs: Пропуск [skip_reason=already_flushing] pendingLogs=${_pendingLogs.length}');
+      _scheduleCoalescedFlush(force: force);
+      if (_shouldLogAlreadyFlushingSkip()) {
+        debugPrint(
+            'ConnectionLogger._flushLogs: Пропуск [skip_reason=already_flushing] pendingLogs=${_pendingLogs.length}');
+      }
       return;
     }
     if (_pendingLogs.isEmpty) {
@@ -1108,6 +1170,7 @@ class ConnectionLogger {
   /// Очистка ресурсов
   void dispose() {
     _flushTimer?.cancel();
+    _coalescedFlushTimer?.cancel();
     _clearFlushBackoff();
     _flushLogs(); // Отправляем оставшиеся логи
   }

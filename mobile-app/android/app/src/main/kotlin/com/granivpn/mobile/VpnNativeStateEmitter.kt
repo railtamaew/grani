@@ -1,9 +1,11 @@
 package com.granivpn.mobile
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import io.flutter.plugin.common.EventChannel
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -21,19 +23,29 @@ object VpnNativeStateEmitter {
 
     @Volatile
     private var sink: EventChannel.EventSink? = null
+    private val sinkGeneration = AtomicLong(0L)
+    @Volatile
+    private var appContext: Context? = null
+
+    fun setAppContext(context: Context) {
+        appContext = context.applicationContext
+    }
 
     private val trafficRunnable = object : Runnable {
         override fun run() {
             if (sink == null) return
-            val (connected, state) = GraniVpnService.peekStateForFlutter()
+            val current = currentState()
             val telemetryAllowed =
-                connected || state == "local_up" || state == "dataplane_verified"
+                current.nativeLikelyActive &&
+                    (current.connected ||
+                        current.serviceState == "local_up" ||
+                        current.serviceState == "dataplane_verified")
             if (!telemetryAllowed) {
                 Log.d(TAG, "trafficRunnable: vpn not connected, stop ticks")
                 return
             }
             val stats = GraniVpnService.getTrafficStatsSnapshot()
-            deliverPayload(connected, state, "traffic", stats)
+            deliverPayload(current, "traffic", stats)
             val interval = trafficTickIntervalMs.get().coerceIn(500L, 30_000L)
             mainHandler.postDelayed(this, interval)
         }
@@ -41,10 +53,11 @@ object VpnNativeStateEmitter {
 
     fun attach(events: EventChannel.EventSink) {
         mainHandler.post {
+            sinkGeneration.incrementAndGet()
             sink = events
-            val (connected, state) = GraniVpnService.peekStateForFlutter()
-            deliverPayload(connected, state, "state", null)
-            if (connected) {
+            val current = currentState()
+            deliverPayload(current, "state", null)
+            if (current.connected && current.nativeLikelyActive) {
                 maybeStartTrafficTicks()
             }
         }
@@ -52,14 +65,34 @@ object VpnNativeStateEmitter {
 
     fun detach() {
         mainHandler.post {
+            sinkGeneration.incrementAndGet()
             stopTrafficTicks()
             sink = null
         }
     }
 
     fun emit(connected: Boolean, serviceState: String) {
+        if (sink == null) return
+        val generation = sinkGeneration.get()
         mainHandler.post {
-            deliverPayload(connected, serviceState, "state", null)
+            if (generation != sinkGeneration.get()) return@post
+            deliverPayload(currentState(connected, serviceState), "state", null)
+        }
+    }
+
+    fun emitRuntimeSnapshot(context: Context, emitType: String = "state") {
+        setAppContext(context)
+        if (sink == null) return
+        val generation = sinkGeneration.get()
+        mainHandler.post {
+            if (generation != sinkGeneration.get()) return@post
+            deliverPayload(currentState(), emitType, null)
+            val current = currentState()
+            if (current.connected && current.nativeLikelyActive) {
+                maybeStartTrafficTicks()
+            } else {
+                stopTrafficTicks()
+            }
         }
     }
 
@@ -68,12 +101,23 @@ object VpnNativeStateEmitter {
      * [payload] keys are snake_case (English). Safe if [sink] is null (logcat only on native side).
      */
     fun emitConnectivityProbe(payload: Map<String, Any>) {
+        if (sink == null) return
+        val generation = sinkGeneration.get()
         mainHandler.post {
+            if (generation != sinkGeneration.get()) return@post
             val s = sink ?: return@post
-            val (connected, state) = GraniVpnService.peekStateForFlutter()
+            val current = currentState()
             val full = mutableMapOf<String, Any>(
-                "connected" to connected,
-                "service_state" to state,
+                "connected" to current.connected,
+                "service_state" to current.serviceState,
+                "runtime_status" to current.runtimeStatus,
+                "runtime_backend" to current.runtimeBackend,
+                "runtime_protocol" to current.runtimeProtocol,
+                "runtime_owner" to current.runtimeOwner,
+                "runtime_session_id" to (current.runtimeSessionId ?: ""),
+                "runtime_error" to (current.runtimeError ?: ""),
+                "runtime_sequence" to current.runtimeSequence,
+                "runtime_updated_at_ms" to current.runtimeUpdatedAtMs,
                 "ts" to System.currentTimeMillis(),
                 "emit_type" to "connectivity_probe",
             )
@@ -90,12 +134,23 @@ object VpnNativeStateEmitter {
      * Runtime diagnostics from native VPN stack (cleanup/kill/fail reasons).
      */
     fun emitRuntimeDiag(eventName: String, payload: Map<String, Any>) {
+        if (sink == null) return
+        val generation = sinkGeneration.get()
         mainHandler.post {
+            if (generation != sinkGeneration.get()) return@post
             val s = sink ?: return@post
-            val (connected, state) = GraniVpnService.peekStateForFlutter()
+            val current = currentState()
             val full = mutableMapOf<String, Any>(
-                "connected" to connected,
-                "service_state" to state,
+                "connected" to current.connected,
+                "service_state" to current.serviceState,
+                "runtime_status" to current.runtimeStatus,
+                "runtime_backend" to current.runtimeBackend,
+                "runtime_protocol" to current.runtimeProtocol,
+                "runtime_owner" to current.runtimeOwner,
+                "runtime_session_id" to (current.runtimeSessionId ?: ""),
+                "runtime_error" to (current.runtimeError ?: ""),
+                "runtime_sequence" to current.runtimeSequence,
+                "runtime_updated_at_ms" to current.runtimeUpdatedAtMs,
                 "ts" to System.currentTimeMillis(),
                 "emit_type" to "runtime_diag",
                 "event_name" to eventName,
@@ -116,8 +171,8 @@ object VpnNativeStateEmitter {
     fun maybeStartTrafficTicks() {
         mainHandler.removeCallbacks(trafficRunnable)
         if (sink == null) return
-        val (connected, _) = GraniVpnService.peekStateForFlutter()
-        if (!connected) return
+        val current = currentState()
+        if (!current.connected || !current.nativeLikelyActive) return
         val interval = trafficTickIntervalMs.get().coerceIn(500L, 30_000L)
         mainHandler.postDelayed(trafficRunnable, interval)
     }
@@ -131,23 +186,110 @@ object VpnNativeStateEmitter {
         Log.d(TAG, "trafficTickIntervalMs=$ms background=$background")
         mainHandler.post {
             if (sink == null) return@post
-            val (connected, _) = GraniVpnService.peekStateForFlutter()
-            if (connected) {
+            val current = currentState()
+            if (current.connected && current.nativeLikelyActive) {
                 maybeStartTrafficTicks()
             }
         }
     }
 
+    private data class CurrentVpnState(
+        val connected: Boolean,
+        val serviceState: String,
+        val runtimeStatus: String,
+        val runtimeBackend: String,
+        val runtimeProtocol: String,
+        val runtimeOwner: String,
+        val runtimeSessionId: String?,
+        val runtimeError: String?,
+        val runtimeSequence: Long,
+        val runtimeUpdatedAtMs: Long,
+        val nativeLikelyActive: Boolean,
+        val awgLikelyActive: Boolean,
+        val systemVpnActive: Boolean,
+    )
+
+    private fun currentState(
+        connectedFallback: Boolean? = null,
+        serviceStateFallback: String? = null,
+    ): CurrentVpnState {
+        val ctx = appContext ?: GraniVpnService.getAppContext()
+        if (ctx == null) {
+            val (connected, state) = GraniVpnService.peekStateForFlutter()
+            return CurrentVpnState(
+                connected = connectedFallback ?: connected,
+                serviceState = serviceStateFallback ?: state,
+                runtimeStatus = serviceStateFallback ?: state,
+                runtimeBackend = "unknown",
+                runtimeProtocol = "unknown",
+                runtimeOwner = "unknown",
+                runtimeSessionId = null,
+                runtimeError = null,
+                runtimeSequence = 0L,
+                runtimeUpdatedAtMs = 0L,
+                nativeLikelyActive = connected,
+                awgLikelyActive = false,
+                systemVpnActive = connected,
+            )
+        }
+
+        val snapshot = NativeVpnRuntimeState.getRuntimeSnapshot(ctx)
+        val status = snapshot.status.name.lowercase(Locale.US)
+        val serviceState = serviceStateFallback ?: when (snapshot.status) {
+            NativeVpnRuntimeState.RuntimeStatus.OFF -> "idle"
+            NativeVpnRuntimeState.RuntimeStatus.CONNECTING -> "prepare"
+            NativeVpnRuntimeState.RuntimeStatus.LOCAL_UP -> "local_up"
+            NativeVpnRuntimeState.RuntimeStatus.VERIFIED -> "dataplane_verified"
+            NativeVpnRuntimeState.RuntimeStatus.CONNECTED -> "committed"
+            NativeVpnRuntimeState.RuntimeStatus.DISCONNECTING -> "disconnecting"
+            NativeVpnRuntimeState.RuntimeStatus.ERROR -> "error"
+        }
+        val connected = when (snapshot.status) {
+            NativeVpnRuntimeState.RuntimeStatus.VERIFIED,
+            NativeVpnRuntimeState.RuntimeStatus.CONNECTED -> snapshot.graniLikelyActive
+            NativeVpnRuntimeState.RuntimeStatus.LOCAL_UP,
+            NativeVpnRuntimeState.RuntimeStatus.CONNECTING,
+            NativeVpnRuntimeState.RuntimeStatus.DISCONNECTING,
+            NativeVpnRuntimeState.RuntimeStatus.ERROR,
+            NativeVpnRuntimeState.RuntimeStatus.OFF -> false
+        }
+        return CurrentVpnState(
+            connected = connectedFallback ?: connected,
+            serviceState = serviceState,
+            runtimeStatus = status,
+            runtimeBackend = snapshot.backend ?: "unknown",
+            runtimeProtocol = snapshot.protocol ?: "unknown",
+            runtimeOwner = snapshot.owner,
+            runtimeSessionId = snapshot.sessionId,
+            runtimeError = snapshot.error,
+            runtimeSequence = snapshot.sequence,
+            runtimeUpdatedAtMs = snapshot.updatedAtMs,
+            nativeLikelyActive = snapshot.nativeLikelyActive,
+            awgLikelyActive = snapshot.awgLikelyActive,
+            systemVpnActive = snapshot.systemVpnActive,
+        )
+    }
+
     private fun deliverPayload(
-        connected: Boolean,
-        serviceState: String,
+        current: CurrentVpnState,
         emitType: String,
         stats: Map<String, Long>?,
     ) {
         val s = sink ?: return
         val payload = mutableMapOf<String, Any>(
-            "connected" to connected,
-            "service_state" to serviceState,
+            "connected" to current.connected,
+            "service_state" to current.serviceState,
+            "runtime_status" to current.runtimeStatus,
+            "runtime_backend" to current.runtimeBackend,
+            "runtime_protocol" to current.runtimeProtocol,
+            "runtime_owner" to current.runtimeOwner,
+            "runtime_session_id" to (current.runtimeSessionId ?: ""),
+            "runtime_error" to (current.runtimeError ?: ""),
+            "runtime_sequence" to current.runtimeSequence,
+            "runtime_updated_at_ms" to current.runtimeUpdatedAtMs,
+            "native_likely_active" to current.nativeLikelyActive,
+            "awg_likely_active" to current.awgLikelyActive,
+            "system_vpn_active" to current.systemVpnActive,
             "ts" to System.currentTimeMillis(),
             "emit_type" to emitType,
         )
@@ -159,6 +301,9 @@ object VpnNativeStateEmitter {
             s.success(payload)
         } catch (e: Exception) {
             Log.w(TAG, "deliverPayload failed: ${e.message}")
+            sinkGeneration.incrementAndGet()
+            sink = null
+            stopTrafficTicks()
         }
     }
 }

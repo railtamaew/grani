@@ -2,6 +2,8 @@ plugins {
     id 'com.android.library'
 }
 
+def graniEmulatorAbi = project.hasProperty('graniIncludeEmulatorAbis')
+
 android {
     namespace 'com.londonx.tun2socks'
     compileSdk 33
@@ -10,7 +12,13 @@ android {
     defaultConfig {
         minSdk 24
         targetSdk 33
-        ndk { abiFilters "arm64-v8a", "armeabi-v7a" }
+        ndk {
+            if (graniEmulatorAbi) {
+                abiFilters "x86_64"
+            } else {
+                abiFilters "arm64-v8a", "armeabi-v7a"
+            }
+        }
 
         consumerProguardFiles "consumer-rules.pro"
 

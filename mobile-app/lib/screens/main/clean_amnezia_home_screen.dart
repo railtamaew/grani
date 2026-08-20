@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -36,6 +37,7 @@ class CleanAmneziaHomeScreen extends StatefulWidget {
 class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
     with WidgetsBindingObserver {
   late final SimpleVpnController _controller;
+  Timer? _nativeUiSyncTimer;
   bool _quickTileActionInFlight = false;
   bool _subscriptionRedirectScheduled = false;
 
@@ -50,20 +52,33 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
       ensureDeviceRegistered: () async {
         final token = authService.token;
         if (token == null || token.isEmpty) return;
-        await vpnService.ensureDeviceRegistered(token);
+        try {
+          await vpnService.ensureDeviceRegistered(token);
+        } on DeviceLimitException catch (e) {
+          authService.setPendingDeviceLimit(e);
+          rethrow;
+        }
       },
+      onDeviceLimit: authService.setPendingDeviceLimit,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _controller.loadOptions();
-      _controller.syncNativeState();
-      _consumeQuickTileAction();
+      unawaited(_initializeController());
     });
+  }
+
+  Future<void> _initializeController() async {
+    unawaited(_controller.loadOptions());
+    await _controller.restoreInitialNativeState(source: 'home_initial');
+    if (!mounted) return;
+    _startNativeUiSyncTimer();
+    await _consumeQuickTileAction();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _stopNativeUiSyncTimer();
     _controller.dispose();
     super.dispose();
   }
@@ -71,9 +86,31 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _controller.syncNativeState();
-      _consumeQuickTileAction();
+      unawaited(_restoreControllerAfterResume());
+    } else {
+      _stopNativeUiSyncTimer();
     }
+  }
+
+  Future<void> _restoreControllerAfterResume() async {
+    await _controller.restoreInitialNativeState(source: 'home_resume');
+    if (!mounted) return;
+    _startNativeUiSyncTimer();
+    await _consumeQuickTileAction();
+  }
+
+  void _startNativeUiSyncTimer() {
+    _nativeUiSyncTimer?.cancel();
+    _nativeUiSyncTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (!mounted) return;
+      unawaited(_controller.syncNativeUiState(source: 'home_foreground_timer'));
+    });
+    unawaited(_controller.syncNativeUiState(source: 'home_foreground_start'));
+  }
+
+  void _stopNativeUiSyncTimer() {
+    _nativeUiSyncTimer?.cancel();
+    _nativeUiSyncTimer = null;
   }
 
   void _scheduleSubscriptionRedirect() {
@@ -83,10 +120,9 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
       if (!mounted) return;
       final route = ModalRoute.of(context);
       if (route?.settings.name == '/subscription') return;
-      Navigator.of(context).pushNamed(
-        '/subscription',
-        arguments: SubscriptionScreenMode.expired,
-      );
+      Navigator.of(
+        context,
+      ).pushNamed('/subscription', arguments: SubscriptionScreenMode.expired);
     });
   }
 
@@ -100,8 +136,9 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
       if (!mounted) return;
       await _controller.toggle(source: 'quick_tile');
       try {
-        await const MethodChannel('com.granivpn.mobile/vpn')
-            .invokeMethod<void>('requestQuickTileRefresh');
+        await const MethodChannel(
+          'com.granivpn.mobile/vpn',
+        ).invokeMethod<void>('requestQuickTileRefresh');
       } catch (_) {}
     } finally {
       _quickTileActionInFlight = false;
@@ -151,7 +188,9 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
   }
 
   String? _connectionContext(
-      BuildContext context, ButtonConnectionState state) {
+    BuildContext context,
+    ButtonConnectionState state,
+  ) {
     if (state != ButtonConnectionState.connecting) return null;
     return VpnShellUiHelpers.simpleConnectionBadge(
       _controller.connectionModeBadge,
@@ -165,7 +204,8 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
     double scaleX,
     double scaleY,
   ) {
-    final show = state == ButtonConnectionState.connecting ||
+    final show =
+        state == ButtonConnectionState.connecting ||
         state == ButtonConnectionState.disconnecting;
     final percent = _controller.connectionProgressPercent;
     final value = state == ButtonConnectionState.disconnecting
@@ -319,19 +359,23 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
         } else {
           _subscriptionRedirectScheduled = false;
         }
-        final state = _buttonState(_controller.state);
+        final state = _controller.isRestoringNativeState
+            ? ButtonConnectionState.connecting
+            : _buttonState(_controller.state);
         final flowBadge = _connectionContext(context, state);
         final controlsDisabled = _controller.isBusy || _controller.isConnected;
         final titleBlockTopBase =
             (12 + 39 + 12 + GraniTheme.trialTitleBlockTopGap) * scaleY;
         final minTitleBlockTop = (12 + 39 + 28) * scaleY;
-        final estimatedButtonGroupHeight = (330 * scaleX) +
+        final estimatedButtonGroupHeight =
+            (330 * scaleX) +
             (18 + GraniTheme.selectorButtonHeight + 64) * scaleY;
-        final buttonGroupTop = screenHeight -
+        final buttonGroupTop =
+            screenHeight -
             safeBottom -
             GraniTheme.vpnCardBottomMargin * scaleY -
             estimatedButtonGroupHeight;
-        final titleBlockHeight = (flowBadge == null ? 88 : 110) * scaleY;
+        final titleBlockHeight = (flowBadge == null ? 88 : 118) * scaleY;
         final titleBlockTop = math.max(
           minTitleBlockTop,
           math.min(
@@ -364,7 +408,8 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
                       right: 0,
                       bottom: 0,
                       child: Container(
-                        height: safeBottom +
+                        height:
+                            safeBottom +
                             GraniTheme.navigationBarHeight * scaleY,
                         color: const Color(0xFFF7F9FA),
                       ),
@@ -377,12 +422,15 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
                         try {
                           await Share.share(
                             context.l10n.profileSharePlayStoreMessage(
-                                AppConfig.sharePlayStoreUrl),
+                              AppConfig.sharePlayStoreUrl,
+                            ),
                           );
                         } catch (_) {
                           if (context.mounted) {
                             showErrorSnackBar(
-                                context, context.l10n.profileShareFailed);
+                              context,
+                              context.l10n.profileShareFailed,
+                            );
                           }
                         }
                       },
@@ -424,8 +472,9 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
                                     color: Colors.white.withOpacity(0.42),
                                     borderRadius: BorderRadius.circular(999),
                                     border: Border.all(
-                                      color: const Color(0xFFE6EBF2)
-                                          .withOpacity(0.68),
+                                      color: const Color(
+                                        0xFFE6EBF2,
+                                      ).withOpacity(0.68),
                                       width: 1,
                                     ),
                                   ),
@@ -449,13 +498,15 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
                               Flexible(
                                 child: AdaptiveSubtitleText(
                                   text: _subtitle(context, state),
-                                  maxLines:
-                                      math.min(tokens.subtitleMaxLines, 2),
+                                  maxLines: math.min(
+                                    tokens.subtitleMaxLines,
+                                    2,
+                                  ),
                                   style: TextStyle(
                                     fontFamily: 'Montserrat',
                                     fontWeight: FontWeight.w300,
-                                    fontSize: 16 * scaleX,
-                                    height: 15.52 / 16,
+                                    fontSize: 15 * scaleX,
+                                    height: 1.12,
                                     letterSpacing: 0,
                                     color: const Color(0xFF192F3F),
                                   ),
@@ -470,7 +521,8 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
                     Positioned(
                       bottom:
                           GraniTheme.vpnCardBottomMargin * scaleY + safeBottom,
-                      left: (screenWidth -
+                      left:
+                          (screenWidth -
                               GraniTheme.backgroundBoxWidth * scaleX) /
                           2,
                       child: SizedBox(
@@ -484,18 +536,23 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
                               showSpeedModule: false,
                               connectionState: state,
                               progressMessage:
-                                  state == ButtonConnectionState.connecting
-                                      ? context.l10n.btnVpnCancel
-                                      : null,
+                                  _controller.isRestoringNativeState
+                                  ? context.l10n.vpnProgressConfigProcessing
+                                  : state == ButtonConnectionState.connecting
+                                  ? context.l10n.btnVpnCancel
+                                  : null,
                               errorMessage: _controller.error,
                               progressPercent:
                                   _controller.connectionProgressPercent,
                               showCancelHint: false,
-                              onConnectionTap: _controller.isConnecting
+                              onConnectionTap:
+                                  _controller.isRestoringNativeState
+                                  ? null
+                                  : _controller.isConnecting
                                   ? () => _controller.cancelConnect()
                                   : (_controller.isBusy
-                                      ? null
-                                      : _controller.toggle),
+                                        ? null
+                                        : _controller.toggle),
                             ),
                             _buildConnectionStageTimeline(
                               context,
@@ -513,38 +570,50 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
                                     scaleX: scaleX,
                                     scaleY: scaleY,
                                     icon: Text(
-                                      FlagEmoji.getFlagEmoji(_controller
-                                              .selectedServer?.countryCode ??
-                                          _controller.selectedServer?.country ??
-                                          ''),
+                                      FlagEmoji.getFlagEmoji(
+                                        _controller
+                                                .selectedServer
+                                                ?.countryCode ??
+                                            _controller
+                                                .selectedServer
+                                                ?.country ??
+                                            '',
+                                      ),
                                       style: TextStyle(fontSize: 14 * scaleX),
                                     ),
-                                    label: _controller.optionsLoading
+                                    label:
+                                        _controller.optionsLoading &&
+                                            _controller.selectedServer == null
                                         ? 'Загрузка'
                                         : _localizedServerLabel(
                                             _controller.selectedServer,
-                                            Localizations.localeOf(context)),
+                                            Localizations.localeOf(context),
+                                          ),
                                     onTap: _showServerSheet,
                                   ),
                                   SizedBox(
-                                      width: GraniTheme.selectorButtonGap *
-                                          scaleX),
+                                    width:
+                                        GraniTheme.selectorButtonGap * scaleX,
+                                  ),
                                   _SelectorChip(
                                     scaleX: scaleX,
                                     scaleY: scaleY,
                                     icon: Icon(
                                       _simpleProtocolIcon(
-                                          _controller.selectedProtocol.id),
-                                      size: GraniTheme.selectorButtonIconSize *
+                                        _controller.selectedProtocol.id,
+                                      ),
+                                      size:
+                                          GraniTheme.selectorButtonIconSize *
                                           scaleX *
                                           0.9,
                                       color:
                                           GraniTheme.selectorButtonIconProtocol,
                                     ),
                                     label: _protocolTitle(
-                                        context,
-                                        _controller.selectedProtocol.id,
-                                        _controller.selectedProtocol.label),
+                                      context,
+                                      _controller.selectedProtocol.id,
+                                      _controller.selectedProtocol.label,
+                                    ),
                                     onTap: _showProtocolSheet,
                                   ),
                                 ],
@@ -586,8 +655,9 @@ class _SelectorChip extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius:
-            BorderRadius.circular(GraniTheme.selectorButtonRadius * scaleX),
+        borderRadius: BorderRadius.circular(
+          GraniTheme.selectorButtonRadius * scaleX,
+        ),
         splashColor: GraniTheme.primaryText.withOpacity(0.1),
         highlightColor: GraniTheme.primaryText.withOpacity(0.05),
         child: Container(
@@ -599,8 +669,9 @@ class _SelectorChip extends StatelessWidget {
           ),
           decoration: BoxDecoration(
             gradient: GraniTheme.surfaceControlGradient,
-            borderRadius:
-                BorderRadius.circular(GraniTheme.selectorButtonRadius * scaleX),
+            borderRadius: BorderRadius.circular(
+              GraniTheme.selectorButtonRadius * scaleX,
+            ),
             border: Border.all(
               color: GraniTheme.selectorButtonBorder.withOpacity(0.96),
               width: 1,
@@ -640,10 +711,7 @@ class _SelectorChip extends StatelessWidget {
 }
 
 class _SelectorBottomSheet extends StatelessWidget {
-  const _SelectorBottomSheet({
-    required this.title,
-    required this.child,
-  });
+  const _SelectorBottomSheet({required this.title, required this.child});
 
   final String title;
   final Widget child;
@@ -861,10 +929,14 @@ String _localizedServerLabel(SimpleVpnServer? server, Locale locale) {
   if (server == null) {
     return locale.languageCode.toLowerCase() == 'ru' ? 'Сервер' : 'Server';
   }
-  final city =
-      _localizedServerCity(server.localizedCity(locale.languageCode), locale);
+  final city = _localizedServerCity(
+    server.localizedCity(locale.languageCode),
+    locale,
+  );
   final country = _localizedServerCountry(
-      server.localizedCountry(locale.languageCode), locale);
+    server.localizedCountry(locale.languageCode),
+    locale,
+  );
   if (city.isEmpty) return country;
   return '$city, $country';
 }
@@ -885,16 +957,20 @@ class _ServerSheetRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final countryName = _localizedServerCountry(
-        server.localizedCountry(locale.languageCode), locale);
-    final city =
-        _localizedServerCity(server.localizedCity(locale.languageCode), locale);
+      server.localizedCountry(locale.languageCode),
+      locale,
+    );
+    final city = _localizedServerCity(
+      server.localizedCity(locale.languageCode),
+      locale,
+    );
     final title = city.isNotEmpty ? city : countryName;
     final subtitle = city.isNotEmpty ? countryName : server.ipAddress;
     return _SelectorOptionRow(
       leading: Text(
-        FlagEmoji.getFlagEmoji(server.countryCode.isNotEmpty
-            ? server.countryCode
-            : server.country),
+        FlagEmoji.getFlagEmoji(
+          server.countryCode.isNotEmpty ? server.countryCode : server.country,
+        ),
         style: const TextStyle(fontSize: 20),
       ),
       title: title,
@@ -919,8 +995,11 @@ class _ProtocolSheetRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _SelectorOptionRow(
-      leading: Icon(_simpleProtocolIcon(protocol.id),
-          color: const Color(0xFF192F3F), size: 20),
+      leading: Icon(
+        _simpleProtocolIcon(protocol.id),
+        color: const Color(0xFF192F3F),
+        size: 20,
+      ),
       title: _protocolTitle(context, protocol.id, protocol.label),
       subtitle: Text(_protocolSubtitle(context, protocol.id)),
       selected: selected,

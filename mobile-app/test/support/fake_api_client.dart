@@ -6,11 +6,13 @@ import 'package:mobile_app/core/api/endpoint_router.dart';
 class FakeApiClient implements ApiClientInterface {
   Response? stubPostResponse;
   Response? stubGetResponse;
+  Future<Response> Function(String path)? onGet;
   DioException? postException;
   DioException? getException;
 
   @override
-  Dio get dio => throw UnimplementedError('FakeApiClient.dio не используется в текущих тестах');
+  Dio get dio => throw UnimplementedError(
+      'FakeApiClient.dio не используется в текущих тестах');
 
   @override
   Future<Response> get(
@@ -20,11 +22,14 @@ class FakeApiClient implements ApiClientInterface {
     RequestKind? requestKind,
     BootstrapWave? bootstrapWave,
   }) async {
+    final handler = onGet;
+    if (handler != null) return handler(path);
     if (stubGetResponse != null) return stubGetResponse!;
-    throw getException ?? DioException(
-      requestOptions: RequestOptions(path: path),
-      type: DioExceptionType.connectionTimeout,
-    );
+    throw getException ??
+        DioException(
+          requestOptions: RequestOptions(path: path),
+          type: DioExceptionType.connectionTimeout,
+        );
   }
 
   @override
@@ -38,10 +43,11 @@ class FakeApiClient implements ApiClientInterface {
     BootstrapWave? bootstrapWave,
   }) async {
     if (stubPostResponse != null) return stubPostResponse!;
-    throw postException ?? DioException(
-      requestOptions: RequestOptions(path: path, data: data),
-      type: DioExceptionType.connectionTimeout,
-    );
+    throw postException ??
+        DioException(
+          requestOptions: RequestOptions(path: path, data: data),
+          type: DioExceptionType.connectionTimeout,
+        );
   }
 
   @override
