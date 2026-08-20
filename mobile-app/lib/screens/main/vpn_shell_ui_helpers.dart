@@ -118,7 +118,9 @@ class VpnShellUiHelpers {
   }
 
   static String? connectionFlowBadge(
-      VpnService vpnService, AppLocalizations l10n) {
+    VpnService vpnService,
+    AppLocalizations l10n,
+  ) {
     final uiState = vpnService.vpnUiSessionState;
     if (uiState != VpnUiSessionState.connecting &&
         uiState != VpnUiSessionState.reconnecting &&
@@ -140,8 +142,10 @@ class VpnShellUiHelpers {
       return l10n.vpnWaitSecureTraffic;
     }
 
-    final base =
-        friendlyProgressMessage(vpnService.connectionProgress?.message, l10n);
+    final base = friendlyProgressMessage(
+      vpnService.connectionProgress?.message,
+      l10n,
+    );
     final startedAt = vpnService.connectionAttemptStartedAt;
     if (startedAt == null) return base;
 

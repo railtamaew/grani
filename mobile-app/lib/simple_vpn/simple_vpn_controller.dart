@@ -314,14 +314,15 @@ class SimpleVpnController extends ChangeNotifier {
     bool? requireVerifiedDataPlane,
     bool? nativeStartResultVerifiesDataPlane,
     bool subscribeNativeState = true,
-  })  : _api = api ?? SimpleVpnApi(),
-        _runtime = runtime ?? createSimpleVpnRuntime(),
-        _deviceIdProvider = deviceIdProvider,
-        _ensureDeviceRegistered = ensureDeviceRegistered,
-        _onDeviceLimit = onDeviceLimit {
+  }) : _api = api ?? SimpleVpnApi(),
+       _runtime = runtime ?? createSimpleVpnRuntime(),
+       _deviceIdProvider = deviceIdProvider,
+       _ensureDeviceRegistered = ensureDeviceRegistered,
+       _onDeviceLimit = onDeviceLimit {
     _requireVerifiedDataPlane =
         requireVerifiedDataPlane ?? _runtime is AndroidSimpleVpnRuntime;
-    _nativeStartResultVerifiesDataPlane = nativeStartResultVerifiesDataPlane ??
+    _nativeStartResultVerifiesDataPlane =
+        nativeStartResultVerifiesDataPlane ??
         _runtime is AndroidSimpleVpnRuntime;
     if (_runtime is WindowsSimpleVpnRuntime) {
       _selectedProtocol = _protocols.firstWhere(
@@ -495,8 +496,9 @@ class SimpleVpnController extends ChangeNotifier {
         timer.cancel();
         return;
       }
-      final message = _longConnectMessages[
-          _longConnectMessageIndex % _longConnectMessages.length];
+      final message =
+          _longConnectMessages[_longConnectMessageIndex %
+              _longConnectMessages.length];
       _longConnectMessageIndex++;
       _setConnectionProgress(message);
     });
@@ -623,9 +625,7 @@ class SimpleVpnController extends ChangeNotifier {
             deviceId: deviceId,
           );
           if (_terminatedBackendSessions.length >= 64) {
-            _terminatedBackendSessions.remove(
-              _terminatedBackendSessions.first,
-            );
+            _terminatedBackendSessions.remove(_terminatedBackendSessions.first);
           }
           _terminatedBackendSessions.add(backendSessionId);
           return;
@@ -821,8 +821,8 @@ class SimpleVpnController extends ChangeNotifier {
       final preferredId = _isProtocolSupportedByRuntime(preferredProtocolId)
           ? preferredProtocolId
           : _isProtocolSupportedByRuntime(_selectedProtocol.id)
-              ? _selectedProtocol.id
-              : fallbackProtocolId;
+          ? _selectedProtocol.id
+          : fallbackProtocolId;
       _selectedProtocol = _protocols.firstWhere(
         (protocol) => protocol.id == preferredId,
         orElse: () => _protocols.firstWhere(
@@ -855,19 +855,19 @@ class SimpleVpnController extends ChangeNotifier {
           .toList(growable: false);
       final cachedProtocols = rawProtocols is List
           ? rawProtocols
-              .whereType<Map>()
-              .map(
-                (item) => SimpleVpnProtocol.fromJson(
-                  Map<String, dynamic>.from(item),
-                ),
-              )
-              .where(
-                (protocol) =>
-                    protocol.id == 'vless_ws' ||
-                    protocol.id == 'hysteria2' ||
-                    protocol.id == 'graniwg',
-              )
-              .toList(growable: false)
+                .whereType<Map>()
+                .map(
+                  (item) => SimpleVpnProtocol.fromJson(
+                    Map<String, dynamic>.from(item),
+                  ),
+                )
+                .where(
+                  (protocol) =>
+                      protocol.id == 'vless_ws' ||
+                      protocol.id == 'hysteria2' ||
+                      protocol.id == 'graniwg',
+                )
+                .toList(growable: false)
           : <SimpleVpnProtocol>[];
       if (cachedServers.isEmpty) return false;
       _applyOptions(
@@ -1021,9 +1021,11 @@ class SimpleVpnController extends ChangeNotifier {
     if (deviceId == null || deviceId.isEmpty) return;
 
     final protocolIds = _protocols
-        .where((item) =>
-            item.status.toLowerCase() == 'active' &&
-            _isProtocolSupportedByRuntime(item.id))
+        .where(
+          (item) =>
+              item.status.toLowerCase() == 'active' &&
+              _isProtocolSupportedByRuntime(item.id),
+        )
         .map((item) => item.id)
         .toSet()
         .toList(growable: false);
@@ -1056,114 +1058,120 @@ class SimpleVpnController extends ChangeNotifier {
     final existing = _configWarmups[key];
     if (existing != null) return existing;
     final stopwatch = Stopwatch()..start();
-    final warmup = () async {
-      final cached = await _readCachedConfig(
-        serverId: serverId,
-        protocol: protocol,
-        deviceId: deviceId,
-      );
-      if (cached != null || _disposed) {
-        stopwatch.stop();
-        if (!_disposed) {
+    final warmup =
+        () async {
+          final cached = await _readCachedConfig(
+            serverId: serverId,
+            protocol: protocol,
+            deviceId: deviceId,
+          );
+          if (cached != null || _disposed) {
+            stopwatch.stop();
+            if (!_disposed) {
+              unawaited(
+                _analyticsService.logVpnProtocolPrewarm(
+                  protocol: protocol,
+                  result: 'cache_hit',
+                  elapsedMs: stopwatch.elapsedMilliseconds,
+                  sourceSurface: reason,
+                ),
+              );
+              unawaited(
+                _api
+                    .log(
+                      event: 'vpn_protocol_prewarm',
+                      deviceId: deviceId,
+                      details: <String, dynamic>{
+                        'protocol': protocol,
+                        'server_id': serverId,
+                        'result': 'cache_hit',
+                        'elapsed_ms': stopwatch.elapsedMilliseconds,
+                        'source': reason,
+                      },
+                    )
+                    .catchError((_) {}),
+              );
+            }
+            return;
+          }
+          final config = await _fetchConfigWithRetry(
+            serverId: serverId,
+            deviceId: deviceId,
+            protocol: protocol,
+            attemptId: _connectAttemptId,
+            source: 'config_warmup',
+            reason: reason,
+          );
+          if (_disposed) return;
+          await _writeCachedConfig(
+            config,
+            serverId: config.server?.id ?? serverId,
+            deviceId: deviceId,
+          );
+          debugPrint(
+            'SimpleVpnController.config_warmup_done '
+            'reason=$reason server_id=${config.server?.id ?? serverId} '
+            'protocol=${config.protocol}',
+          );
+          stopwatch.stop();
           unawaited(
             _analyticsService.logVpnProtocolPrewarm(
               protocol: protocol,
-              result: 'cache_hit',
+              result: 'success',
               elapsedMs: stopwatch.elapsedMilliseconds,
               sourceSurface: reason,
             ),
           );
           unawaited(
-            _api.log(
-              event: 'vpn_protocol_prewarm',
-              deviceId: deviceId,
-              details: <String, dynamic>{
-                'protocol': protocol,
-                'server_id': serverId,
-                'result': 'cache_hit',
-                'elapsed_ms': stopwatch.elapsedMilliseconds,
-                'source': reason,
-              },
-            ).catchError((_) {}),
+            _api
+                .log(
+                  event: 'vpn_protocol_prewarm',
+                  deviceId: deviceId,
+                  details: <String, dynamic>{
+                    'protocol': protocol,
+                    'server_id': config.server?.id ?? serverId,
+                    'result': 'success',
+                    'elapsed_ms': stopwatch.elapsedMilliseconds,
+                    'source': reason,
+                  },
+                )
+                .catchError((_) {}),
           );
-        }
-        return;
-      }
-      final config = await _fetchConfigWithRetry(
-        serverId: serverId,
-        deviceId: deviceId,
-        protocol: protocol,
-        attemptId: _connectAttemptId,
-        source: 'config_warmup',
-        reason: reason,
-      );
-      if (_disposed) return;
-      await _writeCachedConfig(
-        config,
-        serverId: config.server?.id ?? serverId,
-        deviceId: deviceId,
-      );
-      debugPrint(
-        'SimpleVpnController.config_warmup_done '
-        'reason=$reason server_id=${config.server?.id ?? serverId} '
-        'protocol=${config.protocol}',
-      );
-      stopwatch.stop();
-      unawaited(
-        _analyticsService.logVpnProtocolPrewarm(
-          protocol: protocol,
-          result: 'success',
-          elapsedMs: stopwatch.elapsedMilliseconds,
-          sourceSurface: reason,
-        ),
-      );
-      unawaited(
-        _api.log(
-          event: 'vpn_protocol_prewarm',
-          deviceId: deviceId,
-          details: <String, dynamic>{
-            'protocol': protocol,
-            'server_id': config.server?.id ?? serverId,
-            'result': 'success',
-            'elapsed_ms': stopwatch.elapsedMilliseconds,
-            'source': reason,
-          },
-        ).catchError((_) {}),
-      );
-    }()
-        .catchError((Object e) {
-      stopwatch.stop();
-      debugPrint(
-        'SimpleVpnController.config_warmup_failed reason=$reason $e',
-      );
-      if (!_disposed) {
-        final failureFamily = _connectFailureFamily(e);
-        unawaited(
-          _analyticsService.logVpnProtocolPrewarm(
-            protocol: protocol,
-            result: 'failed',
-            elapsedMs: stopwatch.elapsedMilliseconds,
-            sourceSurface: reason,
-            failureFamily: failureFamily,
-          ),
-        );
-        unawaited(
-          _api.log(
-            event: 'vpn_protocol_prewarm',
-            deviceId: deviceId,
-            level: 'warning',
-            details: <String, dynamic>{
-              'protocol': protocol,
-              'server_id': serverId,
-              'result': 'failed',
-              'failure_family': failureFamily,
-              'elapsed_ms': stopwatch.elapsedMilliseconds,
-              'source': reason,
-            },
-          ).catchError((_) {}),
-        );
-      }
-    });
+        }().catchError((Object e) {
+          stopwatch.stop();
+          debugPrint(
+            'SimpleVpnController.config_warmup_failed reason=$reason $e',
+          );
+          if (!_disposed) {
+            final failureFamily = _connectFailureFamily(e);
+            unawaited(
+              _analyticsService.logVpnProtocolPrewarm(
+                protocol: protocol,
+                result: 'failed',
+                elapsedMs: stopwatch.elapsedMilliseconds,
+                sourceSurface: reason,
+                failureFamily: failureFamily,
+              ),
+            );
+            unawaited(
+              _api
+                  .log(
+                    event: 'vpn_protocol_prewarm',
+                    deviceId: deviceId,
+                    level: 'warning',
+                    details: <String, dynamic>{
+                      'protocol': protocol,
+                      'server_id': serverId,
+                      'result': 'failed',
+                      'failure_family': failureFamily,
+                      'elapsed_ms': stopwatch.elapsedMilliseconds,
+                      'source': reason,
+                    },
+                  )
+                  .catchError((_) {}),
+            );
+          }
+        });
     late final Future<void> trackedWarmup;
     trackedWarmup = warmup.whenComplete(() {
       if (identical(_configWarmups[key], trackedWarmup)) {
@@ -1506,7 +1514,8 @@ class SimpleVpnController extends ChangeNotifier {
         return;
       }
 
-      final stillCurrent = !_disposed &&
+      final stillCurrent =
+          !_disposed &&
           _state == SimpleVpnState.connected &&
           _isCurrentRuntimeSession(runtimeSessionId);
       if (!stillCurrent) {
@@ -1727,21 +1736,23 @@ class SimpleVpnController extends ChangeNotifier {
         },
       );
       unawaited(
-        _api.log(
-          event: 'config_fetch_retry_wait',
-          deviceId: deviceId,
-          details: <String, dynamic>{
-            'server_id': serverId,
-            'protocol': protocol,
-            'retry_number': retryNumber,
-            'next_retry_number': retryNumber + 1,
-            'max_attempts': maxAttempts,
-            'delay_ms': delay.inMilliseconds,
-            'reason': reason,
-            'error': lastError.toString(),
-            'source': source,
-          },
-        ).catchError((_) {}),
+        _api
+            .log(
+              event: 'config_fetch_retry_wait',
+              deviceId: deviceId,
+              details: <String, dynamic>{
+                'server_id': serverId,
+                'protocol': protocol,
+                'retry_number': retryNumber,
+                'next_retry_number': retryNumber + 1,
+                'max_attempts': maxAttempts,
+                'delay_ms': delay.inMilliseconds,
+                'reason': reason,
+                'error': lastError.toString(),
+                'source': source,
+              },
+            )
+            .catchError((_) {}),
       );
       _setConnectionProgress(
         retryNumber == 1
@@ -1781,15 +1792,18 @@ class SimpleVpnController extends ChangeNotifier {
     required String protocol,
     required String? deviceId,
   }) {
-    final resolvedServerId =
-        serverId == null || serverId <= 0 ? 'default' : serverId.toString();
-    final resolvedDeviceId =
-        (deviceId == null || deviceId.isEmpty) ? 'default' : deviceId;
+    final resolvedServerId = serverId == null || serverId <= 0
+        ? 'default'
+        : serverId.toString();
+    final resolvedDeviceId = (deviceId == null || deviceId.isEmpty)
+        ? 'default'
+        : deviceId;
     // The Android no-obfs Hysteria profile is an explicit protocol contract,
     // not a silent replacement of the legacy Salamander profile. Give it its
     // own cache generation so an upgraded client can never reuse a v39
     // Salamander config before the backend capability request is made.
-    final generation = protocol == 'hysteria2' &&
+    final generation =
+        protocol == 'hysteria2' &&
             defaultTargetPlatform == TargetPlatform.android
         ? 'v5-hy2-no-obfs-v1'
         : 'v4';
@@ -1878,16 +1892,14 @@ class SimpleVpnController extends ChangeNotifier {
   Future<String?> _readActiveSessionId() async {
     final cached = (await _cacheService.getString(
       _activeSessionCacheKey,
-    ))
-        ?.trim();
+    ))?.trim();
     return cached == null || cached.isEmpty ? null : cached;
   }
 
   Future<String?> _readActiveRuntimeSessionId() async {
     final cached = (await _cacheService.getString(
       _activeRuntimeSessionCacheKey,
-    ))
-        ?.trim();
+    ))?.trim();
     return cached == null || cached.isEmpty ? null : cached;
   }
 
@@ -1926,28 +1938,31 @@ class SimpleVpnController extends ChangeNotifier {
           ..userAgent = 'GRANI-Windows-connectivity-check';
         try {
           final uri = Uri.parse(rawUrl);
-          final request =
-              await client.getUrl(uri).timeout(const Duration(seconds: 6));
+          final request = await client
+              .getUrl(uri)
+              .timeout(const Duration(seconds: 6));
           request.followRedirects = false;
           request.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
           final response = await request.close().timeout(
-                const Duration(seconds: 6),
-              );
+            const Duration(seconds: 6),
+          );
           final status = response.statusCode;
           await response.drain<void>();
           if (status >= 200 && status < 500) {
             unawaited(
-              _api.log(
-                event: 'windows_tunnel_connectivity_verified',
-                sessionId: sessionId,
-                deviceId: deviceId,
-                details: <String, dynamic>{
-                  'protocol': protocol,
-                  'attempt': attempt,
-                  'target_host': uri.host,
-                  'http_status': status,
-                },
-              ).catchError((_) {}),
+              _api
+                  .log(
+                    event: 'windows_tunnel_connectivity_verified',
+                    sessionId: sessionId,
+                    deviceId: deviceId,
+                    details: <String, dynamic>{
+                      'protocol': protocol,
+                      'attempt': attempt,
+                      'target_host': uri.host,
+                      'http_status': status,
+                    },
+                  )
+                  .catchError((_) {}),
             );
             return true;
           }
@@ -1965,17 +1980,19 @@ class SimpleVpnController extends ChangeNotifier {
     }
 
     unawaited(
-      _api.log(
-        event: 'windows_tunnel_connectivity_failed',
-        level: 'error',
-        sessionId: sessionId,
-        deviceId: deviceId,
-        details: <String, dynamic>{
-          'protocol': protocol,
-          'attempts': 3,
-          'failures': failures.take(12).toList(growable: false),
-        },
-      ).catchError((_) {}),
+      _api
+          .log(
+            event: 'windows_tunnel_connectivity_failed',
+            level: 'error',
+            sessionId: sessionId,
+            deviceId: deviceId,
+            details: <String, dynamic>{
+              'protocol': protocol,
+              'attempts': 3,
+              'failures': failures.take(12).toList(growable: false),
+            },
+          )
+          .catchError((_) {}),
     );
     return false;
   }
@@ -1983,8 +2000,7 @@ class SimpleVpnController extends ChangeNotifier {
   Future<int?> _readSelectedServerId() async {
     final cached = (await _cacheService.getString(
       _selectedServerCacheKey,
-    ))
-        ?.trim();
+    ))?.trim();
     if (cached == null || cached.isEmpty) return null;
     return int.tryParse(cached);
   }
@@ -1997,8 +2013,7 @@ class SimpleVpnController extends ChangeNotifier {
   Future<String?> _readSelectedProtocolId() async {
     final cached = (await _cacheService.getString(
       _selectedProtocolCacheKey,
-    ))
-        ?.trim();
+    ))?.trim();
     return _isProtocolSupportedByRuntime(cached) ? cached : null;
   }
 
@@ -2150,7 +2165,8 @@ class SimpleVpnController extends ChangeNotifier {
       runtimeSessionId = _activeConnectSessionId;
     }
     final backendSessionId = _backendSessionId(_sessionId);
-    final analyticsSessionId = backendSessionId ??
+    final analyticsSessionId =
+        backendSessionId ??
         ((runtimeSessionId != null && runtimeSessionId.isNotEmpty)
             ? runtimeSessionId
             : null);
@@ -2233,8 +2249,9 @@ class SimpleVpnController extends ChangeNotifier {
             'amneziawg',
             'awg',
           }.contains(config.protocol.toLowerCase());
-          details['verification_scope'] =
-              hasServerSideNodeVerify ? 'server_node' : 'client_runtime';
+          details['verification_scope'] = hasServerSideNodeVerify
+              ? 'server_node'
+              : 'client_runtime';
           details['verification_source'] = hasServerSideNodeVerify
               ? 'server_node'
               : 'client_traffic_first_seen';
@@ -2243,11 +2260,11 @@ class SimpleVpnController extends ChangeNotifier {
             _api.log(
               event: hasServerSideNodeVerify
                   ? (result.verified
-                      ? 'node_data_verified'
-                      : 'node_data_unverified')
+                        ? 'node_data_verified'
+                        : 'node_data_unverified')
                   : (result.verified
-                      ? 'client_runtime_verified'
-                      : 'client_runtime_unverified'),
+                        ? 'client_runtime_verified'
+                        : 'client_runtime_unverified'),
               level: result.verified ? 'info' : 'warning',
               sessionId: analyticsSessionId,
               deviceId: deviceId,
@@ -2271,7 +2288,8 @@ class SimpleVpnController extends ChangeNotifier {
           if (!_nodeTrafficVerifiedForSession) {
             _nodeTrafficVerifiedForSession = true;
             await _analyticsService.logVpnDataVerified(
-              serverId: result.serverId ??
+              serverId:
+                  result.serverId ??
                   config.server?.id ??
                   _selectedServer?.id ??
                   0,
@@ -2321,15 +2339,15 @@ class SimpleVpnController extends ChangeNotifier {
     bool? nativeConnected;
     try {
       amneziaWgConnected = await _runtime.getAmneziaWgStatus().timeout(
-            _nativeStatusTimeout,
-            onTimeout: () => null,
-          );
+        _nativeStatusTimeout,
+        onTimeout: () => null,
+      );
     } catch (_) {}
     try {
       nativeConnected = await _runtime.getNativeConnectionStatus().timeout(
-            _nativeStatusTimeout,
-            onTimeout: () => null,
-          );
+        _nativeStatusTimeout,
+        onTimeout: () => null,
+      );
     } catch (_) {}
 
     if (amneziaWgConnected == true || nativeConnected == true) return true;
@@ -2343,14 +2361,17 @@ class SimpleVpnController extends ChangeNotifier {
     if (await _nativeDiagnosticsShowActiveTunnel()) {
       return true;
     }
-    final protectCommittedTunnel = _state == SimpleVpnState.connected ||
+    final protectCommittedTunnel =
+        _state == SimpleVpnState.connected ||
         _state == SimpleVpnState.disconnecting ||
         (_runtimeSessionId?.isNotEmpty ?? false) ||
         (_sessionId?.isNotEmpty ?? false);
     if (!protectCommittedTunnel) return false;
-    for (var sample = 1;
-        sample < _nativeNegativeConfirmationSamples;
-        sample += 1) {
+    for (
+      var sample = 1;
+      sample < _nativeNegativeConfirmationSamples;
+      sample += 1
+    ) {
       await Future<void>.delayed(_nativeNegativeConfirmationDelay);
       final next = await _readNativeConnectedStatus();
       if (next != false) return next;
@@ -2365,11 +2386,8 @@ class SimpleVpnController extends ChangeNotifier {
   Future<bool> _nativeDiagnosticsShowActiveTunnel() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return false;
     try {
-      final diagnostics =
-          await NativeVpnService.getRuntimeDiagnostics().timeout(
-        _nativeStatusTimeout,
-        onTimeout: () => null,
-      );
+      final diagnostics = await NativeVpnService.getRuntimeDiagnostics()
+          .timeout(_nativeStatusTimeout, onTimeout: () => null);
       if (diagnostics == null) return false;
       return diagnostics['grani_likely_active'] == true ||
           diagnostics['awg_runner_up'] == true ||
@@ -2562,7 +2580,8 @@ class SimpleVpnController extends ChangeNotifier {
     }
     final hasExpectedSession =
         expectedSessionId != null && expectedSessionId.isNotEmpty;
-    final sessionlessStopWhileConnecting = eventSessionId.isEmpty &&
+    final sessionlessStopWhileConnecting =
+        eventSessionId.isEmpty &&
         _state == SimpleVpnState.connecting &&
         (serviceState == 'disconnecting' ||
             serviceState == 'idle' ||
@@ -2578,7 +2597,8 @@ class SimpleVpnController extends ChangeNotifier {
       );
       return;
     }
-    final sessionlessStopTail = eventSessionId.isEmpty &&
+    final sessionlessStopTail =
+        eventSessionId.isEmpty &&
         hasExpectedSession &&
         _state == SimpleVpnState.connecting &&
         (serviceState == 'disconnecting' ||
@@ -2602,7 +2622,8 @@ class SimpleVpnController extends ChangeNotifier {
     // A legacy/sessionless "connected" edge can be emitted while the native
     // service is only LOCAL_UP. It may restore an already running tunnel, but
     // must not complete an in-flight connection before verified traffic.
-    final legacyConnected = event['connected'] == true &&
+    final legacyConnected =
+        event['connected'] == true &&
         serviceState.isEmpty &&
         _state != SimpleVpnState.connecting;
 
@@ -2610,10 +2631,7 @@ class SimpleVpnController extends ChangeNotifier {
       _logConnectionPhaseIfNeeded('local_up');
       _traceNativeStateEvent(event, decision: 'local_up_waiting_for_dataplane');
       if (_state == SimpleVpnState.connecting) {
-        _setConnectionProgress(
-          'Проверяем защищенный трафик...',
-          percent: 92,
-        );
+        _setConnectionProgress('Проверяем защищенный трафик...', percent: 92);
       }
       return;
     }
@@ -2703,8 +2721,10 @@ class SimpleVpnController extends ChangeNotifier {
   void _logConnectionPhaseIfNeeded(String phase) {
     final startedAt = _activeConnectStartedAt;
     if (startedAt == null || !_reportedConnectionPhases.add(phase)) return;
-    final elapsedMs =
-        DateTime.now().difference(startedAt).inMilliseconds.clamp(0, 1 << 31);
+    final elapsedMs = DateTime.now()
+        .difference(startedAt)
+        .inMilliseconds
+        .clamp(0, 1 << 31);
     unawaited(
       _analyticsService.logVpnConnectionPhase(
         phase: phase,
@@ -2832,7 +2852,8 @@ class SimpleVpnController extends ChangeNotifier {
 
   Future<void> _adoptNativeDisconnectedEvent({required String source}) async {
     if (_disposed || _state == SimpleVpnState.disconnected) return;
-    final wasUnexpected = _state == SimpleVpnState.connected &&
+    final wasUnexpected =
+        _state == SimpleVpnState.connected &&
         _disconnectInFlight == null &&
         !_connectCancelRequested;
     final backendSessionId = _backendSessionId(
@@ -3030,16 +3051,18 @@ class SimpleVpnController extends ChangeNotifier {
         deviceId: deviceId,
       );
     }
-    await _api.log(
-      event: 'connect_cancelled',
-      sessionId: backendSid ?? sessionId,
-      deviceId: deviceId,
-      details: <String, dynamic>{
-        'source': source,
-        'runtime_session_id': sessionId,
-        'backend_session_id': backendSid,
-      },
-    ).catchError((_) {});
+    await _api
+        .log(
+          event: 'connect_cancelled',
+          sessionId: backendSid ?? sessionId,
+          deviceId: deviceId,
+          details: <String, dynamic>{
+            'source': source,
+            'runtime_session_id': sessionId,
+            'backend_session_id': backendSid,
+          },
+        )
+        .catchError((_) {});
   }
 
   Future<Map<String, dynamic>> _collectNetworkPreflight({
@@ -3213,15 +3236,15 @@ class SimpleVpnController extends ChangeNotifier {
     bool? awgConnected;
     try {
       nativeConnected = await _runtime.getNativeConnectionStatus().timeout(
-            _runtimeDownStatusTimeout,
-          );
+        _runtimeDownStatusTimeout,
+      );
     } catch (_) {
       nativeConnected = null;
     }
     try {
       awgConnected = await _runtime.getAmneziaWgStatus().timeout(
-            _runtimeDownStatusTimeout,
-          );
+        _runtimeDownStatusTimeout,
+      );
     } catch (_) {
       awgConnected = null;
     }
@@ -3566,22 +3589,24 @@ class SimpleVpnController extends ChangeNotifier {
         ),
       );
       unawaited(
-        _api.log(
-          event: 'connect_tap',
-          sessionId: attemptSessionId,
-          deviceId: deviceId,
-          details: <String, dynamic>{
-            'server_id': selectedServerId,
-            'protocol': selectedProtocolId,
-            'source': source,
-            'runtime_session_id': attemptSessionId,
-            'connection_session_id': attemptSessionId,
-            'vpn_session_id': attemptSessionId,
-            'app_version': AppConfig.appVersion,
-            'build_number': AppConfig.buildNumber,
-            'full_version': AppConfig.getFullVersion(),
-          },
-        ).catchError((_) {}),
+        _api
+            .log(
+              event: 'connect_tap',
+              sessionId: attemptSessionId,
+              deviceId: deviceId,
+              details: <String, dynamic>{
+                'server_id': selectedServerId,
+                'protocol': selectedProtocolId,
+                'source': source,
+                'runtime_session_id': attemptSessionId,
+                'connection_session_id': attemptSessionId,
+                'vpn_session_id': attemptSessionId,
+                'app_version': AppConfig.appVersion,
+                'build_number': AppConfig.buildNumber,
+                'full_version': AppConfig.getFullVersion(),
+              },
+            )
+            .catchError((_) {}),
       );
       unawaited(
         (() async {
@@ -3601,8 +3626,7 @@ class SimpleVpnController extends ChangeNotifier {
               'build_number': AppConfig.buildNumber,
             },
           );
-        })()
-            .catchError((_) {}),
+        })().catchError((_) {}),
       );
 
       analyticsStage = 'config';
@@ -3629,10 +3653,7 @@ class SimpleVpnController extends ChangeNotifier {
           config: config,
           extra: <String, dynamic>{'revision': config.configRevision},
         );
-        _setConnectionProgress(
-          'Готовим защищенный профиль...',
-          percent: 36,
-        );
+        _setConnectionProgress('Готовим защищенный профиль...', percent: 36);
         unawaited(
           _api.log(
             event: 'config_cache_hit',
@@ -3655,10 +3676,7 @@ class SimpleVpnController extends ChangeNotifier {
             'protocol': selectedProtocolId,
           },
         );
-        _setConnectionProgress(
-          'Готовим защищенный профиль...',
-          percent: 34,
-        );
+        _setConnectionProgress('Готовим защищенный профиль...', percent: 34);
         config = await _fetchConfigWithRetry(
           serverId: selectedServerId,
           deviceId: deviceId,
@@ -4049,8 +4067,9 @@ class SimpleVpnController extends ChangeNotifier {
             'engine': config.engine,
             'config_type': config.configType,
             'config_from_cache': configFromCache,
-            'control_plane_mode':
-                backendSessionDeferred ? 'background' : 'blocking',
+            'control_plane_mode': backendSessionDeferred
+                ? 'background'
+                : 'blocking',
             'runtime_session_id': sessionId,
             'backend_session_id': backendSessionId,
             'source': source,
@@ -4073,8 +4092,9 @@ class SimpleVpnController extends ChangeNotifier {
             'network_preflight': networkPreflight,
             ...networkPreflight,
             'config_from_cache': configFromCache,
-            'control_plane_mode':
-                backendSessionDeferred ? 'background' : 'blocking',
+            'control_plane_mode': backendSessionDeferred
+                ? 'background'
+                : 'blocking',
             'runtime_session_id': sessionId,
             'backend_session_id': backendSessionId,
             'engine': config.engine,
@@ -4099,8 +4119,9 @@ class SimpleVpnController extends ChangeNotifier {
         config: config,
         extra: <String, dynamic>{
           'config_from_cache': configFromCache,
-          'control_plane_mode':
-              backendSessionDeferred ? 'background' : 'blocking',
+          'control_plane_mode': backendSessionDeferred
+              ? 'background'
+              : 'blocking',
           'runtime_session_id': sessionId,
           'backend_session_id': backendSessionId,
         },
@@ -4203,18 +4224,20 @@ class SimpleVpnController extends ChangeNotifier {
       _clearDataPlaneGate();
       _clearConnectionProgress();
       _setState(SimpleVpnState.disconnected);
-      await _api.log(
-        event: 'device_limit_blocked',
-        level: 'warning',
-        sessionId: sessionId,
-        deviceId: deviceId,
-        details: <String, dynamic>{
-          'source': source,
-          'limit': e.limit,
-          'current_count': e.currentCount,
-          'message': e.message,
-        },
-      ).catchError((_) {});
+      await _api
+          .log(
+            event: 'device_limit_blocked',
+            level: 'warning',
+            sessionId: sessionId,
+            deviceId: deviceId,
+            details: <String, dynamic>{
+              'source': source,
+              'limit': e.limit,
+              'current_count': e.currentCount,
+              'message': e.message,
+            },
+          )
+          .catchError((_) {});
       return;
     } catch (e) {
       final cancelled = e is _SimpleVpnConnectCancelled;
@@ -4263,7 +4286,8 @@ class SimpleVpnController extends ChangeNotifier {
         );
       }
       if (cancelled) {
-        final runtimeSessionId = _runtimeSessionId ??
+        final runtimeSessionId =
+            _runtimeSessionId ??
             await _readActiveRuntimeSessionId() ??
             sessionId;
         await _runtime
@@ -4441,7 +4465,8 @@ class SimpleVpnController extends ChangeNotifier {
       // devices that redundant check kept the UI in "disconnecting" for
       // another 2-4 seconds and made the next tap look ignored.
       nativeStopped = await nativeDisconnectFuture;
-      final runtimeDown = nativeStopped ||
+      final runtimeDown =
+          nativeStopped ||
           await _waitForRuntimeDown(timeout: _disconnectBarrierTimeout);
 
       _sessionId = null;
@@ -4461,27 +4486,29 @@ class SimpleVpnController extends ChangeNotifier {
         reason: reason,
         deviceId: deviceId,
       );
-      await _api.log(
-        event: 'disconnect_ok',
-        sessionId: backendSid ?? sid,
-        deviceId: deviceId,
-        details: <String, dynamic>{
-          'source': source,
-          'reason': reason,
-          'runtime_session_id': runtimeSid,
-          'backend_session_id': backendSid,
-          'runtime_down': runtimeDown,
-          'disconnect_operation_id': operationId,
-          'protocol': connectedConfig?.protocol ?? _selectedProtocol.id,
-          'server_id': connectedConfig?.server?.id ?? _selectedServer?.id,
-          'connection_duration_ms': connectionDurationMs,
-          'proof_latency_ms': proofLatencyMs,
-          'rx_bytes': _lastRxBytes,
-          'tx_bytes': _lastTxBytes,
-          'service_proof_seen': firstProofAt != null,
-          'terminal_source': 'simple_vpn_controller',
-        },
-      ).catchError((_) {});
+      await _api
+          .log(
+            event: 'disconnect_ok',
+            sessionId: backendSid ?? sid,
+            deviceId: deviceId,
+            details: <String, dynamic>{
+              'source': source,
+              'reason': reason,
+              'runtime_session_id': runtimeSid,
+              'backend_session_id': backendSid,
+              'runtime_down': runtimeDown,
+              'disconnect_operation_id': operationId,
+              'protocol': connectedConfig?.protocol ?? _selectedProtocol.id,
+              'server_id': connectedConfig?.server?.id ?? _selectedServer?.id,
+              'connection_duration_ms': connectionDurationMs,
+              'proof_latency_ms': proofLatencyMs,
+              'rx_bytes': _lastRxBytes,
+              'tx_bytes': _lastTxBytes,
+              'service_proof_seen': firstProofAt != null,
+              'terminal_source': 'simple_vpn_controller',
+            },
+          )
+          .catchError((_) {});
       _connectedAt = null;
       _firstProofAt = null;
       _activeConnectStartedAt = null;
@@ -4639,15 +4666,15 @@ class SimpleVpnController extends ChangeNotifier {
       String? awgError;
       try {
         nativeConnected = await _runtime.getNativeConnectionStatus().timeout(
-              const Duration(milliseconds: 800),
-            );
+          const Duration(milliseconds: 800),
+        );
       } catch (e) {
         nativeError = e.toString();
       }
       try {
         awgConnected = await _runtime.getAmneziaWgStatus().timeout(
-              const Duration(milliseconds: 800),
-            );
+          const Duration(milliseconds: 800),
+        );
       } catch (e) {
         awgError = e.toString();
       }

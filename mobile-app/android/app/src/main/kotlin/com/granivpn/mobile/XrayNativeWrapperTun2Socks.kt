@@ -120,7 +120,13 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
                         "tun_state" to lastTunState,
                     ),
                 )
-                maybeRebindTun2SocksAfterDisconnect(reason)
+                if (!maybeRebindTun2SocksAfterDisconnect(reason)) {
+                    Log.e(
+                        TAG,
+                        "[DIAG] tun2socks recovery was not scheduled; report failure reason=$reason",
+                    )
+                    onTun2SocksFailure?.invoke("binder_recovery_unavailable:$reason")
+                }
                 return
             }
             Log.e(TAG, "[DIAG] tun2socks disconnected after attach; report immediately")
@@ -180,7 +186,7 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
         )
     }
 
-    private fun maybeRebindTun2SocksAfterDisconnect(reason: String) {
+    private fun maybeRebindTun2SocksAfterDisconnect(reason: String): Boolean {
         val now = System.currentTimeMillis()
         val sinceLastRebind = now - lastTaskRemovedRebindAtMs
         if (lastTaskRemovedRebindAtMs > 0L && sinceLastRebind >= TASK_REMOVED_REBIND_COOLDOWN_MS) {
@@ -201,18 +207,18 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
                     "cooldown_ms" to TASK_REMOVED_REBIND_COOLDOWN_MS,
                 ),
             )
-            return
+            return false
         }
         if (taskRemovedRebindAttempted) {
             Log.w(TAG, "[DIAG] task_removed rebind already attempted reason=$reason")
-            return
+            return false
+        }
+        if (delegate?.isXrayAlive() != true) {
+            Log.w(TAG, "[DIAG] task_removed rebind skipped: xray is not alive reason=$reason")
+            return false
         }
         taskRemovedRebindAttempted = true
         lastTaskRemovedRebindAtMs = now
-        if (delegate?.isXrayAlive() != true) {
-            Log.w(TAG, "[DIAG] task_removed rebind skipped: xray is not alive reason=$reason")
-            return
-        }
         Log.w(TAG, "[DIAG] task_removed rebind: restart tun2socks on existing TUN reason=$reason")
         VpnNativeStateEmitter.emitRuntimeDiag(
             "task_removed_tun2socks_rebind",
@@ -224,10 +230,12 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
                 if (stopped.get()) return@Thread
                 val d = delegate ?: run {
                     Log.w(TAG, "[DIAG] task_removed rebind skipped: delegate null reason=$reason")
+                    onTun2SocksFailure?.invoke("binder_recovery_delegate_missing:$reason")
                     return@Thread
                 }
                 if (!d.isXrayAlive()) {
                     Log.w(TAG, "[DIAG] task_removed rebind skipped: xray stopped reason=$reason")
+                    onTun2SocksFailure?.invoke("binder_recovery_core_stopped:$reason")
                     return@Thread
                 }
                 try {
@@ -252,6 +260,7 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
             name = "task-removed-tun2socks-rebind"
             start()
         }
+        return true
     }
 
     private fun softReinitializeBridge(source: String) {

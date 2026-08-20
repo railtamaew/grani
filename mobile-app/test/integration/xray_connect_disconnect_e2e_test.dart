@@ -1,12 +1,11 @@
-/// E2E-интеграционный тест: выбор сервера → конфиг → подключение → отключение.
-///
-/// Проверяет полный цикл подключения Xray с моками платформы и API.
-/// NativeVpnService и API замоканы; реальное туннелирование не выполняется.
+// E2E-интеграционный тест: выбор сервера → конфиг → подключение → отключение.
+//
+// Проверяет поддерживаемый legacy control-plane цикл GraniWG с моками платформы и API.
+// NativeVpnService и API замоканы; реальное туннелирование не выполняется.
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_app/core/api/api_client.dart';
@@ -15,7 +14,8 @@ import 'package:mobile_app/core/cache/cache_service.dart';
 import 'package:mobile_app/core/errors/error_handler.dart';
 import 'package:mobile_app/core/logger/logger.dart';
 import 'package:mobile_app/core/storage/storage_service.dart';
-import 'package:mobile_app/models/server.dart';
+import 'package:mobile_app/core/vpn_protocol_handler/vpn_protocol_handler.dart';
+import 'package:mobile_app/models/vpn_protocol.dart';
 import 'package:mobile_app/services/auth_service.dart';
 import 'package:mobile_app/services/connection_logger.dart';
 import 'package:mobile_app/services/vpn_service.dart';
@@ -53,8 +53,10 @@ void main() {
         .setMockMethodCallHandler(vpnChannel, (MethodCall methodCall) async {
       switch (methodCall.method) {
         case 'connect':
+        case 'connectAmneziaWg':
           return true;
         case 'disconnect':
+        case 'disconnectAmneziaWg':
           return true;
         case 'isXrayAvailable':
           return true;
@@ -77,9 +79,9 @@ void main() {
         .setMockMethodCallHandler(vpnChannel, null);
   });
 
-  group('E2E: выбор сервера → конфиг → подключение → отключение', () {
+  group('E2E: GraniWG выбор → конфиг → подключение → отключение', () {
     test('выбор сервера → конфиг → подключение → отключение', () async {
-      // Эмулируем Android для Xray
+      // Эмулируем Android для нативного GraniWG runner.
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
       addTearDown(() {
         debugDefaultTargetPlatformOverride = null;
@@ -99,7 +101,12 @@ void main() {
         'current_users': 10,
         'max_users': 100,
         'ping_ms': 50.0,
-        'supported_protocols': ['xray_reality', 'xray_vless', 'xray_vmess'],
+        'supported_protocols': [
+          'graniwg',
+          'xray_reality',
+          'xray_vless',
+          'xray_vmess',
+        ],
       };
       await cacheService.setString(
         'cached_servers',
@@ -115,6 +122,7 @@ void main() {
         errorHandler: ErrorHandler(),
         connectionLogger: ConnectionLogger(),
         authService: fakeAuth,
+        handlerFactory: (_) => E2EFakeProtocolHandler(),
         skipInitialize: true,
       );
       addTearDown(service.dispose);
@@ -128,19 +136,20 @@ void main() {
       expect(service.selectedServer, isNotNull,
           reason: 'Должен быть выбран сервер по умолчанию');
 
-      // 2. Подключаемся (create-client мок вернёт json_config, NativeVpnService.connect мок вернёт true)
+      // 2. Подключаемся: simple-vpn мок вернёт AWG-конфиг, а нативный
+      // connectAmneziaWg мок подтвердит запуск.
       final connected = await service.connect();
-      expect(connected, isTrue, reason: 'Подключение должно завершиться успешно');
+      expect(connected, isTrue,
+          reason: 'Подключение должно завершиться успешно');
       expect(service.isConnected, isTrue,
           reason: 'Сервис должен быть в состоянии подключено');
       expect(fakeApi.lastConnectPath, isNotNull,
           reason: 'Должен быть выполнен connect-запрос за конфигом');
       expect(
-        fakeApi.lastConnectPath!.contains('/v2/vpn/xray/connect') ||
-            fakeApi.lastConnectPath!.contains('/vpn/xray/create-client') ||
-            fakeApi.lastConnectPath!.contains('session/prepare'),
+        fakeApi.lastConnectPath!.contains('/simple-vpn/config'),
         isTrue,
-        reason: 'Используется v2/legacy connect endpoint для получения Xray config',
+        reason:
+            'Используется текущий simple-vpn endpoint для получения AWG config',
       );
 
       // 3. Отключаемся (в тестах без прокачки кадров используем debugBypassFrameDelay).
@@ -161,9 +170,22 @@ void main() {
           reason: 'Должен быть вызван POST /vpn/disconnect');
       expect(fakeApi.lastDisconnectPostData!['device_id'], isNotNull,
           reason: 'Тело disconnect должно содержать device_id');
-      expect((fakeApi.lastDisconnectPostData!['device_id'] as String).isNotEmpty, isTrue);
+      expect(
+          (fakeApi.lastDisconnectPostData!['device_id'] as String).isNotEmpty,
+          isTrue);
     });
   });
+}
+
+class E2EFakeProtocolHandler implements VpnProtocolHandler {
+  @override
+  Future<bool> applyConfig(String config, VpnProtocol protocol) async => true;
+
+  @override
+  Future<bool> connect(ProtocolConnectParams params) async => true;
+
+  @override
+  bool isConfigValid(String config, VpnProtocol protocol) => config.isNotEmpty;
 }
 
 /// Фейк AuthService для тестов: возвращает заданный токен.
@@ -189,6 +211,19 @@ class E2EFakeApiClient implements ApiClientInterface {
   Map<String, dynamic>? lastDisconnectPostData;
   String? lastConnectPath;
 
+  static const _validAwgConfig = '''
+[Interface]
+PrivateKey = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=
+Address = 10.8.0.2/32
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=
+Endpoint = 1.2.3.4:443
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+''';
+
   static const _validXrayJsonConfig = '''
 {
   "add": "example.com",
@@ -204,7 +239,8 @@ class E2EFakeApiClient implements ApiClientInterface {
 ''';
 
   @override
-  Dio get dio => throw UnimplementedError('E2EFakeApiClient.dio не используется');
+  Dio get dio =>
+      throw UnimplementedError('E2EFakeApiClient.dio не используется');
 
   @override
   Future<Response> get(String path,
@@ -225,13 +261,30 @@ class E2EFakeApiClient implements ApiClientInterface {
           'current_users': 10,
           'max_users': 100,
           'ping_ms': 50.0,
-          'supported_protocols': ['xray_reality', 'xray_vless', 'xray_vmess'],
+          'supported_protocols': [
+            'graniwg',
+            'xray_reality',
+            'xray_vless',
+            'xray_vmess',
+          ],
         },
       ];
       return Response(
         requestOptions: RequestOptions(path: path),
         statusCode: 200,
         data: servers,
+      );
+    }
+    if (path.contains('/simple-vpn/config')) {
+      lastConnectPath = path;
+      return Response(
+        requestOptions: RequestOptions(path: path),
+        statusCode: 200,
+        data: {
+          'success': true,
+          'config': _validAwgConfig,
+          'json_config': {'vpn_ip': '10.8.0.2'},
+        },
       );
     }
     throw DioException(
@@ -257,7 +310,8 @@ class E2EFakeApiClient implements ApiClientInterface {
         path.contains('/v2/vpn/xray/connect') ||
         path == '/vpn/xray/create-client') {
       lastConnectPath = path;
-      final jsonConfig = jsonDecode(_validXrayJsonConfig) as Map<String, dynamic>;
+      final jsonConfig =
+          jsonDecode(_validXrayJsonConfig) as Map<String, dynamic>;
       return Response(
         requestOptions: RequestOptions(path: path),
         statusCode: 200,

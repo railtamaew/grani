@@ -63,13 +63,12 @@ class XrayRoutingHelperTest {
     }
 
     @Test
-    fun applyControlPlaneAndUserDirectRouting_mergesControlPlaneConstants() {
+    fun applyControlPlaneAndUserDirectRouting_minimalModeKeepsOnlyCurrentControlPlane() {
         val out = XrayRoutingHelper.applyControlPlaneAndUserDirectRouting(minimalXrayJson, emptyList())
         assertTrue(out.contains("api.granilink.com"))
-        assertTrue(out.contains("api.granilink.com"))
-        assertTrue(out.contains("159.223.199.122"))
-        assertTrue("performance: public DoH direct", out.contains("dns.google"))
-        assertTrue("speedtest outbound", out.contains("proxy_speedtest"))
+        assertTrue(out.contains("45.12.132.94"))
+        assertFalse("minimal mode: no public DoH mutation", out.contains("dns.google"))
+        assertFalse("minimal mode: no speedtest outbound", out.contains("proxy_speedtest"))
     }
 
     @Test
@@ -85,7 +84,8 @@ class XrayRoutingHelperTest {
 
     @Test
     fun controlPlaneDomainList_matchesExpected() {
-        assertEquals(2, XrayRoutingHelper.CONTROL_PLANE_API_DOMAINS.size)
+        assertEquals(1, XrayRoutingHelper.CONTROL_PLANE_API_DOMAINS.size)
         assertEquals(1, XrayRoutingHelper.CONTROL_PLANE_API_IPS.size)
+        assertEquals("45.12.132.94", XrayRoutingHelper.CONTROL_PLANE_API_IPS.single())
     }
 }

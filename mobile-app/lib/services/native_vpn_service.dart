@@ -2,8 +2,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 
 class NativeVpnService {
-  static const MethodChannel _channel =
-      MethodChannel('com.granivpn.mobile/vpn');
+  static const MethodChannel _channel = MethodChannel(
+    'com.granivpn.mobile/vpn',
+  );
 
   static bool get _isAndroidNativeVpn =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
@@ -40,13 +41,14 @@ class NativeVpnService {
 
   /// Сводка для лога: сколько раз за сессию дергали канал (см. [resetChannelCallCountsForTests] в начале сессии при необходимости).
   static Map<String, int> channelCallSnapshot() => {
-        'getStatus': _getStatusCallCount,
-        'getTrafficStats': _getTrafficStatsCallCount,
-      };
+    'getStatus': _getStatusCallCount,
+    'getTrafficStats': _getTrafficStatsCallCount,
+  };
 
   /// События изменения состояния VPN с нативного [GraniVpnService] (без polling [getStatus]).
-  static const EventChannel _vpnStateChannel =
-      EventChannel('com.granivpn.mobile/vpn_state');
+  static const EventChannel _vpnStateChannel = EventChannel(
+    'com.granivpn.mobile/vpn_state',
+  );
 
   /// Карта: `connected` (bool), `service_state` (String), `ts` (int),
   /// `emit_type` (`state` | `traffic` | `connectivity_probe`).
@@ -89,9 +91,7 @@ class NativeVpnService {
       throw _unsupportedPlatformException();
     }
     try {
-      final args = <String, dynamic>{
-        'config': config,
-      };
+      final args = <String, dynamic>{'config': config};
       if (protocol != null && protocol.isNotEmpty) {
         args['protocol'] = protocol;
       }
@@ -119,8 +119,10 @@ class NativeVpnService {
         final userMessage = e.details is Map
             ? (e.details as Map)['userMessage'] as String?
             : null;
-        throw VpnPermissionException(userMessage ??
-            'VPN разрешение отклонено. Для работы VPN необходимо предоставить разрешение в настройках системы.');
+        throw VpnPermissionException(
+          userMessage ??
+              'VPN разрешение отклонено. Для работы VPN необходимо предоставить разрешение в настройках системы.',
+        );
       }
       if (e.code == 'CONFIG_MISMATCH') {
         final d = e.details;
@@ -210,8 +212,10 @@ class NativeVpnService {
         args['split_tunnel_packages'] = splitPackages;
         args['split_tunnel_direct_domains'] = directDomains;
       }
-      final result =
-          await _channel.invokeMethod<bool>('connectAmneziaWg', args);
+      final result = await _channel.invokeMethod<bool>(
+        'connectAmneziaWg',
+        args,
+      );
       return result ?? false;
     } on PlatformException catch (e) {
       debugPrint('Ошибка подключения AmneziaWG: ${e.message}');
@@ -227,8 +231,10 @@ class NativeVpnService {
       if (_isWindowsNativeVpn || _isMacOSNativeVpn) {
         final diagnostics = await getDesktopVpnDiagnostics();
         final diagnosticText = diagnostics.entries
-            .where((entry) =>
-                entry.value != null && entry.value.toString().isNotEmpty)
+            .where(
+              (entry) =>
+                  entry.value != null && entry.value.toString().isNotEmpty,
+            )
             .map((entry) => '${entry.key}=${entry.value}')
             .join('; ');
         throw VpnException(
@@ -268,8 +274,9 @@ class NativeVpnService {
     } on PlatformException catch (e) {
       final diagnostics = await getDesktopVpnDiagnostics();
       final diagnosticText = diagnostics.entries
-          .where((entry) =>
-              entry.value != null && entry.value.toString().isNotEmpty)
+          .where(
+            (entry) => entry.value != null && entry.value.toString().isNotEmpty,
+          )
           .map((entry) => '${entry.key}=${entry.value}')
           .join('; ');
       throw VpnException(
@@ -304,8 +311,9 @@ class NativeVpnService {
     } on PlatformException catch (e) {
       final diagnostics = await getDesktopVpnDiagnostics();
       final diagnosticText = diagnostics.entries
-          .where((entry) =>
-              entry.value != null && entry.value.toString().isNotEmpty)
+          .where(
+            (entry) => entry.value != null && entry.value.toString().isNotEmpty,
+          )
           .map((entry) => '${entry.key}=${entry.value}')
           .join('; ');
       throw VpnException(
@@ -334,8 +342,10 @@ class NativeVpnService {
       if (connectionSessionId != null && connectionSessionId.isNotEmpty) {
         args['connection_session_id'] = connectionSessionId;
       }
-      final result =
-          await _channel.invokeMethod<bool>('disconnectAmneziaWg', args);
+      final result = await _channel.invokeMethod<bool>(
+        'disconnectAmneziaWg',
+        args,
+      );
       return result ?? false;
     } on PlatformException catch (e) {
       debugPrint('Ошибка отключения AmneziaWG: ${e.message}');
@@ -382,8 +392,9 @@ class NativeVpnService {
   static Future<bool?> getAmneziaWgStatus() async {
     if (!_supportsNativeVpnChannel) return false;
     try {
-      final result = await _channel
-          .invokeMethod<Map<dynamic, dynamic>>('getAmneziaWgStatus');
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getAmneziaWgStatus',
+      );
       final c = result?['connected'];
       if (c is bool) return c;
       return null;
@@ -404,8 +415,9 @@ class NativeVpnService {
     if (!_supportsNativeVpnChannel) return false;
     try {
       _getStatusCallCount++;
-      final result =
-          await _channel.invokeMethod<Map<dynamic, dynamic>>('getStatus');
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getStatus',
+      );
       final c = result?['connected'];
       if (c is bool) return c;
       return null;
@@ -501,17 +513,16 @@ class NativeVpnService {
     try {
       runtime =
           await getRuntimeDiagnostics().timeout(const Duration(seconds: 3)) ??
-              <String, dynamic>{};
+          <String, dynamic>{};
     } catch (e) {
-      runtime = <String, dynamic>{
-        'runtime_diagnostics_error': e.toString(),
-      };
+      runtime = <String, dynamic>{'runtime_diagnostics_error': e.toString()};
     }
 
     if (includeNetworkProbe) {
       try {
-        network =
-            await getNetworkDiagnostics().timeout(const Duration(seconds: 5));
+        network = await getNetworkDiagnostics().timeout(
+          const Duration(seconds: 5),
+        );
       } catch (e) {
         network = <String, dynamic>{
           'network_type': 'unknown',
@@ -531,8 +542,9 @@ class NativeVpnService {
       'diagnostic_source': source ?? 'unknown',
       if (phase != null && phase.isNotEmpty) 'diagnostic_phase': phase,
       'diagnostic_collected_at': startedAt.toIso8601String(),
-      'diagnostic_duration_ms':
-          DateTime.now().difference(startedAt).inMilliseconds,
+      'diagnostic_duration_ms': DateTime.now()
+          .difference(startedAt)
+          .inMilliseconds,
       'platform': defaultTargetPlatform.name,
       if (protocol != null && protocol.isNotEmpty) 'protocol': protocol,
       if (runtimeProtocol != null && runtimeProtocol.isNotEmpty)
@@ -577,8 +589,9 @@ class NativeVpnService {
     }
     try {
       _getTrafficStatsCallCount++;
-      final result =
-          await _channel.invokeMethod<Map<dynamic, dynamic>>('getTrafficStats');
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getTrafficStats',
+      );
       if (result != null) {
         return {
           'rx_bytes': (result['rx_bytes'] as num?)?.toInt() ?? 0,
@@ -598,8 +611,9 @@ class NativeVpnService {
   /// Последний effective outbounds, рассчитанный нативным Xray routing (Android).
   static Future<String?> getEffectiveOutbounds() async {
     try {
-      final result = await _channel
-          .invokeMethod<Map<dynamic, dynamic>>('getEffectiveOutbounds');
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getEffectiveOutbounds',
+      );
       final v = result?['effective_outbounds'];
       if (v == null) return null;
       final s = v.toString().trim();
@@ -632,8 +646,9 @@ class NativeVpnService {
   static Future<void> unbindUnderlyingNetworkForControlPlane() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
     try {
-      await _channel
-          .invokeMethod<void>('unbindUnderlyingNetworkForControlPlane');
+      await _channel.invokeMethod<void>(
+        'unbindUnderlyingNetworkForControlPlane',
+      );
     } catch (e) {
       debugPrint('NativeVpnService.unbindUnderlyingNetworkForControlPlane: $e');
     }
@@ -641,7 +656,8 @@ class NativeVpnService {
 
   /// Android: нативный интервал тиков трафика (1 с в foreground, 4 с в background). Вне Android — no-op.
   static Future<void> setVpnTrafficTelemetryBackgroundMode(
-      bool background) async {
+    bool background,
+  ) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
     try {
       await _channel.invokeMethod<void>(
@@ -673,12 +689,14 @@ class NativeVpnService {
   static Future<bool> isIgnoringBatteryOptimizations() async {
     if (!_isAndroidNativeVpn) return true;
     try {
-      final result =
-          await _channel.invokeMethod<bool>('isIgnoringBatteryOptimizations');
+      final result = await _channel.invokeMethod<bool>(
+        'isIgnoringBatteryOptimizations',
+      );
       return result ?? false;
     } on PlatformException catch (e) {
       debugPrint(
-          'NativeVpnService: isIgnoringBatteryOptimizations: ${e.message}');
+        'NativeVpnService: isIgnoringBatteryOptimizations: ${e.message}',
+      );
       return false;
     } catch (e) {
       debugPrint('NativeVpnService: isIgnoringBatteryOptimizations: $e');
@@ -692,12 +710,14 @@ class NativeVpnService {
   static Future<bool> requestIgnoreBatteryOptimizations() async {
     if (!_isAndroidNativeVpn) return false;
     try {
-      final result = await _channel
-          .invokeMethod<bool>('requestIgnoreBatteryOptimizations');
+      final result = await _channel.invokeMethod<bool>(
+        'requestIgnoreBatteryOptimizations',
+      );
       return result ?? false;
     } on PlatformException catch (e) {
       debugPrint(
-          'NativeVpnService: requestIgnoreBatteryOptimizations: ${e.message}');
+        'NativeVpnService: requestIgnoreBatteryOptimizations: ${e.message}',
+      );
       return false;
     } catch (e) {
       debugPrint('NativeVpnService: requestIgnoreBatteryOptimizations: $e');
@@ -711,12 +731,12 @@ class NativeVpnService {
   static Future<Map<String, dynamic>> getSplitTunnelPolicyState() async {
     try {
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
-          'getSplitTunnelPolicyState');
+        'getSplitTunnelPolicyState',
+      );
       return result?.map((key, value) => MapEntry(key.toString(), value)) ??
           <String, dynamic>{};
     } on PlatformException catch (e) {
-      debugPrint(
-          'NativeVpnService: getSplitTunnelPolicyState: ${e.message}');
+      debugPrint('NativeVpnService: getSplitTunnelPolicyState: ${e.message}');
       return <String, dynamic>{};
     } catch (e) {
       debugPrint('NativeVpnService: getSplitTunnelPolicyState: $e');
@@ -740,8 +760,9 @@ class NativeVpnService {
 
   static Future<void> setSplitTunnelMode(String mode) async {
     try {
-      await _channel.invokeMethod<void>(
-          'setSplitTunnelMode', <String, dynamic>{'mode': mode});
+      await _channel.invokeMethod<void>('setSplitTunnelMode', <String, dynamic>{
+        'mode': mode,
+      });
     } on PlatformException catch (e) {
       debugPrint('NativeVpnService: setSplitTunnelMode: ${e.message}');
     } catch (e) {
@@ -752,8 +773,9 @@ class NativeVpnService {
   /// Список выбранных приложений для split tunnel
   static Future<List<String>> getSplitTunnelExcludedApps() async {
     try {
-      final result = await _channel
-          .invokeMethod<List<dynamic>>('getSplitTunnelExcludedApps');
+      final result = await _channel.invokeMethod<List<dynamic>>(
+        'getSplitTunnelExcludedApps',
+      );
       return result?.map((e) => e.toString()).toList() ?? [];
     } on PlatformException catch (e) {
       debugPrint('NativeVpnService: getSplitTunnelExcludedApps: ${e.message}');
@@ -778,8 +800,9 @@ class NativeVpnService {
   /// Домены для direct (обход VPN)
   static Future<List<String>> getSplitTunnelDirectDomains() async {
     try {
-      final result = await _channel
-          .invokeMethod<List<dynamic>>('getSplitTunnelDirectDomains');
+      final result = await _channel.invokeMethod<List<dynamic>>(
+        'getSplitTunnelDirectDomains',
+      );
       return result?.map((e) => e.toString()).toList() ?? [];
     } on PlatformException catch (e) {
       debugPrint('NativeVpnService: getSplitTunnelDirectDomains: ${e.message}');
@@ -815,8 +838,9 @@ class NativeVpnService {
 
   static Future<void> setDnsPolicyMode(String mode) async {
     try {
-      await _channel.invokeMethod<void>(
-          'setDnsPolicyMode', <String, dynamic>{'mode': mode});
+      await _channel.invokeMethod<void>('setDnsPolicyMode', <String, dynamic>{
+        'mode': mode,
+      });
     } on PlatformException catch (e) {
       debugPrint('NativeVpnService: setDnsPolicyMode: ${e.message}');
     }
@@ -885,14 +909,18 @@ class NativeVpnService {
   /// Список установленных приложений для выбора (package, label)
   static Future<List<Map<String, String>>> getInstalledApps() async {
     try {
-      final result =
-          await _channel.invokeMethod<List<dynamic>>('getInstalledApps');
+      final result = await _channel.invokeMethod<List<dynamic>>(
+        'getInstalledApps',
+      );
       if (result == null) return [];
       final list = <Map<String, String>>[];
       for (final e in result) {
         if (e is Map) {
-          list.add(Map<String, String>.from(
-              e.map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''))));
+          list.add(
+            Map<String, String>.from(
+              e.map((k, v) => MapEntry(k.toString(), v?.toString() ?? '')),
+            ),
+          );
         }
       }
       return list;
@@ -909,7 +937,9 @@ class NativeVpnService {
   static Future<void> setAllowTileConnect(bool allow) async {
     try {
       await _channel.invokeMethod<void>(
-          'setAllowTileConnect', <String, dynamic>{'allow': allow});
+        'setAllowTileConnect',
+        <String, dynamic>{'allow': allow},
+      );
     } on PlatformException catch (e) {
       debugPrint('NativeVpnService: setAllowTileConnect: ${e.message}');
     } catch (e) {
@@ -951,8 +981,10 @@ class NativeVpnService {
         final userMessage = e.details is Map
             ? (e.details as Map)['userMessage'] as String?
             : null;
-        throw VpnPermissionException(userMessage ??
-            'VPN разрешение отклонено. Для работы VPN необходимо предоставить разрешение в настройках системы.');
+        throw VpnPermissionException(
+          userMessage ??
+              'VPN разрешение отклонено. Для работы VPN необходимо предоставить разрешение в настройках системы.',
+        );
       }
       return false;
     } catch (e) {
