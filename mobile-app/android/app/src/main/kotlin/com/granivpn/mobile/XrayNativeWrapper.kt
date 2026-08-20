@@ -681,6 +681,7 @@ class XrayNativeWrapper(private val context: Context) {
             if (vpnInterface == null) {
                 throw IllegalStateException("Не удалось создать TUN интерфейс")
             }
+            SplitTunnelPrefs.markAppPolicyApplied(context)
             
             Log.i(TAG, "[DIAG] TUN создан, t=${System.currentTimeMillis() - t0}ms от начала startVpn, FD=${vpnInterface!!.fd}")
             // Даём ядру время применить маршруты к новому TUN (важно при reconnect: иначе трафик может не попадать в новый интерфейс).
@@ -1341,6 +1342,7 @@ class XrayNativeWrapper(private val context: Context) {
         }
         vpnInterface = establishOnMainThread(builder)
             ?: throw IllegalStateException("Не удалось создать TUN для reconnect")
+        SplitTunnelPrefs.markAppPolicyApplied(ctx)
         Log.i(TAG, "attachTun: TUN создан, FD=${vpnInterface!!.fd}")
         Thread.sleep(100)
         onTunCreated(vpnInterface!!)

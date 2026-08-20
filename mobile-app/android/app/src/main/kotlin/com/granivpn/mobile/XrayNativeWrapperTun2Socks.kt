@@ -103,21 +103,24 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
     private fun maybeReportTun2SocksFailure(reason: String) {
         if (stopped.get()) return
         if (reason == "tun2socks_service_disconnected" && lastTunState == "attached") {
-            if (System.currentTimeMillis() < taskRemovedKeepaliveUntilMs) {
+            if (VpnRuntimeFeatureFlags.bridgeRecoveryOnBinderLoss(context)) {
+                val taskRemovedWindow = System.currentTimeMillis() < taskRemovedKeepaliveUntilMs
                 Log.w(
                     TAG,
-                    "[DIAG] suppress tun2socks disconnect during task-removed keepalive; " +
-                        "reason=$reason state=$runtimeState tun=$lastTunState",
+                    "[DIAG] defer tun2socks disconnect for bridge recovery; " +
+                        "reason=$reason task_removed_window=$taskRemovedWindow " +
+                        "state=$runtimeState tun=$lastTunState",
                 )
                 VpnNativeStateEmitter.emitRuntimeDiag(
-                    "tun2socks_task_removed_disconnect_suppressed",
+                    "tun2socks_disconnect_recovery_scheduled",
                     mapOf(
                         "reason" to reason,
+                        "task_removed_window" to taskRemovedWindow,
                         "runtime_state" to runtimeState.name.lowercase(),
                         "tun_state" to lastTunState,
                     ),
                 )
-                maybeRebindTun2SocksAfterTaskRemoved(reason)
+                maybeRebindTun2SocksAfterDisconnect(reason)
                 return
             }
             Log.e(TAG, "[DIAG] tun2socks disconnected after attach; report immediately")
@@ -177,9 +180,12 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
         )
     }
 
-    private fun maybeRebindTun2SocksAfterTaskRemoved(reason: String) {
+    private fun maybeRebindTun2SocksAfterDisconnect(reason: String) {
         val now = System.currentTimeMillis()
         val sinceLastRebind = now - lastTaskRemovedRebindAtMs
+        if (lastTaskRemovedRebindAtMs > 0L && sinceLastRebind >= TASK_REMOVED_REBIND_COOLDOWN_MS) {
+            taskRemovedRebindAttempted = false
+        }
         if (lastTaskRemovedRebindAtMs > 0L && sinceLastRebind < TASK_REMOVED_REBIND_COOLDOWN_MS) {
             Log.w(
                 TAG,
@@ -232,7 +238,7 @@ class XrayNativeWrapperTun2Socks(private val context: Context) {
                 }
                 val reused = d.reuseCurrentTun("task_removed_tun2socks_disconnect") { pfd ->
                     updateTunState("reusing_existing_tun_for_task_removed_rebind", "task_removed_tun2socks_disconnect")
-                    startTun2SocksBridge(pfd, bridgeSource = "task_removed_existing_tun")
+                    startTun2SocksBridge(pfd, bridgeSource = "binder_disconnect_existing_tun")
                 }
                 if (!reused) {
                     Log.e(TAG, "[DIAG] task_removed rebind failed: current TUN unavailable")

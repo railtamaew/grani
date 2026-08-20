@@ -547,9 +547,39 @@ class VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                     result.success(ignoring)
                 }
             }
+            "getVpnRuntimeFeatureFlags" -> {
+                val ctx = appContext ?: activity?.applicationContext
+                result.success(
+                    mapOf(
+                        "bridge_recovery_on_binder_loss" to
+                            (ctx?.let { VpnRuntimeFeatureFlags.bridgeRecoveryOnBinderLoss(it) } ?: true),
+                    ),
+                )
+            }
+            "setVpnRuntimeFeatureFlags" -> {
+                val ctx = appContext ?: activity?.applicationContext
+                val enabled = call.argument<Boolean>("bridge_recovery_on_binder_loss")
+                if (ctx != null && enabled != null) {
+                    VpnRuntimeFeatureFlags.setBridgeRecoveryOnBinderLoss(ctx, enabled)
+                }
+                result.success(null)
+            }
             "getSplitTunnelMode" -> {
                 val ctx = appContext ?: activity?.applicationContext
                 result.success(ctx?.let { SplitTunnelPrefs.getMode(it) } ?: SplitTunnelPrefs.MODE_EXCLUDE)
+            }
+            "getSplitTunnelPolicyState" -> {
+                val ctx = appContext ?: activity?.applicationContext
+                val state = ctx?.let { SplitTunnelPrefs.getAppPolicyState(it) }
+                result.success(
+                    mapOf(
+                        "mode" to (state?.mode ?: SplitTunnelPrefs.MODE_EXCLUDE),
+                        "packages" to (state?.packages?.toList() ?: emptyList<String>()),
+                        "revision" to (state?.revision ?: 0L),
+                        "applied_revision" to (state?.appliedRevision ?: 0L),
+                        "pending_reconnect" to (state?.pendingReconnect ?: false),
+                    ),
+                )
             }
             "setSplitTunnelMode" -> {
                 val mode = call.argument<String>("mode") ?: SplitTunnelPrefs.MODE_EXCLUDE

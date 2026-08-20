@@ -16,6 +16,8 @@ object SplitTunnelPrefs {
     private const val KEY_SELECTED_PACKAGES = "split_tunnel_selected_packages"
     private const val KEY_MODE = "split_tunnel_mode"
     private const val KEY_DIRECT_DOMAINS = "split_tunnel_direct_domains"
+    private const val KEY_APP_POLICY_REVISION = "split_tunnel_app_policy_revision"
+    private const val KEY_APPLIED_APP_POLICY_REVISION = "split_tunnel_applied_app_policy_revision"
     const val MODE_EXCLUDE = "exclude"
     const val MODE_INCLUDE = "include"
 
@@ -25,10 +27,15 @@ object SplitTunnelPrefs {
     }
 
     fun setMode(context: Context, mode: String) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_MODE, if (mode == MODE_INCLUDE) MODE_INCLUDE else MODE_EXCLUDE)
-            .apply()
+        val normalizedMode = if (mode == MODE_INCLUDE) MODE_INCLUDE else MODE_EXCLUDE
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if ((prefs.getString(KEY_MODE, MODE_EXCLUDE) ?: MODE_EXCLUDE) == normalizedMode) return
+        val revision = prefs.getLong(KEY_APP_POLICY_REVISION, 0L) + 1L
+        prefs.edit()
+            .putString(KEY_MODE, normalizedMode)
+            .putLong(KEY_APP_POLICY_REVISION, revision)
+            .commit()
+        Log.i(TAG, "setMode: mode=$normalizedMode app_policy_revision=$revision")
     }
 
     fun getSelectedPackages(context: Context): Set<String> {
@@ -49,18 +56,55 @@ object SplitTunnelPrefs {
 
     fun setSelectedPackages(context: Context, packages: Collection<String>) {
         try {
-            val arr = JSONArray(packages.filter { it.isNotBlank() })
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
+            val normalized = packages
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
+                .sorted()
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            if (getSelectedPackages(context).toSortedSet() == normalized.toSortedSet()) return
+            val revision = prefs.getLong(KEY_APP_POLICY_REVISION, 0L) + 1L
+            val arr = JSONArray(normalized)
+            prefs.edit()
                 .putString(KEY_SELECTED_PACKAGES, arr.toString())
-                .apply()
-            Log.d(TAG, "setSelectedPackages: ${packages.size} apps")
+                .putLong(KEY_APP_POLICY_REVISION, revision)
+                .commit()
+            Log.i(TAG, "setSelectedPackages: ${normalized.size} apps app_policy_revision=$revision")
         } catch (e: Exception) {
             Log.w(TAG, "setExcludedPackages failed: ${e.message}")
         }
     }
 
     fun setExcludedPackages(context: Context, packages: Collection<String>) = setSelectedPackages(context, packages)
+
+    data class AppPolicyState(
+        val mode: String,
+        val packages: Set<String>,
+        val revision: Long,
+        val appliedRevision: Long,
+    ) {
+        val pendingReconnect: Boolean
+            get() = revision > appliedRevision
+    }
+
+    fun getAppPolicyState(context: Context): AppPolicyState {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return AppPolicyState(
+            mode = getMode(context),
+            packages = getSelectedPackages(context),
+            revision = prefs.getLong(KEY_APP_POLICY_REVISION, 0L),
+            appliedRevision = prefs.getLong(KEY_APPLIED_APP_POLICY_REVISION, 0L),
+        )
+    }
+
+    /** Вызывать только после успешного создания TUN/подъёма backend. */
+    fun markAppPolicyApplied(context: Context): Long {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val revision = prefs.getLong(KEY_APP_POLICY_REVISION, 0L)
+        prefs.edit().putLong(KEY_APPLIED_APP_POLICY_REVISION, revision).commit()
+        Log.i(TAG, "app policy applied revision=$revision")
+        return revision
+    }
 
     /** Домены для маршрутизации в direct (обход VPN) */
     fun getDirectDomains(context: Context): List<String> {

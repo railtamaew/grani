@@ -182,7 +182,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
   }
 
   Future<void> _notifyReconnectHintIfNeeded({String? changeMessage}) async {
-    final connectedNow = await NativeVpnService.getAmneziaWgStatus();
+    final connectedNow = await NativeVpnService.getNativeConnectionStatus();
     if (!mounted) return;
     final l10n = context.l10n;
 

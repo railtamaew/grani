@@ -708,6 +708,22 @@ class NativeVpnService {
   static const String splitTunnelModeExclude = 'exclude';
   static const String splitTunnelModeInclude = 'include';
 
+  static Future<Map<String, dynamic>> getSplitTunnelPolicyState() async {
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+          'getSplitTunnelPolicyState');
+      return result?.map((key, value) => MapEntry(key.toString(), value)) ??
+          <String, dynamic>{};
+    } on PlatformException catch (e) {
+      debugPrint(
+          'NativeVpnService: getSplitTunnelPolicyState: ${e.message}');
+      return <String, dynamic>{};
+    } catch (e) {
+      debugPrint('NativeVpnService: getSplitTunnelPolicyState: $e');
+      return <String, dynamic>{};
+    }
+  }
+
   /// Режим split tunnel: exclude (выбранные в обход) или include (только выбранные используют VPN)
   static Future<String> getSplitTunnelMode() async {
     try {

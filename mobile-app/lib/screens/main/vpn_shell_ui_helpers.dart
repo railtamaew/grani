@@ -100,10 +100,12 @@ class VpnShellUiHelpers {
   static String? simpleConnectionBadge(String? raw, AppLocalizations l10n) {
     if (raw == null || raw.isEmpty) return null;
     final value = raw.toLowerCase();
-    if (value.contains('быстрое восстановление')) {
-      return l10n.vpnBadgeFastReconnect;
+    // Cache state is an internal implementation detail, not a separate user
+    // connection mode. Do not expose "first" versus "fast" labels in UI.
+    if (value.contains('быстрое восстановление') ||
+        value.contains('первичная настройка')) {
+      return null;
     }
-    if (value.contains('первичная настройка')) return l10n.vpnBadgeFirstSetup;
     if (!l10n.localeName.toLowerCase().startsWith('ru') &&
         _containsCyrillic(raw)) {
       return null;
@@ -123,14 +125,7 @@ class VpnShellUiHelpers {
         uiState != VpnUiSessionState.connectedWarm) {
       return null;
     }
-    switch (vpnService.connectionFlowType) {
-      case ConnectionFlowType.warmCacheReconnect:
-        return l10n.vpnBadgeFastReconnect;
-      case ConnectionFlowType.coldCreateConfig:
-        return l10n.vpnBadgeFirstSetup;
-      case ConnectionFlowType.unknown:
-        return null;
-    }
+    return null;
   }
 
   /// [waitTrafficHintWhenConnected] — для trial: пока нет трафика после connect, отдельный подзаголовок.

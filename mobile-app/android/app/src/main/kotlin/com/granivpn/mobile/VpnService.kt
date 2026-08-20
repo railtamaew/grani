@@ -39,8 +39,6 @@ class GraniVpnService : android.net.VpnService() {
 
     companion object {
         private const val TAG = "GraniVpnService"
-        /** Вручную/скриптом sync_versions.sh перед релизной сборкой; flutter build apk сам не обновляет. */
-        private const val CODE_VERSION = "2026-07-29-v34-f3e53f9"
         private const val RUNTIME_STOP_GUARD_MARKER = "2026-04-30-runtime-stop-guard-v1"
         private const val VPN_ADDRESS = "10.0.0.2"
         private const val VPN_ROUTE = "0.0.0.0"
@@ -292,6 +290,9 @@ class GraniVpnService : android.net.VpnService() {
         }
     }
 
+    private fun runtimeBuildVersion(): String =
+        "${BuildConfig.VERSION_NAME}+${BuildConfig.VERSION_CODE}"
+
     private var vpnInterface: ParcelFileDescriptor? = null
     private var isRunning = false
     @Volatile
@@ -494,13 +495,9 @@ class GraniVpnService : android.net.VpnService() {
             lastStartSource = "task_removed_keepalive"
             xrayNativeWrapper?.noteTaskRemovedKeepalive("task_removed_keepalive")
             ensureForegroundWithNotification(createNotification(notificationTextForState(serviceState)))
-            ProtocolRuntimeContract.markConnected(
-                applicationContext,
-                backend = "native",
-                protocol = expectedNativeProtocolLabel(),
-                sessionId = sid,
-                source = "task_removed_keepalive",
-            )
+            // Removing the UI task must not promote LOCAL_UP/PREPARE to a
+            // committed connection. Preserve the exact native stage instead.
+            syncRuntimeStateFromService(serviceState, expectedNativeProtocolLabel(), sid)
             refreshQuickTile()
             scheduleQuickTileRefresh(1200L)
             scheduleForegroundReconcile(1000L, "task_removed_keepalive")
@@ -846,7 +843,7 @@ class GraniVpnService : android.net.VpnService() {
 
     fun startVpn(config: String, protocolHint: String? = null, mtu: Int? = null): Boolean {
         vpnStartTs = System.currentTimeMillis()
-        Log.i(TAG, "startVpn: ========== ЗАПУСК VPN (ВЕРСИЯ КОДА: $CODE_VERSION) ==========")
+        Log.i(TAG, "startVpn: ========== ЗАПУСК VPN (ВЕРСИЯ КОДА: ${runtimeBuildVersion()}) ==========")
         Log.i(TAG, "startVpn: runtime_stop_guard_marker=$RUNTIME_STOP_GUARD_MARKER")
         Log.d(TAG, "startVpn: Начало, isRunning=$isRunning, длина конфигурации=${config.length}, mtu=$mtu")
         Log.d(TAG, "startVpn: Превью конфигурации: ${VpnLogRedaction.previewRedacted(config, 200)}")
@@ -1331,7 +1328,7 @@ class GraniVpnService : android.net.VpnService() {
      * Полностью перешли на нативные протоколы, sing-box удален.
      */
     private fun processXrayPackets(config: String) {
-        Log.i(TAG, "processXrayPackets: ========== ЗАПУСК VPN ЧЕРЕЗ НАТИВНЫЙ XRAY (ВЕРСИЯ: $CODE_VERSION) ==========")
+        Log.i(TAG, "processXrayPackets: ========== ЗАПУСК VPN ЧЕРЕЗ НАТИВНЫЙ XRAY (ВЕРСИЯ: ${runtimeBuildVersion()}) ==========")
         Log.i(TAG, "[DIAG] processXrayPackets вызван, t=0ms")
         Log.i(TAG, "processXrayPackets: Запуск VPN через нативный XRay (libXray)")
 

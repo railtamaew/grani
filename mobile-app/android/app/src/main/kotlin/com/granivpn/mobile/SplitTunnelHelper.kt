@@ -29,13 +29,14 @@ object SplitTunnelHelper {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return builder
         val packages = SplitTunnelPrefs.getSelectedPackages(context)
         val mode = SplitTunnelPrefs.getMode(context)
+        val revision = SplitTunnelPrefs.getAppPolicyState(context).revision
         if (packages.isEmpty()) {
-            Log.i(TAG, "Split tunnel: disabled (mode=$mode, selected_packages=0)")
+            Log.i(TAG, "Split tunnel: disabled (mode=$mode, selected_packages=0, revision=$revision)")
             return builder
         }
         Log.i(
             TAG,
-            "Split tunnel: applying mode=$mode selected_packages=${packages.size}",
+            "Split tunnel: applying mode=$mode selected_packages=${packages.size} revision=$revision",
         )
         try {
             for (pkg in packages) {

@@ -56,6 +56,7 @@ class Hysteria2ProcessWrapper(private val context: Context) {
 
     private val stopped = AtomicBoolean(true)
     private val socksListenerReady = AtomicBoolean(false)
+    private val bridgeRecoveryInProgress = AtomicBoolean(false)
     @Volatile
     private var running = false
     @Volatile
@@ -75,6 +76,8 @@ class Hysteria2ProcessWrapper(private val context: Context) {
     private val recentOutput = ArrayDeque<String>()
     @Volatile
     private var processExitCode: Int? = null
+    @Volatile
+    private var activeTunMtu: Int = TUN_MTU
 
     fun start(
         vpnService: GraniVpnService,
@@ -88,6 +91,7 @@ class Hysteria2ProcessWrapper(private val context: Context) {
             return
         }
         val effectiveMtu = (mtu ?: TUN_MTU).coerceIn(1200, 1500)
+        activeTunMtu = effectiveMtu
         val binary = resolveBinary()
         if (!binary.exists()) {
             stopped.set(true)
@@ -371,7 +375,9 @@ class Hysteria2ProcessWrapper(private val context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
             builder.setUnderlyingNetworks(null)
         }
-        return establishTun(builder) ?: throw IllegalStateException("failed to establish HY2 TUN")
+        val tun = establishTun(builder) ?: throw IllegalStateException("failed to establish HY2 TUN")
+        SplitTunnelPrefs.markAppPolicyApplied(context)
+        return tun
     }
 
     private fun establishTun(builder: VpnService.Builder): ParcelFileDescriptor? {
@@ -417,7 +423,12 @@ class Hysteria2ProcessWrapper(private val context: Context) {
 
             override fun onServiceDisconnected(name: ComponentName?) {
                 tun2socksService = null
-                if (!stopped.get()) onFailure("hy2_tun2socks_service_disconnected")
+                if (!stopped.get()) {
+                    recoverTun2SocksBridge(
+                        onFailure = onFailure,
+                        reason = "hy2_tun2socks_service_disconnected",
+                    )
+                }
             }
 
             override fun onNullBinding(name: ComponentName?) {
@@ -429,7 +440,12 @@ class Hysteria2ProcessWrapper(private val context: Context) {
                 tun2socksService = null
                 tun2socksBindFailure = "hy2_tun2socks_binding_died"
                 latch.countDown()
-                if (!stopped.get()) onFailure("hy2_tun2socks_binding_died")
+                if (!stopped.get()) {
+                    recoverTun2SocksBridge(
+                        onFailure = onFailure,
+                        reason = "hy2_tun2socks_binding_died",
+                    )
+                }
             }
         }
         tun2socksConnection = conn
@@ -445,6 +461,55 @@ class Hysteria2ProcessWrapper(private val context: Context) {
             throw IllegalStateException("hy2_tun2socks_bind_rejected")
         }
         Log.i(TAG, "tun2socks service warmup requested")
+    }
+
+    private fun recoverTun2SocksBridge(onFailure: (String) -> Unit, reason: String) {
+        if (!VpnRuntimeFeatureFlags.bridgeRecoveryOnBinderLoss(context)) {
+            onFailure(reason)
+            return
+        }
+        if (!bridgeRecoveryInProgress.compareAndSet(false, true)) {
+            Log.i(TAG, "HY2 bridge recovery already in progress reason=$reason")
+            return
+        }
+        VpnNativeStateEmitter.emitRuntimeDiag(
+            "hy2_tun2socks_recovery_scheduled",
+            mapOf("reason" to reason, "process_alive" to (process?.isAlive == true)),
+        )
+        Thread {
+            try {
+                Thread.sleep(300)
+                if (stopped.get()) return@Thread
+                if (process?.isAlive != true) {
+                    onFailure("$reason:hysteria_process_not_alive")
+                    return@Thread
+                }
+                val tun = vpnInterface
+                if (tun == null) {
+                    onFailure("$reason:tun_missing")
+                    return@Thread
+                }
+                tun2socksConnection = null
+                tun2socksBindLatch = null
+                tun2socksBindFailure = null
+                prepareTun2SocksBridge(onFailure)
+                startTun2SocksBridge(tun, activeTunMtu, onFailure)
+                VpnNativeStateEmitter.emitRuntimeDiag(
+                    "hy2_tun2socks_recovery_succeeded",
+                    mapOf("reason" to reason),
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "HY2 bridge recovery failed reason=$reason: ${e.message}", e)
+                if (!stopped.get()) {
+                    onFailure("$reason:recovery_failed:${e::class.java.simpleName}")
+                }
+            } finally {
+                bridgeRecoveryInProgress.set(false)
+            }
+        }.apply {
+            name = "hy2-tun2socks-recovery"
+            start()
+        }
     }
 
     private fun startTun2SocksBridge(
@@ -509,6 +574,7 @@ class Hysteria2ProcessWrapper(private val context: Context) {
                         false
                     }
                     if (!bridgeAlive) {
+                        if (bridgeRecoveryInProgress.get()) continue
                         running = false
                         if (!stopped.get()) onFailure("hy2_tun2socks_dead")
                         return@Thread

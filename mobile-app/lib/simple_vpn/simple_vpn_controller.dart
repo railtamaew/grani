@@ -1378,7 +1378,7 @@ class SimpleVpnController extends ChangeNotifier {
     return null;
   }
 
-  Future<SimpleVpnStartResult?> _startSessionForCachedFastPath({
+  Future<SimpleVpnStartResult?> _startSessionAfterLocalStart({
     required String protocol,
     required String? deviceId,
     required int? serverId,
@@ -1439,7 +1439,7 @@ class SimpleVpnController extends ChangeNotifier {
     return null;
   }
 
-  Future<void> _startBackendSessionAfterCachedFastPath({
+  Future<void> _startBackendSessionAfterLocalStart({
     required SimpleVpnConfig config,
     required String? deviceId,
     required String runtimeSessionId,
@@ -1479,7 +1479,7 @@ class SimpleVpnController extends ChangeNotifier {
       },
     );
     try {
-      final start = await _startSessionForCachedFastPath(
+      final start = await _startSessionAfterLocalStart(
         protocol: config.protocol,
         deviceId: deviceId,
         serverId: serverId,
@@ -3630,9 +3630,8 @@ class SimpleVpnController extends ChangeNotifier {
           extra: <String, dynamic>{'revision': config.configRevision},
         );
         _setConnectionProgress(
-          'Восстанавливаем защищенный профиль...',
+          'Готовим защищенный профиль...',
           percent: 36,
-          badge: 'Быстрое восстановление',
         );
         unawaited(
           _api.log(
@@ -3659,7 +3658,6 @@ class SimpleVpnController extends ChangeNotifier {
         _setConnectionProgress(
           'Готовим защищенный профиль...',
           percent: 34,
-          badge: 'Первичная настройка',
         );
         config = await _fetchConfigWithRetry(
           serverId: selectedServerId,
@@ -4114,7 +4112,7 @@ class SimpleVpnController extends ChangeNotifier {
       _startEntitlementTimer();
       if (backendSessionDeferred) {
         unawaited(
-          _startBackendSessionAfterCachedFastPath(
+          _startBackendSessionAfterLocalStart(
             config: config,
             deviceId: deviceId,
             runtimeSessionId: sessionId,

@@ -75,6 +75,8 @@ object SimpleAmneziaWgRunner {
         if (state != Tunnel.State.UP) {
             NativeVpnRuntimeState.markAwgExpectedUp(appContext, false)
             GraniAwgNotificationService.stop(appContext)
+        } else {
+            SplitTunnelPrefs.markAppPolicyApplied(appContext)
         }
         NativeVpnRuntimeState.notifyQuickTile(appContext)
         state
