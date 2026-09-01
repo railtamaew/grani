@@ -99,7 +99,7 @@ jobs:
             PLATFORM_NAME=iphoneos \
             ARCHS=arm64 \
             SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
-            IPHONEOS_DEPLOYMENT_TARGET=13.0 \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
             CONFIGURATION_TEMP_DIR="$bridge_temp" \
             CONFIGURATION_BUILD_DIR="$bridge_dir/out"
           test -f "$bridge_dir/out/libwg-go.a"
