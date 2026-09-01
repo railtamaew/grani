@@ -73,8 +73,17 @@ class MainFlutterWindow: NSWindow {
       loadTrafficStats(result: result)
     case "getDesktopVpnDiagnostics", "getRuntimeDiagnostics":
       desktopDiagnostics(result: result)
+    case "isPermissionRequired":
+      loadManagedTunnel { manager, _ in result(manager == nil) }
     case "requestPermission":
       result(true)
+    case "getPlatformCapabilities":
+      result([
+        "platform": "macos",
+        "runtime_mode": "network_extension",
+        "protocols": ["graniwg"],
+        "app_split_tunnel": false,
+      ])
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -281,6 +290,7 @@ class MainFlutterWindow: NSWindow {
       "packet_tunnel_bundle_id": Self.packetTunnelBundleIdentifier,
       "packet_tunnel_embedded": isPacketTunnelEmbedded,
       "packet_tunnel_path": packetTunnelExtensionURL?.path ?? "",
+      "supported_protocols": ["graniwg"],
     ]
   }
 

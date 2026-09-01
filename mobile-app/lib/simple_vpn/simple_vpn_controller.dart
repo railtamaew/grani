@@ -9,6 +9,7 @@ import 'package:flutter/widgets.dart';
 import '../config/app_config.dart';
 import '../core/cache/cache_service.dart';
 import '../core/perf/perf_logger.dart';
+import '../platform/platform_vpn_capabilities.dart';
 import '../protocols/xray/models/xray_config.dart';
 import '../services/native_vpn_service.dart';
 import '../services/analytics_service.dart';
@@ -256,7 +257,7 @@ class MacOSSimpleVpnRuntime implements SimpleVpnRuntime {
   }) {
     if (config.engine != 'amneziawg' && config.configType != 'amneziawg') {
       throw VpnUnsupportedPlatformException(
-        'Only GRANIwg/AmneziaWG is supported by the macOS runtime.',
+        'Only WireGuard obf is supported by the current Apple runtime.',
       );
     }
     return NativeVpnService.connectAmneziaWg(
@@ -291,17 +292,23 @@ class MacOSSimpleVpnRuntime implements SimpleVpnRuntime {
   }
 }
 
+class IOSSimpleVpnRuntime extends MacOSSimpleVpnRuntime {
+  const IOSSimpleVpnRuntime();
+}
+
 SimpleVpnRuntime createSimpleVpnRuntime() {
-  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-    return const AndroidSimpleVpnRuntime();
+  switch (PlatformVpnCapabilities.current.platform) {
+    case GraniClientPlatform.android:
+      return const AndroidSimpleVpnRuntime();
+    case GraniClientPlatform.ios:
+      return const IOSSimpleVpnRuntime();
+    case GraniClientPlatform.windows:
+      return const WindowsSimpleVpnRuntime();
+    case GraniClientPlatform.macos:
+      return const MacOSSimpleVpnRuntime();
+    case GraniClientPlatform.unsupported:
+      return const UnsupportedSimpleVpnRuntime();
   }
-  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
-    return const WindowsSimpleVpnRuntime();
-  }
-  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS) {
-    return const MacOSSimpleVpnRuntime();
-  }
-  return const UnsupportedSimpleVpnRuntime();
 }
 
 class SimpleVpnController extends ChangeNotifier {

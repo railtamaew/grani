@@ -1,6 +1,8 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 
+import '../platform/platform_vpn_capabilities.dart';
+
 class NativeVpnService {
   static const MethodChannel _channel = MethodChannel(
     'com.granivpn.mobile/vpn',
@@ -15,12 +17,15 @@ class NativeVpnService {
   static bool get _isMacOSNativeVpn =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
 
+  static bool get _isIOSNativeVpn =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
   static bool get _supportsNativeVpnChannel =>
-      _isAndroidNativeVpn || _isWindowsNativeVpn || _isMacOSNativeVpn;
+      PlatformVpnCapabilities.current.nativeVpnChannel;
 
   static VpnUnsupportedPlatformException _unsupportedPlatformException() {
     return VpnUnsupportedPlatformException(
-      'GRANI VPN desktop tunnel is not implemented yet for '
+      'GRANI VPN tunnel is not implemented yet for '
       '${defaultTargetPlatform.name}.',
     );
   }
@@ -228,7 +233,7 @@ class NativeVpnService {
               'VPN разрешение отклонено. Для работы VPN необходимо предоставить разрешение в настройках системы.',
         );
       }
-      if (_isWindowsNativeVpn || _isMacOSNativeVpn) {
+      if (_isWindowsNativeVpn || _isMacOSNativeVpn || _isIOSNativeVpn) {
         final diagnostics = await getDesktopVpnDiagnostics();
         final diagnosticText = diagnostics.entries
             .where(

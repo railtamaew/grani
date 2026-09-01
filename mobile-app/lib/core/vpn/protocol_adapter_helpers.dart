@@ -378,16 +378,20 @@ extension VpnServiceProtocolAdapterHelpers on VpnService {
   /// Применение GraniWG/AmneziaWG через native MethodChannel.
   ///
   /// Android uses the embedded amneziawg-go backend. Windows delegates to the
-  /// native C++ channel, which prefers AmneziaWG `tunnel.dll` via Windows
-  /// Service Control Manager and keeps `awg-quick.exe` only as a debug fallback.
+  /// native C++ channel. Apple platforms use a Network Extension Packet Tunnel.
   Future<bool> _applyGraniWGConfig(String config, VpnProtocol protocol) async {
-    if (Platform.isAndroid || Platform.isWindows) {
+    if (Platform.isAndroid ||
+        Platform.isIOS ||
+        Platform.isMacOS ||
+        Platform.isWindows) {
       final ok = await NativeVpnService.connectAmneziaWg(
         config,
         connectionSessionId: _connectionSessionId,
         source: Platform.isWindows
             ? 'desktop_windows_amneziawg'
-            : 'legacy_ui_amneziawg',
+            : (Platform.isIOS || Platform.isMacOS)
+                ? 'apple_packet_tunnel_amneziawg'
+                : 'legacy_ui_amneziawg',
       );
       if (ok) {
         _isConnected = true;
@@ -404,12 +408,19 @@ extension VpnServiceProtocolAdapterHelpers on VpnService {
 
   /// Disconnect embedded/native AmneziaWG runner.
   Future<void> _disconnectGraniWG() async {
-    if (!Platform.isAndroid && !Platform.isWindows) return;
+    if (!Platform.isAndroid &&
+        !Platform.isIOS &&
+        !Platform.isMacOS &&
+        !Platform.isWindows) {
+      return;
+    }
     await NativeVpnService.disconnectAmneziaWg(
       reason: 'user',
       source: Platform.isWindows
           ? 'desktop_windows_amneziawg'
-          : 'legacy_ui_amneziawg',
+          : (Platform.isIOS || Platform.isMacOS)
+              ? 'apple_packet_tunnel_amneziawg'
+              : 'legacy_ui_amneziawg',
       connectionSessionId: _connectionSessionId,
     );
   }

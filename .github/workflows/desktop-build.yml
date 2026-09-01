@@ -2,7 +2,7 @@ name: Desktop Build (Windows + macOS)
 
 on:
   push:
-    branches: [main, master, develop]
+    branches: [main, master, develop, 'codex/apple-windows-platforms-*']
     paths:
       - 'mobile-app/**'
       - '.github/workflows/desktop-build.yml'
@@ -26,7 +26,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.38.3'
+          flutter-version: '3.38.6'
           channel: 'stable'
           cache: true
 
@@ -127,6 +127,53 @@ jobs:
           Get-Item (Join-Path $releaseDir 'hysteria.exe')
           Get-Item (Join-Path $releaseDir 'sing-box.exe')
 
+      - name: Smoke test Windows startup from Cyrillic path
+        shell: pwsh
+        run: |
+          $releaseDir = Resolve-Path 'build/windows/x64/runner/Release'
+          $smokeRoot = Join-Path $env:RUNNER_TEMP 'ГРАНИ проверка'
+          $smokeDir = Join-Path $smokeRoot 'приложение'
+          $tracePath = Join-Path $env:LOCALAPPDATA 'GRANI/startup.log'
+
+          New-Item -ItemType Directory -Force -Path $smokeDir | Out-Null
+          Copy-Item (Join-Path $releaseDir '*') $smokeDir -Recurse -Force
+
+          $process = Start-Process `
+            -FilePath (Join-Path $smokeDir 'mobile_app.exe') `
+            -WorkingDirectory $smokeDir `
+            -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(35)
+            $startupComplete = $false
+            while ((Get-Date) -lt $deadline) {
+              $process.Refresh()
+              if ($process.HasExited) {
+                throw "GRANI exited during startup with code $($process.ExitCode)"
+              }
+              if (Test-Path -LiteralPath $tracePath) {
+                $trace = Get-Content -LiteralPath $tracePath -Raw
+                if ($trace -match 'ui_started' -and $trace -match 'first_frame') {
+                  $startupComplete = $true
+                  break
+                }
+              }
+              Start-Sleep -Milliseconds 500
+            }
+            if (!$startupComplete) {
+              $trace = if (Test-Path -LiteralPath $tracePath) {
+                Get-Content -LiteralPath $tracePath -Raw
+              } else {
+                '<startup.log was not created>'
+              }
+              throw "GRANI did not render its first frame. Trace: $trace"
+            }
+            Get-Content -LiteralPath $tracePath
+          } finally {
+            if (!$process.HasExited) {
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
@@ -145,7 +192,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.38.3'
+          flutter-version: '3.38.6'
           channel: 'stable'
           cache: true
 

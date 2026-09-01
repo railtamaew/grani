@@ -353,8 +353,26 @@ void main() async {
   try {
     if (_isMobileTarget) {
       perf.start('firebase_core_init');
-      await Firebase.initializeApp();
-      perf.stop('firebase_core_init');
+      var firebaseReady = false;
+      try {
+        await Firebase.initializeApp();
+        firebaseReady = true;
+      } catch (error, stackTrace) {
+        Logger().warning(
+          'Firebase is unavailable; continuing without analytics and push: '
+          '$error',
+          'main',
+        );
+        _writeWindowsStartupTrace(
+          'firebase_core_unavailable',
+          error,
+          stackTrace,
+        );
+      }
+      perf.stop(
+        'firebase_core_init',
+        details: {'ready': firebaseReady},
+      );
     }
 
     // Инициализация AppConfig (загрузка версии из package_info).

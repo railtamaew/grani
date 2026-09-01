@@ -1,0 +1,133 @@
+name: Apple iOS Build Check
+
+on:
+  push:
+    branches: [main, master, develop, 'apple-platforms/**', 'codex/apple-windows-platforms-*']
+    paths:
+      - 'mobile-app/ios/**'
+      - 'mobile-app/macos/PacketTunnel/**'
+      - 'mobile-app/lib/**'
+      - 'mobile-app/pubspec.yaml'
+      - 'mobile-app/pubspec.lock'
+      - '.github/workflows/apple-ios-build.yml'
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - 'mobile-app/ios/**'
+      - 'mobile-app/macos/PacketTunnel/**'
+      - 'mobile-app/lib/**'
+      - 'mobile-app/pubspec.yaml'
+      - 'mobile-app/pubspec.lock'
+      - '.github/workflows/apple-ios-build.yml'
+  workflow_dispatch:
+
+jobs:
+  ios-unsigned:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mobile-app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.6'
+          channel: stable
+          cache: true
+
+      - name: Setup Go for WireGuardKitGo
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+
+      - name: Resolve Flutter dependencies
+        run: flutter pub get
+
+      - name: Validate Apple property lists
+        run: |
+          plutil -lint ios/Runner/Info.plist
+          plutil -lint ios/Runner/Runner.entitlements
+          plutil -lint ios/PacketTunnel/Info.plist
+          plutil -lint ios/PacketTunnel/PacketTunnel.entitlements
+
+      - name: Resolve AmneziaWG Apple package
+        run: |
+          set -euxo pipefail
+          flutter build ios --config-only --no-codesign
+          xcodebuild -resolvePackageDependencies \
+            -project ios/Runner.xcodeproj \
+            -scheme Runner \
+            -derivedDataPath build/ios
+
+      - name: Prepare iOS WireGuardKitGo bridge
+        run: |
+          set -euxo pipefail
+          bridge_dir="$PWD/build/ios/SourcePackages/checkouts/amneziawg-apple/Sources/WireGuardKitGo"
+          test -d "$bridge_dir"
+
+          bridge_temp="$RUNNER_TEMP/wireguardkitgo-ios-temp"
+          rm -rf "$bridge_temp"
+          mkdir -p "$bridge_temp" "$bridge_dir/out"
+          real_goroot="$(go env GOROOT)"
+          prepared_goroot="$bridge_temp/wireguard-go-bridge/goroot"
+          mkdir -p "$prepared_goroot"
+          rsync -a --delete --exclude=pkg/obj/go-build "$real_goroot/" "$prepared_goroot/"
+
+          PREPARED_GOROOT="$prepared_goroot" python3 - <<'WGOPREP'
+          from pathlib import Path
+          import os
+          root = Path(os.environ["PREPARED_GOROOT"])
+          replacements = [
+              ("src/runtime/sys_darwin.go", "libc_mach_absolute_time", "libc_mach_continuous_time"),
+              ("src/runtime/sys_darwin_amd64.s", "CALL\tlibc_mach_absolute_time(SB)", "CALL\tlibc_mach_continuous_time(SB)"),
+              ("src/runtime/sys_darwin_arm64.s", "BL\tlibc_mach_absolute_time(SB)", "BL\tlibc_mach_continuous_time(SB)"),
+          ]
+          for rel, old_value, new_value in replacements:
+              runtime_path = root / rel
+              value = runtime_path.read_text()
+              if new_value not in value:
+                  if old_value not in value:
+                      raise SystemExit(f"{old_value} not found in {runtime_path}")
+                  runtime_path.write_text(value.replace(old_value, new_value, 1))
+          (root / ".prepared").touch()
+          WGOPREP
+
+          make -C "$bridge_dir" \
+            PLATFORM_NAME=iphoneos \
+            ARCHS=arm64 \
+            SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
+            IPHONEOS_DEPLOYMENT_TARGET=13.0 \
+            CONFIGURATION_TEMP_DIR="$bridge_temp" \
+            CONFIGURATION_BUILD_DIR="$bridge_dir/out"
+          test -f "$bridge_dir/out/libwg-go.a"
+          ls -lh "$bridge_dir/out/libwg-go.a"
+
+      - name: Build unsigned iOS app with Packet Tunnel
+        run: |
+          set -euxo pipefail
+          flutter build ios --release --no-codesign
+          app_path="$PWD/build/ios/iphoneos/Runner.app"
+          extension_path="$app_path/PlugIns/GRANIPacketTunnel.appex"
+          test -d "$app_path"
+          test -d "$extension_path"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_path/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$extension_path/Info.plist"
+
+      - name: Package unsigned engineering artifact
+        run: |
+          set -euxo pipefail
+          mkdir -p build/ios/package/Payload
+          ditto build/ios/iphoneos/Runner.app build/ios/package/Payload/GRANI.app
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/ios/package/Payload \
+            build/ios/grani-ios-unsigned-engineering.zip
+          ls -lh build/ios/grani-ios-unsigned-engineering.zip
+
+      - name: Upload unsigned engineering artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned-engineering
+          path: mobile-app/build/ios/grani-ios-unsigned-engineering.zip
