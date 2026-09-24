@@ -2485,6 +2485,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Not selected'**
   String get paywallNotSelected;
+
+  /// No description provided for @vpnNoticeNoNetworkTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'No network available'**
+  String get vpnNoticeNoNetworkTitle;
+
+  /// No description provided for @vpnNoticeNoNetworkBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on Wi-Fi or mobile data, then try again.'**
+  String get vpnNoticeNoNetworkBody;
+
+  /// No description provided for @vpnNoticeInternetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Internet check unsuccessful'**
+  String get vpnNoticeInternetTitle;
+
+  /// No description provided for @vpnNoticeInternetBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Access may be restricted. Try another network.'**
+  String get vpnNoticeInternetBody;
+
+  /// No description provided for @vpnNoticeTunnelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'VPN is not connected yet'**
+  String get vpnNoticeTunnelTitle;
+
+  /// No description provided for @vpnNoticeTunnelBody.
+  ///
+  /// In en, this message translates to:
+  /// **'The network responds, but VPN is not connected. Try another network.'**
+  String get vpnNoticeTunnelBody;
+
+  /// No description provided for @vpnNoticeSignInTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Check network access'**
+  String get vpnNoticeSignInTitle;
+
+  /// No description provided for @vpnNoticeSignInBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Wi-Fi may need a sign-in. Open your browser or switch networks.'**
+  String get vpnNoticeSignInBody;
 }
 
 class _AppLocalizationsDelegate

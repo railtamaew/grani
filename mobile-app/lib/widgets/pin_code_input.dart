@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
+import 'dart:math' as math;
 import '../theme.dart';
 
 // Custom TextInputFormatter для обработки вставки из буфера обмена
@@ -326,8 +327,10 @@ class PinCodeInputState extends State<PinCodeInput>
     final screenWidth = MediaQuery.of(context).size.width;
     final isSmallScreen = screenWidth < 360;
 
-    // Адаптация для маленьких экранов
-    final fieldWidth = (isSmallScreen
+    // Базовые размеры из макета. Фактическая ширина дополнительно ограничивается
+    // LayoutBuilder ниже: родитель PIN-блока имеет собственные padding, поэтому
+    // MediaQuery недостаточно для безопасного расчета четвертого слота.
+    final desiredFieldWidth = (isSmallScreen
             ? GraniTheme.pinCodeSlotWidthSmall
             : GraniTheme.pinCodeSlotWidth) *
         widget.scaleX;
@@ -335,36 +338,54 @@ class PinCodeInputState extends State<PinCodeInput>
             ? GraniTheme.pinCodeSlotHeightSmall
             : GraniTheme.pinCodeSlotHeight) *
         widget.scaleY;
-    final borderRadius = GraniTheme.radiusButton * widget.scaleX; // 25px
-    final gap =
+    final desiredGap =
         (isSmallScreen ? GraniTheme.pinCodeGapSmall : GraniTheme.pinCodeGap) *
             widget.scaleX;
-    final fontSize = (isSmallScreen ? GraniTheme.pinCodeFontSizeSmall : 40.0) *
-        widget.scaleX;
+    final desiredFontSize =
+        (isSmallScreen ? GraniTheme.pinCodeFontSizeSmall : 40.0) *
+            widget.scaleX;
 
-    return AnimatedBuilder(
-      animation: _shakeAnimation,
-      builder: (context, child) {
-        return Transform.translate(
-          offset:
-              _isErrorState ? Offset(_shakeAnimation.value, 0) : Offset.zero,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(4, (index) {
-              return Padding(
-                padding: EdgeInsets.only(
-                  right: index < 3 ? gap : 0,
-                ),
-                child: _buildPinField(
-                  index: index,
-                  width: fieldWidth,
-                  height: fieldHeight,
-                  borderRadius: borderRadius,
-                  fontSize: fontSize,
-                ),
-              );
-            }),
-          ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final desiredWidth = desiredFieldWidth * 4 + desiredGap * 3;
+        final availableWidth = constraints.hasBoundedWidth
+            ? math.max(0.0, constraints.maxWidth)
+            : desiredWidth;
+        final horizontalFit = desiredWidth > 0
+            ? math.min(1.0, availableWidth / desiredWidth)
+            : 1.0;
+        final fieldWidth = desiredFieldWidth * horizontalFit;
+        final gap = desiredGap * horizontalFit;
+        final borderRadius =
+            GraniTheme.radiusButton * widget.scaleX * horizontalFit;
+        final fontSize = desiredFontSize * horizontalFit;
+
+        return AnimatedBuilder(
+          animation: _shakeAnimation,
+          builder: (context, child) {
+            return Transform.translate(
+              offset: _isErrorState
+                  ? Offset(_shakeAnimation.value * horizontalFit, 0)
+                  : Offset.zero,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(4, (index) {
+                  return Padding(
+                    padding: EdgeInsets.only(
+                      right: index < 3 ? gap : 0,
+                    ),
+                    child: _buildPinField(
+                      index: index,
+                      width: fieldWidth,
+                      height: fieldHeight,
+                      borderRadius: borderRadius,
+                      fontSize: fontSize,
+                    ),
+                  );
+                }),
+              ),
+            );
+          },
         );
       },
     );

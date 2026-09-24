@@ -1330,4 +1330,32 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get paywallNotSelected => 'Not selected';
+
+  @override
+  String get vpnNoticeNoNetworkTitle => 'No network available';
+
+  @override
+  String get vpnNoticeNoNetworkBody =>
+      'Turn on Wi-Fi or mobile data, then try again.';
+
+  @override
+  String get vpnNoticeInternetTitle => 'Internet check unsuccessful';
+
+  @override
+  String get vpnNoticeInternetBody =>
+      'Access may be restricted. Try another network.';
+
+  @override
+  String get vpnNoticeTunnelTitle => 'VPN is not connected yet';
+
+  @override
+  String get vpnNoticeTunnelBody =>
+      'The network responds, but VPN is not connected. Try another network.';
+
+  @override
+  String get vpnNoticeSignInTitle => 'Check network access';
+
+  @override
+  String get vpnNoticeSignInBody =>
+      'Wi-Fi may need a sign-in. Open your browser or switch networks.';
 }

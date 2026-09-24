@@ -521,5 +521,13 @@
   "paywallTariffSemantics": "{title}. {monthlyPrice} в месяц. Итого {totalPrice}. {saving}. {selection}",
   "@paywallTariffSemantics": {"placeholders": {"title": {"type": "String"}, "monthlyPrice": {"type": "String"}, "totalPrice": {"type": "String"}, "saving": {"type": "String"}, "selection": {"type": "String"}}},
   "paywallSelected": "Выбран",
-  "paywallNotSelected": "Не выбран"
+  "paywallNotSelected": "Не выбран",
+  "vpnNoticeNoNetworkTitle": "Нет доступной сети",
+  "vpnNoticeNoNetworkBody": "Включите Wi-Fi или мобильный интернет и повторите попытку.",
+  "vpnNoticeInternetTitle": "Не удалось проверить интернет",
+  "vpnNoticeInternetBody": "Доступ может быть ограничен. Попробуйте другую сеть.",
+  "vpnNoticeTunnelTitle": "VPN пока недоступен",
+  "vpnNoticeTunnelBody": "Сеть отвечает, но VPN не подключён. Попробуйте другую сеть.",
+  "vpnNoticeSignInTitle": "Проверьте доступ к сети",
+  "vpnNoticeSignInBody": "Возможно, нужен вход в Wi-Fi. Откройте браузер или смените сеть."
 }

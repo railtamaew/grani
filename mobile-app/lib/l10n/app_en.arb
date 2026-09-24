@@ -521,5 +521,13 @@
   "paywallTariffSemantics": "{title}. {monthlyPrice} per month. Total {totalPrice}. {saving}. {selection}",
   "@paywallTariffSemantics": {"placeholders": {"title": {"type": "String"}, "monthlyPrice": {"type": "String"}, "totalPrice": {"type": "String"}, "saving": {"type": "String"}, "selection": {"type": "String"}}},
   "paywallSelected": "Selected",
-  "paywallNotSelected": "Not selected"
+  "paywallNotSelected": "Not selected",
+  "vpnNoticeNoNetworkTitle": "No network available",
+  "vpnNoticeNoNetworkBody": "Turn on Wi-Fi or mobile data, then try again.",
+  "vpnNoticeInternetTitle": "Internet check unsuccessful",
+  "vpnNoticeInternetBody": "Access may be restricted. Try another network.",
+  "vpnNoticeTunnelTitle": "VPN is not connected yet",
+  "vpnNoticeTunnelBody": "The network responds, but VPN is not connected. Try another network.",
+  "vpnNoticeSignInTitle": "Check network access",
+  "vpnNoticeSignInBody": "Wi-Fi may need a sign-in. Open your browser or switch networks."
 }

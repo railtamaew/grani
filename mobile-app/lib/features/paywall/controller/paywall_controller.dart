@@ -54,7 +54,7 @@ class PaywallController extends ChangeNotifier {
   bool _verificationInFlight = false;
   bool _disposed = false;
 
-  Future<void> initialize() async {
+  Future<void> initialize({bool reconnectStore = false}) async {
     if (_initialized) return;
     _initialized = true;
     _purchaseSubscription =
@@ -65,7 +65,7 @@ class PaywallController extends ChangeNotifier {
       billingState: PaywallBillingState.ready,
       clearError: true,
     ));
-    await _subscriptionService.initialize();
+    await _subscriptionService.initialize(reconnectStore: reconnectStore);
     loadStopwatch.stop();
     if (_disposed) return;
 
@@ -127,7 +127,7 @@ class PaywallController extends ChangeNotifier {
     _initialized = false;
     await _purchaseSubscription?.cancel();
     _purchaseSubscription = null;
-    await initialize();
+    await initialize(reconnectStore: true);
   }
 
   void selectPlan(String planId) {

@@ -30,6 +30,7 @@ bool canDismissSubscriptionScreen(SubscriptionScreenMode mode) =>
     mode != SubscriptionScreenMode.expired;
 
 const _subscriptionPollInterval = Duration(seconds: 25);
+const entitlementGrantedRoute = '/main';
 
 /// Conversion paywall for the three repeatable Google Play one-time products.
 class TrialEndedScreen extends StatefulWidget {
@@ -57,6 +58,7 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
   bool _androidPaymentBaselineActive = false;
   bool _androidPaymentDialogOpen = false;
   bool _androidPaymentCheckInFlight = false;
+  bool _entitlementNavigationStarted = false;
   int _pulseKey = 0;
   String? _lastSelectedPlanId;
   PaywallBillingState? _lastBillingState;
@@ -131,7 +133,7 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
       onNotice: _handleNotice,
       onEntitlementGranted: () async {
         if (!mounted) return;
-        Navigator.pushNamedAndRemoveUntil(context, '/main', (_) => false);
+        _openMainAfterEntitlement(source: 'purchase');
       },
     );
     controller.addListener(_handlePaywallState);
@@ -491,7 +493,7 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
       _subscriptionPollTimer = null;
       auth.removeListener(_onAuthSubscriptionUpdate);
       _authServiceForListener = null;
-      Navigator.pushNamedAndRemoveUntil(context, '/main', (_) => false);
+      _openMainAfterEntitlement(source: 'entitlement_restored');
     }
   }
 
@@ -501,7 +503,7 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
     await auth.refreshUserStatus(force: force);
     if (!mounted) return;
     if (auth.hasActiveSubscription || (auth.trialSecondsLeft ?? 0) > 0) {
-      Navigator.pushNamedAndRemoveUntil(context, '/main', (_) => false);
+      _openMainAfterEntitlement(source: 'entitlement_poll');
     }
   }
 
@@ -698,7 +700,7 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
         _androidPaymentDialogOpen = false;
         _androidPaymentPollTimer?.cancel();
         Navigator.of(context, rootNavigator: true).pop();
-        Navigator.pushNamedAndRemoveUntil(context, '/main', (_) => false);
+        _openMainAfterEntitlement(source: 'android_purchase');
       } else if (showNotFound) {
         showInfoSnackBar(
           context,
@@ -708,6 +710,19 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
     } finally {
       _androidPaymentCheckInFlight = false;
     }
+  }
+
+  void _openMainAfterEntitlement({required String source}) {
+    if (_entitlementNavigationStarted || !mounted) return;
+    _entitlementNavigationStarted = true;
+    debugPrint(
+      '[payment-timing] entitlement_navigation source=$source route=/main',
+    );
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      entitlementGrantedRoute,
+      (_) => false,
+    );
   }
 }
 

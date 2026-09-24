@@ -6,6 +6,7 @@ import '../../l10n/app_localizations.dart';
 import '../../screens/device_limit_screen.dart'
     show DeviceLimitResult, showDeviceLimitModal;
 import '../../services/auth_service.dart';
+import '../../services/in_app_event_banner_service.dart';
 import '../../services/native_vpn_service.dart' show DeviceLimitException;
 import '../../services/push_notification_service.dart';
 import '../../services/vpn_service.dart';
@@ -13,6 +14,13 @@ import '../../use_cases/connect_vpn_use_case.dart';
 
 void _syncPushDeviceBinding() {
   unawaited(PushNotificationService().resendTokenIfNeeded());
+}
+
+void _clearResolvedDeviceLimitUi(AuthService authService) {
+  authService.clearPendingDeviceLimit();
+  InAppEventBannerService.instance.dismissIfEventIs(
+    const {'device_limit', 'device_limit_exceeded'},
+  );
 }
 
 Future<List<dynamic>> _fetchDevicesSafe(VpnService vpnService) async {
@@ -59,7 +67,7 @@ Future<bool> registerDeviceUntilOkWithModal({
         force: authService.hasPendingDeviceLimit,
       );
       _syncPushDeviceBinding();
-      authService.clearPendingDeviceLimit();
+      _clearResolvedDeviceLimitUi(authService);
       return true;
     } on DeviceLimitException catch (e) {
       if (regAttempts >= maxRegisterAttempts) {
@@ -137,7 +145,7 @@ Future<void> handleConnectDeviceLimitFromUseCase({
         await vpnService.clearXrayConfigCache();
         await vpnService.ensureDeviceRegistered(t, force: true);
         _syncPushDeviceBinding();
-        authService.clearPendingDeviceLimit();
+        _clearResolvedDeviceLimitUi(authService);
       } on DeviceLimitException catch (e) {
         authService.setPendingDeviceLimit(e);
         return;
@@ -173,9 +181,9 @@ Future<void> handlePendingDeviceLimitAfterAuth({
   );
 
   if (!context.mounted) return;
-  authService.clearPendingDeviceLimit();
 
   if (limitResult == DeviceLimitResult.loggedOutCurrentDevice) {
+    _clearResolvedDeviceLimitUi(authService);
     await authService.logout();
     if (!context.mounted) return;
     Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
@@ -194,8 +202,14 @@ Future<void> handlePendingDeviceLimitAfterAuth({
         await vpnService.clearXrayConfigCache();
         await vpnService.ensureDeviceRegistered(token, force: true);
         _syncPushDeviceBinding();
-        authService.clearPendingDeviceLimit();
-      } catch (_) {}
+        _clearResolvedDeviceLimitUi(authService);
+      } on DeviceLimitException catch (e) {
+        authService.setPendingDeviceLimit(e);
+      } catch (e, st) {
+        debugPrint(
+          'DeviceLimitFlow: registration after resolution failed: $e\n$st',
+        );
+      }
     }
   } else {
     debugPrint(
@@ -224,7 +238,7 @@ Future<void> registerDeviceAfterLoginBackground({
       force: authService.hasPendingDeviceLimit,
     );
     _syncPushDeviceBinding();
-    authService.clearPendingDeviceLimit();
+    _clearResolvedDeviceLimitUi(authService);
     sw.stop();
     debugPrint('[device-reg] success total_ms=${sw.elapsedMilliseconds}');
   } on DeviceLimitException catch (e) {

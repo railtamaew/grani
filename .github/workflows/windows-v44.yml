@@ -1,0 +1,150 @@
+name: Windows 44 release
+on:
+  push:
+    branches: [codex/windows-v44-20260924]
+    paths: ['mobile-app/**', '.github/workflows/windows-v44.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: mobile-app
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.6'
+          channel: stable
+          cache: true
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Dependencies and regression checks
+        run: |
+          flutter pub get
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          flutter analyze lib/services/desktop_integration.dart lib/widgets/desktop_app_frame.dart --no-fatal-infos
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          flutter test test/desktop_app_frame_test.dart
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cl /nologo /EHsc /std:c++17 windows/tests/serial_worker_test.cpp /Fe:serial_worker_test.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./serial_worker_test.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build pinned official AmneziaWG runtime
+        run: |
+          $awgSource = Join-Path $env:RUNNER_TEMP 'amneziawg-windows-client'
+          git clone https://github.com/amnezia-vpn/amneziawg-windows-client.git $awgSource
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Push-Location $awgSource
+          git checkout 800416d673d83ed90ede02ca2ccd3683fe107d12
+          cmd /c build.bat
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Pop-Location
+          New-Item -ItemType Directory -Force bin/amneziawg/windows | Out-Null
+          foreach ($file in @('amneziawg.exe', 'awg.exe', 'wintun.dll')) {
+            Copy-Item -LiteralPath (Join-Path $awgSource "amd64/$file") -Destination "bin/amneziawg/windows/$file"
+          }
+      - name: Build GRANI 1.0.44
+        run: flutter build windows --release --build-name=1.0.44 --build-number=44 --dart-define=GRANI_BUILD_MARKER=windows44-20260924
+      - name: Download official Hysteria2 Windows runtime
+        shell: pwsh
+        run: |
+          $runtimeDir = 'bin/hysteria2/windows'
+          $runtimePath = Join-Path $runtimeDir 'hysteria.exe'
+          $downloadUrl = 'https://github.com/apernet/hysteria/releases/download/app/v2.10.0/hysteria-windows-amd64.exe'
+          $expectedSha256 = 'a0b4b1851919235b9424632b894b5232eec861c1c20e955e82e3dbc6698490d0'
+
+          New-Item -ItemType Directory -Force -Path $runtimeDir
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $runtimePath
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 $runtimePath).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "Hysteria2 SHA256 mismatch: expected $expectedSha256, got $actualSha256"
+          }
+          Get-Item $runtimePath
+
+      - name: Download official sing-box Windows runtime
+        shell: pwsh
+        run: |
+          $version = '1.13.14'
+          $runtimeDir = 'bin/sing-box/windows'
+          $archivePath = Join-Path $env:RUNNER_TEMP "sing-box-$version-windows-amd64.zip"
+          $extractDir = Join-Path $env:RUNNER_TEMP "sing-box-$version-windows-amd64"
+          $downloadUrl = "https://github.com/SagerNet/sing-box/releases/download/v$version/sing-box-$version-windows-amd64.zip"
+          $expectedSha256 = 'f580782c6dd10f7691c66cea1d7c421813c5fbf7e305d1ee7ce0c3a40d196341'
+
+          New-Item -ItemType Directory -Force -Path $runtimeDir
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "sing-box SHA256 mismatch: expected $expectedSha256, got $actualSha256"
+          }
+          Expand-Archive -Path $archivePath -DestinationPath $extractDir -Force
+          $source = Get-ChildItem -Path $extractDir -Recurse -Filter 'sing-box.exe' | Select-Object -First 1
+          if ($null -eq $source) {
+            throw 'sing-box.exe is missing from the official archive'
+          }
+          Copy-Item $source.FullName (Join-Path $runtimeDir 'sing-box.exe') -Force
+          & (Join-Path $runtimeDir 'sing-box.exe') version
+
+      - name: Package clean portable folder
+        run: |
+          $release = (Resolve-Path build/windows/x64/runner/Release).Path
+          $stage = Join-Path $env:RUNNER_TEMP 'GRANI-1.0.44'
+          New-Item -ItemType Directory -Force "$stage/runtime" | Out-Null
+          Copy-Item -LiteralPath "$release/GRANI.exe" -Destination $stage
+          Get-ChildItem -LiteralPath $release -Filter '*.dll' | Copy-Item -Destination $stage
+          Copy-Item -LiteralPath "$release/data" -Destination $stage -Recurse
+          foreach ($file in @('amneziawg.exe', 'awg.exe', 'wintun.dll')) {
+            Copy-Item -LiteralPath "bin/amneziawg/windows/$file" -Destination "$stage/runtime"
+          }
+          Copy-Item -LiteralPath bin/hysteria2/windows/hysteria.exe -Destination "$stage/runtime"
+          Copy-Item -LiteralPath bin/sing-box/windows/sing-box.exe -Destination "$stage/runtime"
+          # Flutter requires the Visual C++ CRT on machines without build tools.
+          $crt = Get-ChildItem -Path "$env:VCToolsRedistDir/x64" -Directory -Filter '*.CRT' | Select-Object -First 1
+          if (!$crt) { throw 'Visual C++ runtime directory was not found' }
+          foreach ($file in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+            Copy-Item -LiteralPath (Join-Path $crt.FullName $file) -Destination $stage
+          }
+          Copy-Item -LiteralPath windows/README-release.txt -Destination "$stage/README.txt"
+          $manifest = [ordered]@{version='1.0.44';build=44;commit=$env:GITHUB_SHA;awg_commit='800416d673d83ed90ede02ca2ccd3683fe107d12';files=@()}
+          $manifest.files = @(Get-ChildItem -LiteralPath $stage -File -Recurse | ForEach-Object {
+            @{path=[IO.Path]::GetRelativePath($stage,$_.FullName);sha256=(Get-FileHash -LiteralPath $_.FullName).Hash.ToLowerInvariant();bytes=$_.Length}
+          })
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$stage/manifest.json" -Encoding utf8
+          New-Item -ItemType Directory -Force build/package | Out-Null
+          Compress-Archive -LiteralPath $stage -DestinationPath build/package/grani-vpn-windows-x64-v44.zip
+          (Get-FileHash -LiteralPath build/package/grani-vpn-windows-x64-v44.zip).Hash.ToLowerInvariant() | Set-Content build/package/grani-vpn-windows-x64-v44.zip.sha256 -Encoding ascii
+      - name: Smoke test from Cyrillic path
+        run: |
+          $smoke = Join-Path $env:RUNNER_TEMP 'ГРАНИ проверка'
+          New-Item -ItemType Directory -Force $smoke | Out-Null
+          Expand-Archive -LiteralPath build/package/grani-vpn-windows-x64-v44.zip -DestinationPath $smoke
+          $app = Join-Path $smoke 'GRANI-1.0.44'
+          $trace = Join-Path $env:LOCALAPPDATA 'GRANI/startup.log'
+          $started = Get-Date
+          $process = Start-Process -FilePath "$app/GRANI.exe" -WorkingDirectory $app -WindowStyle Hidden -PassThru
+          try {
+            $ready = $false
+            $deadline = (Get-Date).AddSeconds(45)
+            while ((Get-Date) -lt $deadline) {
+              $process.Refresh()
+              if ($process.HasExited) { throw "GRANI exited: $($process.ExitCode)" }
+              if ((Test-Path -LiteralPath $trace) -and (Get-Item -LiteralPath $trace).LastWriteTime -ge $started) {
+                $log = Get-Content -LiteralPath $trace -Raw
+                if ($log -match 'ui_started' -and $log -match 'first_frame') { $ready=$true; break }
+              }
+              Start-Sleep -Milliseconds 500
+            }
+            if (!$ready) { throw 'GRANI did not render the first frame' }
+            Get-Content -LiteralPath $trace
+          } finally {
+            if (!$process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grani-windows-v44
+          path: mobile-app/build/package/*

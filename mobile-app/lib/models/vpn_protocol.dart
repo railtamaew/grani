@@ -65,7 +65,6 @@ extension VpnProtocolExtension on VpnProtocol {
             defaultTargetPlatform == TargetPlatform.android;
       case VpnProtocol.graniwg:
         return defaultTargetPlatform == TargetPlatform.android ||
-            defaultTargetPlatform == TargetPlatform.iOS ||
             defaultTargetPlatform == TargetPlatform.windows ||
             defaultTargetPlatform == TargetPlatform.macOS;
     }

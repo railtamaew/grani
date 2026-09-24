@@ -2,7 +2,7 @@ name: mobile_app
 description: GRANI Mobile App
 publish_to: 'none'
 # versionName.versionCode — code must match AppConfig fallbacks until PackageInfo.init().
-version: 1.0.39+39
+version: 1.0.44+44
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -133,15 +133,7 @@ flutter:
 # Источник: Figma node-id 1033:124 (AppIcon_Android_Master). Экспорт: python3 scripts/figma_export_app_icon.py
 flutter_launcher_icons:
   android: true
-  ios: true
-  remove_alpha_ios: true
+  ios: false
   image_path: "assets/icons/icon_01.png"
   adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "assets/icons/icon_01.png"
-  windows:
-    generate: true
-    image_path: "assets/icons/icon_01.png"
-    icon_size: 256
-  macos:
-    generate: true
-    image_path: "assets/icons/icon_01.png"

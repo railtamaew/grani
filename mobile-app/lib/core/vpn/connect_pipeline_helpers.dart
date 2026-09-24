@@ -645,6 +645,9 @@ extension VpnServiceConnectPipelineHelpers on VpnService {
         if (_deviceId != null && _deviceId!.isNotEmpty) 'device_id': _deviceId,
         if (_selectedServer != null)
           'server_id': int.tryParse(_selectedServer!.id),
+        'protocol': 'graniwg',
+        if (Platform.isAndroid)
+          'client_capabilities': SimpleVpnApi.awg31Capability,
       },
       options: await _vpnApiOptions({'Authorization': 'Bearer $token'}),
     );
@@ -665,6 +668,14 @@ extension VpnServiceConnectPipelineHelpers on VpnService {
       _setConnectionFlowType(ConnectionFlowType.coldCreateConfig);
       final response = await _fetchSimpleVpnConfig(token);
       if (response.statusCode == 200 && response.data['success'] == true) {
+        if (Platform.isAndroid &&
+            response.data['profile_version'] !=
+                SimpleVpnApi.awg31ProfileVersion) {
+          throw StateError(
+            'Backend returned an incompatible GRANIwg profile: '
+            '${response.data['profile_version'] ?? 'missing'}',
+          );
+        }
         final rawConfig = response.data['config'];
         config = rawConfig == null
             ? null

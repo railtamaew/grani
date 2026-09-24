@@ -12,7 +12,8 @@ import '../../services/vpn_service.dart';
 import '../../services/install_attribution_service.dart';
 import '../../simple_vpn/simple_vpn_controller.dart';
 import 'app_session_controller.dart';
-import 'device_limit_flow.dart' show registerDeviceAfterLoginBackground;
+import 'device_limit_flow.dart'
+    show handlePendingDeviceLimitAfterAuth, registerDeviceAfterLoginBackground;
 
 class PostAuthPreparationArguments {
   const PostAuthPreparationArguments({required this.source});
@@ -114,6 +115,36 @@ class _PostAuthPreparationCoordinatorScreenState
         );
       }, timeout: AppConfig.postAuthPreparationServersSoftTimeout);
 
+      if (authService.hasPendingDeviceLimit) {
+        // Registration owns device creation. Do not let the protocol prewarm
+        // fan-out race ahead after the backend rejected this device: the main
+        // shell listener will resolve the limit, then the normal cache recovery
+        // path can fetch configs for the registered device.
+        debugPrint(
+          '[auth-timing] post_auth_device_limit_blocks_protocol_prewarm '
+          'source=${widget.source}',
+        );
+        while (mounted &&
+            revision == _runRevision &&
+            authService.isAuthenticated &&
+            authService.hasPendingDeviceLimit) {
+          if (!mounted) return;
+          await handlePendingDeviceLimitAfterAuth(
+            context: context,
+            authService: authService,
+            vpnService: vpnService,
+          );
+          if (authService.hasPendingDeviceLimit) {
+            await Future<void>.delayed(const Duration(milliseconds: 500));
+          }
+        }
+        if (!mounted ||
+            revision != _runRevision ||
+            !authService.isAuthenticated) {
+          return;
+        }
+      }
+
       await _runSoftStep(
         PostAuthPreparationStep.access,
         () => accessRefreshFuture,
@@ -125,7 +156,7 @@ class _PostAuthPreparationCoordinatorScreenState
         );
       }
 
-      await _runSoftStep(
+      var configMatrixReady = await _runSoftStep(
         PostAuthPreparationStep.servers,
         () async {
           await vpnService.refreshControlPlaneSnapshot(authService,
@@ -134,6 +165,31 @@ class _PostAuthPreparationCoordinatorScreenState
         },
         timeout: AppConfig.postAuthPreparationProtocolWarmupSoftTimeout,
       );
+      if (!configMatrixReady) {
+        debugPrint(
+          '[auth-timing] post_auth_protocol_prewarm_retry '
+          'source=${widget.source}',
+        );
+        configMatrixReady = await _runSoftStep(
+          PostAuthPreparationStep.servers,
+          () async {
+            await vpnService.refreshControlPlaneSnapshot(authService,
+                force: true);
+            await _prewarmVpnConfigs(vpnService);
+          },
+          timeout: AppConfig.postAuthPreparationProtocolWarmupSoftTimeout,
+        );
+      }
+      if (!configMatrixReady) {
+        // Keep the recovery fetch in connect() as a safety net for outages or
+        // cache eviction, but there is no separate user-facing "primary" vs
+        // "fast" path. Normal trial/subscription entry always attempts the
+        // same complete preparation matrix first.
+        debugPrint(
+          '[auth-timing] post_auth_protocol_matrix_degraded '
+          'source=${widget.source}',
+        );
+      }
 
       if (!mounted || revision != _runRevision) return;
       setState(() => _step = PostAuthPreparationStep.ready);
@@ -327,14 +383,18 @@ class _PostAuthPreparationCoordinatorScreenState
 
   void _schedulePostAuthBackgroundTasks(AuthService authService) {
     try {
-      AnalyticsService().logLogin(widget.source);
       AnalyticsService().setUserId(authService.user?.id);
-      InstallAttributionService.instance.logLifecycleEvent(
-        'authorization_completed',
-      );
-      unawaited(
-        InstallAttributionService.instance.claimAfterLogin(authService.token),
-      );
+      final isLoginSource =
+          widget.source == 'google' || widget.source == 'email';
+      if (isLoginSource) {
+        AnalyticsService().logLogin(widget.source);
+        InstallAttributionService.instance.logLifecycleEvent(
+          'authorization_completed',
+        );
+        unawaited(
+          InstallAttributionService.instance.claimAfterLogin(authService.token),
+        );
+      }
     } catch (e) {
       debugPrint('PostAuthPreparation: analytics error: $e');
     }

@@ -50,7 +50,10 @@ class TariffCard extends StatelessWidget {
         child: AnimatedContainer(
           duration: duration,
           curve: Curves.easeOutCubic,
-          constraints: const BoxConstraints(minHeight: 116),
+          // 116 px leaves the three-line price column ~3 px short on older
+          // Redmi devices with the bundled Montserrat metrics. Let the card
+          // grow slightly instead of painting a yellow/black overflow stripe.
+          constraints: const BoxConstraints(minHeight: 122),
           decoration: BoxDecoration(
             color: const Color(0xFFFCFDFE),
             borderRadius: BorderRadius.circular(22),

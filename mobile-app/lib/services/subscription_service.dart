@@ -98,7 +98,7 @@ class SubscriptionService extends ChangeNotifier {
   static bool get supported => _isAndroid;
 
   /// Инициализация и загрузка продуктов. Вызывать при старте экрана подписки.
-  Future<void> initialize() async {
+  Future<void> initialize({bool reconnectStore = false}) async {
     if (!_isAndroid) {
       _isAvailable = false;
       notifyListeners();
@@ -109,8 +109,15 @@ class SubscriptionService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      _isAvailable = await _store.isAvailable();
-      if (!_isAvailable) {
+      // `isAvailable()` is intentionally non-retryable in the Android plugin.
+      // After Play Store was frozen during the first bind it can keep returning
+      // false from the stale BillingClient. A user retry therefore starts with
+      // a real product query: the plugin treats that operation as retryable and
+      // reconnects when the native service reports SERVICE_DISCONNECTED.
+      if (!reconnectStore) {
+        _isAvailable = await _store.isAvailable();
+      }
+      if (!_isAvailable && !reconnectStore) {
         _errorMessage = LocalizedMessages.storeUnavailable;
         _isLoading = false;
         notifyListeners();
@@ -118,6 +125,9 @@ class SubscriptionService extends ChangeNotifier {
       }
       final response =
           await _store.queryProductDetails(SubscriptionProducts.all.toSet());
+      if (reconnectStore) {
+        _isAvailable = response.error == null;
+      }
       if (response.notFoundIDs.isNotEmpty) {
         debugPrint(
             'SubscriptionService: продукты не найдены: ${response.notFoundIDs}');

@@ -19,7 +19,9 @@ class ControlPlanePlaneResolver {
     if (p == '/vpn/bootstrap') {
       return ControlPlanePlane.bootstrap;
     }
-    if (p == '/vpn/logs/send' || p == '/simple-vpn/logs') {
+    if (p == '/vpn/logs/send' ||
+        p == '/simple-vpn/logs' ||
+        p == '/simple-vpn/logs/batch') {
       return ControlPlanePlane.logging;
     }
     return ControlPlanePlane.vpnControl;

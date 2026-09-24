@@ -59,9 +59,8 @@ void EnsureDesktopShortcut() {
       std::wstring(desktop_path_raw) + L"\\GRANI.lnk";
   CoTaskMemFree(desktop_path_raw);
 
-  if (FileExists(shortcut_path)) {
-    return;
-  }
+  // Refresh an existing GRANI shortcut when a new portable version is launched.
+  // Otherwise the desktop keeps silently launching the old release forever.
 
   IShellLinkW* shell_link = nullptr;
   if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
@@ -269,6 +268,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     return *service_result;
   }
 
+  // Reveal an existing instance before requesting elevation again.
+  if (HWND existing = FindWindowW(L"GRANI_VPN_WINDOW", nullptr)) {
+    ShowWindow(existing, IsIconic(existing) ? SW_RESTORE : SW_SHOW);
+    SetForegroundWindow(existing);
+    return EXIT_SUCCESS;
+  }
+
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
@@ -282,6 +288,27 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     ::CoUninitialize();
     return EXIT_SUCCESS;
   }
+  HANDLE instance_mutex = CreateMutexW(nullptr, FALSE, L"Local\\GRANI_VPN_GUI");
+  const bool already_starting = instance_mutex && GetLastError() == ERROR_ALREADY_EXISTS;
+  if (already_starting) {
+    if (HWND existing = FindWindowW(L"GRANI_VPN_WINDOW", nullptr)) {
+      ShowWindow(existing, IsIconic(existing) ? SW_RESTORE : SW_SHOW);
+      SetForegroundWindow(existing);
+    }
+    CloseHandle(instance_mutex);
+    ::CoUninitialize();
+    return EXIT_SUCCESS;
+  }
+  // Keep this handle until process exit, including during initial Flutter load.
+
+  // One interactive owner for the shared VPN services and profile data.
+  if (HWND existing = FindWindowW(L"GRANI_VPN_WINDOW", nullptr)) {
+    ShowWindow(existing, IsIconic(existing) ? SW_RESTORE : SW_SHOW);
+    SetForegroundWindow(existing);
+    ::CoUninitialize();
+    return EXIT_SUCCESS;
+  }
+  SetCurrentDirectoryW(GetExeDir().c_str());
   EnsureDesktopShortcut();
 
   flutter::DartProject project(L"data");
@@ -293,7 +320,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  Win32Window::Size size(432, 760);
+  Win32Window::Size size(420, 820);
   if (!window.Create(L"GRANI", origin, size)) {
     return EXIT_FAILURE;
   }

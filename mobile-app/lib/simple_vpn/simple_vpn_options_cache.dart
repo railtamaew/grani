@@ -1,7 +1,19 @@
 import 'simple_vpn_api.dart';
 
-const String simpleVpnOptionsCacheKey = 'simple_vpn_options_v1';
+// v3 scopes the authenticated protocol catalog to the current backend user.
+// A shared device may be used by an ordinary account and then by an AWG
+// canary; reusing one global cache would leak the previous account's rollout
+// decision into the next session.
+const String simpleVpnOptionsCacheKey = 'simple_vpn_options_v3';
 const Duration simpleVpnOptionsCacheTtl = Duration(days: 7);
+
+String simpleVpnOptionsCacheKeyForUser(String? rawUserId) {
+  final normalized = (rawUserId ?? '').trim().replaceAll(
+        RegExp(r'[^A-Za-z0-9_.-]'),
+        '_',
+      );
+  return '${simpleVpnOptionsCacheKey}_user_${normalized.isEmpty ? 'anonymous' : normalized}';
+}
 
 List<SimpleVpnProtocol> defaultSimpleVpnProtocols() => <SimpleVpnProtocol>[
       SimpleVpnProtocol(
@@ -13,12 +25,6 @@ List<SimpleVpnProtocol> defaultSimpleVpnProtocols() => <SimpleVpnProtocol>[
       SimpleVpnProtocol(
         id: 'hysteria2',
         engine: 'hysteria2',
-        status: 'active',
-        role: 'fallback',
-      ),
-      SimpleVpnProtocol(
-        id: 'graniwg',
-        engine: 'amneziawg',
         status: 'active',
         role: 'fallback',
       ),

@@ -1,4 +1,9 @@
 #include "grani_vpn_channel.h"
+#include "serial_worker.h"
+#include <functional>
+#include <deque>
+#include <mutex>
+#include <stdexcept>
 
 #include <flutter/encodable_value.h>
 #include <flutter/method_call.h>
@@ -24,6 +29,47 @@ constexpr char kMissingHysteriaCode[] = "WINDOWS_HYSTERIA2_RUNNER_MISSING";
 constexpr char kMissingSingBoxCode[] = "WINDOWS_SING_BOX_RUNNER_MISSING";
 
 std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> g_channel;
+constexpr UINT kVpnResultMessage = WM_APP + 7;
+HWND g_window = nullptr;
+std::unique_ptr<SerialWorker> g_worker;
+std::mutex g_reply_mutex;
+std::deque<std::function<void()>> g_replies;
+
+void PostReply(std::function<void()> reply) {
+  {
+    std::lock_guard<std::mutex> lock(g_reply_mutex);
+    g_replies.push_back(std::move(reply));
+  }
+  PostMessageW(g_window, kVpnResultMessage, 0, 0);
+}
+
+// Flutter channel replies must be delivered on the platform thread. Deep-copy
+// each payload because the native operation's stack is gone before dispatch.
+class UiThreadResult : public flutter::MethodResult<flutter::EncodableValue> {
+ public:
+  explicit UiThreadResult(std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> result)
+      : result_(std::move(result)) {}
+ protected:
+  void SuccessInternal(const flutter::EncodableValue* value) override {
+    const auto copy = value ? std::make_shared<flutter::EncodableValue>(*value) : nullptr;
+    PostReply([result = result_, copy] {
+      if (copy) result->Success(*copy); else result->Success();
+    });
+  }
+  void ErrorInternal(const std::string& code, const std::string& message,
+                     const flutter::EncodableValue* details) override {
+    const auto copy = details ? std::make_shared<flutter::EncodableValue>(*details) : nullptr;
+    PostReply([result = result_, code, message, copy] {
+      if (copy) result->Error(code, message, *copy); else result->Error(code, message);
+    });
+  }
+  void NotImplementedInternal() override {
+    PostReply([result = result_] { result->NotImplemented(); });
+  }
+ private:
+  std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> result_;
+};
+
 bool g_connected = false;
 int64_t g_rx_bytes = 0;
 int64_t g_tx_bytes = 0;
@@ -137,6 +183,9 @@ std::optional<std::wstring> ResolveAwgQuickPath() {
     return bundled;
   }
 
+  const std::wstring runtime = GetExeDir() + L"\\runtime\\awg-quick.exe";
+  if (FileExists(runtime)) return runtime;
+
   const std::wstring local = GetExeDir() + L"\\awg-quick.exe";
   if (FileExists(local)) {
     return local;
@@ -157,6 +206,9 @@ std::optional<std::wstring> ResolveAmneziaWgPath() {
   if (FileExists(bundled)) {
     return bundled;
   }
+
+  const std::wstring runtime = GetExeDir() + L"\\runtime\\amneziawg.exe";
+  if (FileExists(runtime)) return runtime;
 
   const std::wstring local = GetExeDir() + L"\\amneziawg.exe";
   if (FileExists(local)) {
@@ -179,6 +231,9 @@ std::optional<std::wstring> ResolveTunnelDllPath() {
     return bundled;
   }
 
+  const std::wstring runtime = GetExeDir() + L"\\runtime\\tunnel.dll";
+  if (FileExists(runtime)) return runtime;
+
   const std::wstring local = GetExeDir() + L"\\tunnel.dll";
   if (FileExists(local)) {
     return local;
@@ -200,6 +255,9 @@ std::optional<std::wstring> ResolveHysteria2Path() {
     return bundled;
   }
 
+  const std::wstring runtime = GetExeDir() + L"\\runtime\\hysteria.exe";
+  if (FileExists(runtime)) return runtime;
+
   const std::wstring local = GetExeDir() + L"\\hysteria.exe";
   if (FileExists(local)) {
     return local;
@@ -220,6 +278,9 @@ std::optional<std::wstring> ResolveSingBoxPath() {
   if (FileExists(bundled)) {
     return bundled;
   }
+
+  const std::wstring runtime = GetExeDir() + L"\\runtime\\sing-box.exe";
+  if (FileExists(runtime)) return runtime;
 
   const std::wstring local = GetExeDir() + L"\\sing-box.exe";
   if (FileExists(local)) {
@@ -1234,7 +1295,7 @@ void HandleConnectHysteria2(
     result->Error(
         kMissingHysteriaCode,
         "Official Hysteria2 Windows runtime is not bundled. Package "
-        "hysteria.exe next to mobile_app.exe or set GRANI_HYSTERIA2_EXE.");
+        "hysteria.exe in the runtime folder next to GRANI.exe or set GRANI_HYSTERIA2_EXE.");
     return;
   }
 
@@ -1292,7 +1353,7 @@ void HandleConnectVless(
     result->Error(
         kMissingSingBoxCode,
         "Official sing-box Windows runtime is not bundled. Package "
-        "sing-box.exe next to mobile_app.exe or set GRANI_SING_BOX_EXE.");
+        "sing-box.exe in the runtime folder next to GRANI.exe or set GRANI_SING_BOX_EXE.");
     return;
   }
 
@@ -1362,16 +1423,9 @@ void HandleDisconnectAmneziaWg(
 
 }  // namespace
 
-void RegisterGraniVpnChannel(flutter::BinaryMessenger* messenger) {
-  g_channel =
-      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
-          messenger, "com.granivpn.mobile/vpn",
-          &flutter::StandardMethodCodec::GetInstance());
-
-  g_channel->SetMethodCallHandler(
-      [](const flutter::MethodCall<flutter::EncodableValue>& call,
-         std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
-             result) {
+namespace {
+void HandleVpnMethod(const flutter::MethodCall<flutter::EncodableValue>& call,
+                     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
         const std::string& method = call.method_name();
         if (method == "connectAmneziaWg") {
           HandleConnectAmneziaWg(call, std::move(result));
@@ -1415,5 +1469,45 @@ void RegisterGraniVpnChannel(flutter::BinaryMessenger* messenger) {
           return;
         }
         result->NotImplemented();
-      });
+}
+}  // namespace
+
+void RegisterGraniVpnChannel(flutter::BinaryMessenger* messenger, HWND window) {
+  g_window = window;
+  g_worker = std::make_unique<SerialWorker>();
+  g_channel = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      messenger, "com.granivpn.mobile/vpn", &flutter::StandardMethodCodec::GetInstance());
+  g_channel->SetMethodCallHandler([](const auto& call, auto result) {
+    auto copied_call = std::make_shared<flutter::MethodCall<flutter::EncodableValue>>(
+        call.method_name(), call.arguments()
+            ? std::make_unique<flutter::EncodableValue>(*call.arguments()) : nullptr);
+    std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> reply(std::move(result));
+    const bool posted = g_worker->Post([copied_call, reply] {
+      try {
+        HandleVpnMethod(*copied_call, std::make_unique<UiThreadResult>(reply));
+      } catch (const std::exception&) {
+        PostReply([reply] { reply->Error("WINDOWS_NATIVE_ERROR", "Windows VPN operation failed"); });
+      }
+    });
+    if (!posted) reply->Error("WINDOWS_SHUTTING_DOWN", "GRANI is shutting down");
+  });
+}
+
+bool DispatchGraniVpnResult(UINT message) {
+  if (message != kVpnResultMessage) return false;
+  std::deque<std::function<void()>> replies;
+  {
+    std::lock_guard<std::mutex> lock(g_reply_mutex);
+    replies.swap(g_replies);
+  }
+  for (auto& reply : replies) reply();
+  return true;
+}
+
+void ShutdownGraniVpnChannel() {
+  if (g_channel) g_channel->SetMethodCallHandler(nullptr);
+  if (g_worker) { g_worker->Stop(); g_worker.reset(); }
+  DispatchGraniVpnResult(kVpnResultMessage);
+  g_channel.reset();
+  g_window = nullptr;
 }

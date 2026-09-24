@@ -53,7 +53,7 @@ class AppConfig {
     seconds: 6,
   );
   static const Duration postAuthPreparationProtocolWarmupSoftTimeout = Duration(
-    seconds: 10,
+    seconds: 30,
   );
 
   // Use --dart-define=API_BASE_URL=... to override at build time.
@@ -170,9 +170,9 @@ class AppConfig {
   static const String appName = 'GRANI';
 
   // Версия и информация о сборке (загружается из package_info)
-  static String appVersion = '1.0.39';
-  static String buildNumber = '39';
-  static String buildDate = '2026-08-05'; // Автоматически заменяется при сборке
+  static String appVersion = '1.0.44';
+  static String buildNumber = '44';
+  static String buildDate = '2026-09-24'; // Автоматически заменяется при сборке
   static const String diagnosticBuildMarker = String.fromEnvironment(
     'GRANI_BUILD_MARKER',
     defaultValue: 'local-dev',
@@ -189,8 +189,8 @@ class AppConfig {
       );
     } catch (e) {
       // Если не удалось загрузить, используем значения по умолчанию
-      appVersion = '1.0.39';
-      buildNumber = '39';
+      appVersion = '1.0.44';
+      buildNumber = '44';
     }
   }
 

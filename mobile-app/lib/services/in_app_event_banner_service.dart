@@ -52,6 +52,15 @@ class InAppEventBannerService {
     activeBanner.value = null;
   }
 
+  /// Removes a stale entitlement banner after the control plane confirms that
+  /// the blocking condition has been resolved. Historical journal entries are
+  /// intentionally preserved; only the currently visible banner is cleared.
+  void dismissIfEventIs(Iterable<String> eventNames) {
+    final current = activeBanner.value;
+    if (current == null || !eventNames.contains(current.eventName)) return;
+    _dismissCurrent();
+  }
+
   InAppEventTone _toneFor(Map<String, dynamic>? data) {
     final event = (data?['event'] ?? '').toString();
     final action = (data?['grani_action'] ?? '').toString();

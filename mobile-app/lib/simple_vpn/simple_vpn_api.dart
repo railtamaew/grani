@@ -1,12 +1,20 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../config/app_config.dart';
+import '../core/vpn/vpn_orchestration_runtime.dart';
+import '../core/vpn_state_machine.dart';
+import 'simple_vpn_telemetry.dart';
 
 import '../core/api/api_client.dart';
 import '../core/api/endpoint_router.dart';
+
+class SimpleVpnServerUnavailableException implements Exception {
+  const SimpleVpnServerUnavailableException();
+  @override
+  String toString() => 'Сервер больше недоступен. Обновляем список серверов.';
+}
 
 class SimpleVpnAccessRequiredException implements Exception {
   const SimpleVpnAccessRequiredException(
@@ -84,6 +92,13 @@ String _accessRequiredMessage(Object error) {
 }
 
 Never _rethrowAccessRequired(Object error) {
+  if (error is DioException && error.response?.statusCode == 409) {
+    // Production wraps HTTPException.detail in error.message; test routers
+    // and older gateways can still return the original structured detail.
+    if (_payloadText(error.response?.data).contains('SERVER_UNAVAILABLE')) {
+      throw const SimpleVpnServerUnavailableException();
+    }
+  }
   if (_isPaymentRequired(error) || _isDeviceLimitError(error)) {
     throw SimpleVpnAccessRequiredException(_accessRequiredMessage(error));
   }
@@ -105,6 +120,8 @@ class SimpleVpnServer {
     this.countryLocalized = const <String, String>{},
     this.cityLocalized = const <String, String>{},
     this.pingMs,
+    this.latencyProbeHost = '',
+    this.latencyProbePort,
   });
 
   final int id;
@@ -120,6 +137,8 @@ class SimpleVpnServer {
   final int currentUsers;
   final int maxUsers;
   final double? pingMs;
+  final String latencyProbeHost;
+  final int? latencyProbePort;
 
   String get label => city.isNotEmpty ? '$city, $country' : country;
 
@@ -147,6 +166,8 @@ class SimpleVpnServer {
           51820,
       currentUsers: (json['current_users'] as num?)?.toInt() ?? 0,
       maxUsers: (json['max_users'] as num?)?.toInt() ?? 100,
+      latencyProbeHost: json['latency_probe_host']?.toString() ?? '',
+      latencyProbePort: (json['latency_probe_port'] as num?)?.toInt(),
       pingMs:
           json['ping_ms'] is num ? (json['ping_ms'] as num).toDouble() : null,
     );
@@ -166,6 +187,8 @@ class SimpleVpnServer {
         'current_users': currentUsers,
         'max_users': maxUsers,
         if (pingMs != null) 'ping_ms': pingMs,
+        if (latencyProbeHost.isNotEmpty) 'latency_probe_host': latencyProbeHost,
+        if (latencyProbePort != null) 'latency_probe_port': latencyProbePort,
       };
 }
 
@@ -241,6 +264,7 @@ class SimpleVpnConfig {
     required this.configRevision,
     required this.config,
     required this.jsonConfig,
+    this.profileVersion = 'legacy',
   });
 
   final String protocol;
@@ -251,6 +275,7 @@ class SimpleVpnConfig {
   final String configRevision;
   final String config;
   final Map<String, dynamic> jsonConfig;
+  final String profileVersion;
 
   factory SimpleVpnConfig.fromJson(Map<String, dynamic> json) {
     final server = json['server'];
@@ -271,6 +296,7 @@ class SimpleVpnConfig {
       jsonConfig: rawConfig is Map
           ? Map<String, dynamic>.from(rawConfig)
           : <String, dynamic>{},
+      profileVersion: json['profile_version']?.toString() ?? 'legacy',
     );
   }
 
@@ -282,6 +308,7 @@ class SimpleVpnConfig {
         'config_revision': configRevision,
         'config': config,
         'json_config': jsonConfig,
+        'profile_version': profileVersion,
       };
 }
 
@@ -334,72 +361,65 @@ class SimpleVpnVerifyResult {
   }
 }
 
-class _CriticalSimpleVpnLogOutbox {
-  static const String _storageKey = 'simple_vpn_critical_log_outbox_v1';
-  static const int _maxEntries = 64;
-
-  Future<List<Map<String, dynamic>>> read() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_storageKey);
-    if (raw == null || raw.isEmpty) return <Map<String, dynamic>>[];
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) return <Map<String, dynamic>>[];
-      return decoded
-          .whereType<Map>()
-          .map((entry) => Map<String, dynamic>.from(entry))
-          .toList();
-    } catch (_) {
-      return <Map<String, dynamic>>[];
-    }
-  }
-
-  Future<void> enqueue({
-    required String idempotencyKey,
-    required Map<String, dynamic> payload,
-  }) async {
-    final entries = await read();
-    if (entries.any(
-      (entry) => entry['idempotency_key']?.toString() == idempotencyKey,
-    )) {
-      return;
-    }
-    entries.add(<String, dynamic>{
-      'idempotency_key': idempotencyKey,
-      'payload': payload,
-      'attempts': 0,
-      'created_at': DateTime.now().toUtc().toIso8601String(),
-    });
-    if (entries.length > _maxEntries) {
-      entries.removeRange(0, entries.length - _maxEntries);
-    }
-    await replace(entries);
-  }
-
-  Future<void> replace(List<Map<String, dynamic>> entries) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_storageKey, jsonEncode(entries));
-  }
-}
-
 class SimpleVpnApi {
+  /// Opt-in for the official AmneziaWG 3.1 userspace/config contract. The
+  /// backend must never issue this profile to clients that omit the capability.
+  static const String awg31Capability = 'awg_3_1_v1';
+  static const String awg31ProfileVersion = 'awg_3_1';
+
   /// Explicit opt-in for the Hysteria 2 profile that does not use native
   /// Salamander obfuscation. Old app versions never send this capability and
   /// therefore keep receiving their legacy-compatible profile.
   static const String hysteriaNoObfsCapability = 'hy2_no_obfs_v1';
 
-  SimpleVpnApi({ApiClient? apiClient}) : _apiClient = apiClient ?? ApiClient();
+  SimpleVpnApi({ApiClientInterface? apiClient})
+      : _apiClient = apiClient ?? ApiClient();
 
-  final ApiClient _apiClient;
-  final _CriticalSimpleVpnLogOutbox _criticalLogOutbox =
-      _CriticalSimpleVpnLogOutbox();
-  Future<void> _criticalOutboxSerial = Future<void>.value();
-  Timer? _criticalOutboxRetryTimer;
+  final ApiClientInterface _apiClient;
+  static SimpleVpnTelemetry? _sharedTelemetry;
+  static CancelToken? _telemetryCancel;
 
-  static const Set<String> _criticalLogEvents = <String>{
-    'vpn_data_verified',
-    'node_data_verified',
-  };
+  SimpleVpnTelemetry get _telemetry => _sharedTelemetry ??= SimpleVpnTelemetry(
+        canSend: () {
+          final state = VpnOrchestrationRuntime.instance.vpnState;
+          return !VpnOrchestrationRuntime.instance.isConnectTransactionActive &&
+              state != VpnConnectionState.disconnecting;
+        },
+        cancelSend: () =>
+            _telemetryCancel?.cancel('VPN transition has priority'),
+        send: (events) async {
+          final cancel = CancelToken();
+          _telemetryCancel = cancel;
+          try {
+            final response = await _apiClient.post(
+              '/simple-vpn/logs/batch',
+              data: <String, dynamic>{'events': events},
+              requestKind: RequestKind.logging,
+              cancelToken: cancel,
+              options: Options(
+                sendTimeout: const Duration(seconds: 5),
+                receiveTimeout: const Duration(seconds: 5),
+              ),
+            );
+            final body = _asMap(response.data);
+            if (body['success'] != true || body['receipts'] is! List) {
+              throw StateError('Missing durable telemetry receipt');
+            }
+            return (body['receipts'] as List)
+                .whereType<Map>()
+                .where((r) =>
+                    r['status'] == 'stored' || r['status'] == 'duplicate')
+                .map((r) => r['event_id'].toString())
+                .toSet();
+          } finally {
+            if (identical(_telemetryCancel, cancel)) _telemetryCancel = null;
+          }
+        },
+      );
+
+  void telemetryConnectionStateChanged() {
+    _sharedTelemetry?.connectionStateChanged();
+  }
 
   static List<SimpleVpnProtocol> get displayProtocols => <SimpleVpnProtocol>[
         SimpleVpnProtocol(
@@ -417,7 +437,7 @@ class SimpleVpnApi {
       ];
 
   Future<List<SimpleVpnServer>> fetchServers() async {
-    unawaited(_flushCriticalLogOutbox());
+    unawaited(_telemetry.resume());
     try {
       final response = await _apiClient.get(
         '/simple-vpn/servers',
@@ -451,7 +471,7 @@ class SimpleVpnApi {
       final data = _asMap(response.data);
       final raw = data['protocols'];
       if (raw is! List) {
-        return displayProtocols;
+        throw StateError('Invalid /simple-vpn/protocols response');
       }
       final protocols = raw
           .whereType<Map>()
@@ -462,12 +482,13 @@ class SimpleVpnApi {
               protocol.id == 'hysteria2' ||
               protocol.id == 'graniwg')
           .toList(growable: false);
-      final merged = <String, SimpleVpnProtocol>{
-        for (final protocol in protocols) protocol.id: protocol,
-      };
-      return displayProtocols
-          .map((fallback) => merged[fallback.id] ?? fallback)
-          .toList(growable: false);
+      if (protocols.isEmpty) {
+        throw StateError('Empty /simple-vpn/protocols response');
+      }
+      // The authenticated backend catalog is authoritative. In particular,
+      // never recreate a rollout-gated protocol (such as AWG 3.1) from the
+      // local display catalog when the backend intentionally omitted it.
+      return protocols;
     } catch (error) {
       _rethrowAccessRequired(error);
     }
@@ -489,7 +510,10 @@ class SimpleVpnApi {
             'client_capabilities': clientCapabilities,
         },
         requestKind: RequestKind.vpnControl,
-        options: Options(receiveTimeout: const Duration(seconds: 12)),
+        options: Options(
+            receiveTimeout: Duration(
+          seconds: protocol == 'graniwg' ? 45 : 12,
+        )),
       );
       final data = _asMap(response.data);
       return SimpleVpnConfig.fromJson(data);
@@ -499,7 +523,10 @@ class SimpleVpnApi {
   }
 
   Future<SimpleVpnStartResult> startSession(
-      {String? protocol, String? deviceId, int? serverId}) async {
+      {String? protocol,
+      String? deviceId,
+      int? serverId,
+      String? runtimeSessionId}) async {
     try {
       final response = await _apiClient.post(
         '/simple-vpn/session/start',
@@ -507,6 +534,11 @@ class SimpleVpnApi {
           if (protocol != null && protocol.isNotEmpty) 'protocol': protocol,
           if (deviceId != null && deviceId.isNotEmpty) 'device_id': deviceId,
           if (serverId != null && serverId > 0) 'server_id': serverId,
+          if (runtimeSessionId != null && runtimeSessionId.isNotEmpty)
+            'runtime_session_id': runtimeSessionId,
+          'app_version': AppConfig.appVersion,
+          'build_number': AppConfig.buildNumber,
+          'platform': defaultTargetPlatform.name,
         },
         requestKind: RequestKind.vpnControl,
         options: Options(receiveTimeout: const Duration(seconds: 8)),
@@ -562,129 +594,19 @@ class SimpleVpnApi {
     String? sessionId,
     String? deviceId,
     Map<String, dynamic>? details,
-  }) async {
-    final payloadDetails = Map<String, dynamic>.from(
-      details ?? const <String, dynamic>{},
-    );
-    final isCritical = _criticalLogEvents.contains(event);
-    final payload = <String, dynamic>{
-      'event': event,
-      'level': level,
-      if (sessionId != null && sessionId.isNotEmpty) 'session_id': sessionId,
-      if (deviceId != null && deviceId.isNotEmpty) 'device_id': deviceId,
-    };
-    if (isCritical) {
-      final stableSessionId = sessionId ??
-          payloadDetails['vpn_session_id']?.toString() ??
-          payloadDetails['connection_session_id']?.toString() ??
-          payloadDetails['runtime_session_id']?.toString() ??
-          'no-session';
-      final idempotencyKey =
-          '$event:${deviceId ?? 'no-device'}:$stableSessionId';
-      payloadDetails['idempotency_key'] = idempotencyKey;
-      if (payloadDetails.isNotEmpty) payload['details'] = payloadDetails;
-      try {
-        await _runCriticalOutboxSerialized(() async {
-          await _criticalLogOutbox.enqueue(
-            idempotencyKey: idempotencyKey,
-            payload: payload,
-          );
-          await _drainCriticalLogOutboxLocked();
-        });
-      } catch (error) {
-        debugPrint(
-          'SimpleVpnApi: critical log outbox failed event=$event error=$error',
-        );
-        _scheduleCriticalLogRetry(1);
-      }
-      return;
-    }
-    if (payloadDetails.isNotEmpty) payload['details'] = payloadDetails;
-    try {
-      await _postLogPayload(payload);
-    } catch (_) {
-      // Logging must never control the simple VPN path.
-    }
-  }
-
-  Future<void> _postLogPayload(Map<String, dynamic> payload) async {
-    await _apiClient.post(
-      '/simple-vpn/logs',
-      data: payload,
-      requestKind: RequestKind.logging,
-      options: Options(receiveTimeout: const Duration(seconds: 5)),
-    );
-  }
-
-  Future<void> _runCriticalOutboxSerialized(
-    Future<void> Function() action,
-  ) {
-    final previous = _criticalOutboxSerial;
-    final completer = Completer<void>();
-    _criticalOutboxSerial = completer.future;
-    return () async {
-      try {
-        await previous;
-      } catch (_) {
-        // A previous outbox operation must not block later retries.
-      }
-      try {
-        await action();
-      } finally {
-        completer.complete();
-      }
-    }();
-  }
-
-  Future<void> _flushCriticalLogOutbox() {
-    return _runCriticalOutboxSerialized(_drainCriticalLogOutboxLocked);
-  }
-
-  Future<void> _drainCriticalLogOutboxLocked() async {
-    final entries = await _criticalLogOutbox.read();
-    while (entries.isNotEmpty) {
-      final entry = entries.first;
-      final rawPayload = entry['payload'];
-      if (rawPayload is! Map) {
-        entries.removeAt(0);
-        await _criticalLogOutbox.replace(entries);
-        continue;
-      }
-      try {
-        await _postLogPayload(Map<String, dynamic>.from(rawPayload));
-        entries.removeAt(0);
-        await _criticalLogOutbox.replace(entries);
-        _criticalOutboxRetryTimer?.cancel();
-        _criticalOutboxRetryTimer = null;
-      } catch (error) {
-        final attempts = ((entry['attempts'] as num?)?.toInt() ?? 0) + 1;
-        entry['attempts'] = attempts;
-        entry['last_error_at'] = DateTime.now().toUtc().toIso8601String();
-        await _criticalLogOutbox.replace(entries);
-        debugPrint(
-          'SimpleVpnApi: critical log delivery deferred '
-          'key=${entry['idempotency_key']} attempt=$attempts error=$error',
-        );
-        _scheduleCriticalLogRetry(attempts);
-        return;
-      }
-    }
-  }
-
-  void _scheduleCriticalLogRetry(int attempt) {
-    if (_criticalOutboxRetryTimer?.isActive ?? false) return;
-    final seconds = attempt <= 1
-        ? 5
-        : attempt == 2
-            ? 15
-            : attempt == 3
-                ? 30
-                : 60;
-    _criticalOutboxRetryTimer = Timer(Duration(seconds: seconds), () {
-      _criticalOutboxRetryTimer = null;
-      unawaited(_flushCriticalLogOutbox());
-    });
-  }
+  }) =>
+      _telemetry.enqueue(<String, dynamic>{
+        'event': event,
+        'level': level,
+        'session_id': sessionId,
+        'device_id': deviceId,
+        'details': <String, dynamic>{
+          ...?details,
+          'app_version': AppConfig.appVersion,
+          'build_number': AppConfig.buildNumber,
+          'platform': defaultTargetPlatform.name,
+        },
+      });
 
   Map<String, dynamic> _asMap(dynamic data) {
     if (data is Map<String, dynamic>) return data;

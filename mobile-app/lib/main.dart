@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'widgets/desktop_app_frame.dart';
+import 'services/desktop_integration.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -327,6 +329,7 @@ VpnService _createVpnServiceInternal(AuthService auth) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  DesktopIntegration.initialize();
 
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
@@ -353,26 +356,8 @@ void main() async {
   try {
     if (_isMobileTarget) {
       perf.start('firebase_core_init');
-      var firebaseReady = false;
-      try {
-        await Firebase.initializeApp();
-        firebaseReady = true;
-      } catch (error, stackTrace) {
-        Logger().warning(
-          'Firebase is unavailable; continuing without analytics and push: '
-          '$error',
-          'main',
-        );
-        _writeWindowsStartupTrace(
-          'firebase_core_unavailable',
-          error,
-          stackTrace,
-        );
-      }
-      perf.stop(
-        'firebase_core_init',
-        details: {'ready': firebaseReady},
-      );
+      await Firebase.initializeApp();
+      perf.stop('firebase_core_init');
     }
 
     // Инициализация AppConfig (загрузка версии из package_info).
@@ -549,6 +534,7 @@ class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
     with WidgetsBindingObserver {
   Timer? _inactiveVpnSyncDebounce;
   bool _resumeRefreshInFlight = false;
+  bool _wasPausedOrDetached = false;
 
   @override
   void initState() {
@@ -582,6 +568,12 @@ class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
     if (state == AppLifecycleState.resumed) {
       _inactiveVpnSyncDebounce?.cancel();
       _inactiveVpnSyncDebounce = null;
+      // Pulling down a notification shade is only inactive -> resumed on
+      // Android. It must not launch the full control-plane/device sync: doing
+      // so rebuilds the VPN shell and makes a committed connect button jump.
+      // A real background transition always includes paused/detached.
+      if (!_wasPausedOrDetached) return;
+      _wasPausedOrDetached = false;
       ConnectionLogger().flushPendingAfterResumeIfAny();
       _scheduleResumeRefresh();
       if (_isMobileTarget) {
@@ -599,6 +591,7 @@ class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
       _inactiveVpnSyncDebounce = null;
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      _wasPausedOrDetached = true;
       _inactiveVpnSyncDebounce?.cancel();
       _inactiveVpnSyncDebounce = null;
       // Do not touch VPN state on pause; Android VPN must keep running independently.
@@ -848,23 +841,15 @@ class _GraniAppState extends State<GraniApp> {
     if (authService.isAuthenticated && authService.token != null) {
       final appLinkRoute = await InstallAttributionService.instance
           .takePendingRouteIfAuthorized(true);
-      String? platformRoute;
-      try {
-        platformRoute = await const MethodChannel('com.granivpn.mobile/vpn')
-            .invokeMethod<String>('getLaunchInitialRoute')
-            .timeout(const Duration(seconds: 3), onTimeout: () => null);
-      } catch (_) {
-        platformRoute = null;
+      // Не блокируем первый кадр MethodChannel-вызовом. На некоторых OEM в
+      // debug он занимал ~1.5 с, хотя нативная сторона лишь читает Intent.
+      // Обычный маршрут выбираем сразу по локальному auth/trial-кэшу, а редкий
+      // маршрут Quick Tile применяем сразу после первого кадра.
+      _initialRoute = appLinkRoute ?? _getTargetRoute(authService);
+      Logger().debug('Начальный маршрут: $_initialRoute', 'GraniApp');
+      if (appLinkRoute == null) {
+        _schedulePlatformLaunchRoute();
       }
-      _initialRoute =
-          appLinkRoute ??
-          ((platformRoute != null && platformRoute.isNotEmpty)
-              ? platformRoute
-              : _getTargetRoute(authService));
-      Logger().debug(
-        'Начальный маршрут: $_initialRoute${platformRoute != null ? " (с плитки)" : ""}',
-        'GraniApp',
-      );
       _scheduleControlPlaneRefresh(authService);
     } else {
       _initialRoute = '/';
@@ -873,6 +858,36 @@ class _GraniAppState extends State<GraniApp> {
         'GraniApp',
       );
     }
+  }
+
+  /// Quick Tile может передать `/main` или `/subscription` через Intent.
+  /// Читаем его после первого кадра, чтобы редкий tile-сценарий не добавлял
+  /// задержку каждому холодному запуску приложения.
+  void _schedulePlatformLaunchRoute() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(() async {
+        String? platformRoute;
+        try {
+          platformRoute = await const MethodChannel('com.granivpn.mobile/vpn')
+              .invokeMethod<String>('getLaunchInitialRoute')
+              .timeout(const Duration(seconds: 3), onTimeout: () => null);
+        } catch (_) {
+          platformRoute = null;
+        }
+        if (!mounted || platformRoute == null || platformRoute.isEmpty) {
+          return;
+        }
+        if (platformRoute == _initialRoute) return;
+        final navigator = appNavigatorKey.currentState;
+        if (navigator == null) return;
+        Logger().debug(
+          'Применяем маршрут запуска из Quick Tile после первого кадра: '
+              '$platformRoute',
+          'GraniApp',
+        );
+        navigator.pushNamedAndRemoveUntil(platformRoute, (_) => false);
+      }());
+    });
   }
 
   bool _useAuthenticatedRouteFallback(String reason) {
@@ -1079,13 +1094,15 @@ class _GraniAppState extends State<GraniApp> {
           initialRoute: _initialRoute ?? '/',
           builder: (context, child) {
             // Оборачиваем в lifecycle handler и auth redirect (logout → экран входа)
-            return InAppEventBannerHost(
-              child: _AppLifecycleHandler(
-                child: _AuthRedirectListener(
-                  authService: widget.authService,
-                  child: PendingDeviceLimitListener(
-                    child: _PreloadVpnWidget(
-                      child: child ?? const SizedBox.shrink(),
+            return DesktopAppFrame(
+              child: InAppEventBannerHost(
+                child: _AppLifecycleHandler(
+                  child: _AuthRedirectListener(
+                    authService: widget.authService,
+                    child: PendingDeviceLimitListener(
+                      child: _PreloadVpnWidget(
+                        child: child ?? const SizedBox.shrink(),
+                      ),
                     ),
                   ),
                 ),

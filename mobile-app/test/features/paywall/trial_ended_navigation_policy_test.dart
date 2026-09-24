@@ -19,4 +19,11 @@ void main() {
       isTrue,
     );
   });
+
+  test(
+      'verified purchase returns directly to main without post-auth preparation',
+      () {
+    expect(entitlementGrantedRoute, '/main');
+    expect(entitlementGrantedRoute, isNot('/post-auth-preparation'));
+  });
 }

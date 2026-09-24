@@ -1347,4 +1347,32 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get paywallNotSelected => 'Не выбран';
+
+  @override
+  String get vpnNoticeNoNetworkTitle => 'Нет доступной сети';
+
+  @override
+  String get vpnNoticeNoNetworkBody =>
+      'Включите Wi-Fi или мобильный интернет и повторите попытку.';
+
+  @override
+  String get vpnNoticeInternetTitle => 'Не удалось проверить интернет';
+
+  @override
+  String get vpnNoticeInternetBody =>
+      'Доступ может быть ограничен. Попробуйте другую сеть.';
+
+  @override
+  String get vpnNoticeTunnelTitle => 'VPN пока недоступен';
+
+  @override
+  String get vpnNoticeTunnelBody =>
+      'Сеть отвечает, но VPN не подключён. Попробуйте другую сеть.';
+
+  @override
+  String get vpnNoticeSignInTitle => 'Проверьте доступ к сети';
+
+  @override
+  String get vpnNoticeSignInBody =>
+      'Возможно, нужен вход в Wi-Fi. Откройте браузер или смените сеть.';
 }

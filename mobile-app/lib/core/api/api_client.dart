@@ -131,8 +131,7 @@ class ApiClient implements ApiClientInterface {
               m.contains('broken pipe') ||
               m.contains('connection closed');
         }
-        final blob =
-            '${e.message ?? ""} ${e.error ?? ""}'.toLowerCase();
+        final blob = '${e.message ?? ""} ${e.error ?? ""}'.toLowerCase();
         return blob.contains('connection reset') ||
             blob.contains('connection aborted') ||
             blob.contains('broken pipe');
@@ -182,7 +181,8 @@ class ApiClient implements ApiClientInterface {
     }
     if (_isNetworkClassDioError(e) &&
         _sameCanonicalBase(baseStr, AppConfig.apiBaseUrl)) {
-      await PreferredRouteStorage.recordNetworkClassFailure(AppConfig.apiBaseUrl);
+      await PreferredRouteStorage.recordNetworkClassFailure(
+          AppConfig.apiBaseUrl);
     }
   }
 
@@ -346,6 +346,9 @@ class ApiClient implements ApiClientInterface {
           options: options,
           cancelToken: cancelToken,
         ),
+        // Only this bounded, durable diagnostics route may flush after STOP.
+        connectivityDiagnosticsFlush:
+            path == '/simple-vpn/logs/batch' && kind == RequestKind.logging,
       ),
     );
   }

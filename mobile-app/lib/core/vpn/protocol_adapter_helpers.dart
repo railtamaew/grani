@@ -361,6 +361,14 @@ extension VpnServiceProtocolAdapterHelpers on VpnService {
         throw Exception(
             response.data['detail'] ?? 'Ошибка получения конфигурации GraniWG');
       }
+      if (Platform.isAndroid &&
+          response.data['profile_version'] !=
+              SimpleVpnApi.awg31ProfileVersion) {
+        throw StateError(
+          'Backend returned an incompatible GRANIwg profile: '
+          '${response.data['profile_version'] ?? 'missing'}',
+        );
+      }
       final raw = response.data['config'];
       config = raw == null ? null : (raw is String ? raw : jsonEncode(raw));
       if (config == null || config.isEmpty) {
@@ -378,20 +386,16 @@ extension VpnServiceProtocolAdapterHelpers on VpnService {
   /// Применение GraniWG/AmneziaWG через native MethodChannel.
   ///
   /// Android uses the embedded amneziawg-go backend. Windows delegates to the
-  /// native C++ channel. Apple platforms use a Network Extension Packet Tunnel.
+  /// native C++ channel, which prefers AmneziaWG `tunnel.dll` via Windows
+  /// Service Control Manager and keeps `awg-quick.exe` only as a debug fallback.
   Future<bool> _applyGraniWGConfig(String config, VpnProtocol protocol) async {
-    if (Platform.isAndroid ||
-        Platform.isIOS ||
-        Platform.isMacOS ||
-        Platform.isWindows) {
+    if (Platform.isAndroid || Platform.isWindows) {
       final ok = await NativeVpnService.connectAmneziaWg(
         config,
         connectionSessionId: _connectionSessionId,
         source: Platform.isWindows
             ? 'desktop_windows_amneziawg'
-            : (Platform.isIOS || Platform.isMacOS)
-                ? 'apple_packet_tunnel_amneziawg'
-                : 'legacy_ui_amneziawg',
+            : 'legacy_ui_amneziawg',
       );
       if (ok) {
         _isConnected = true;
@@ -408,19 +412,12 @@ extension VpnServiceProtocolAdapterHelpers on VpnService {
 
   /// Disconnect embedded/native AmneziaWG runner.
   Future<void> _disconnectGraniWG() async {
-    if (!Platform.isAndroid &&
-        !Platform.isIOS &&
-        !Platform.isMacOS &&
-        !Platform.isWindows) {
-      return;
-    }
+    if (!Platform.isAndroid && !Platform.isWindows) return;
     await NativeVpnService.disconnectAmneziaWg(
       reason: 'user',
       source: Platform.isWindows
           ? 'desktop_windows_amneziawg'
-          : (Platform.isIOS || Platform.isMacOS)
-              ? 'apple_packet_tunnel_amneziawg'
-              : 'legacy_ui_amneziawg',
+          : 'legacy_ui_amneziawg',
       connectionSessionId: _connectionSessionId,
     );
   }

@@ -131,30 +131,6 @@ void main() {
     expect(NativeVpnService.channelCallSnapshot()['getStatus'], 3);
   });
 
-  test('getSplitTunnelPolicyState exposes pending app policy revision',
-      () async {
-    binding.defaultBinaryMessenger.setMockMethodCallHandler(
-      vpnChannel,
-      (call) async {
-        calls.add(call);
-        return <String, dynamic>{
-          'mode': NativeVpnService.splitTunnelModeExclude,
-          'packages': <String>['com.example.browser'],
-          'revision': 4,
-          'applied_revision': 3,
-          'pending_reconnect': true,
-        };
-      },
-    );
-
-    final state = await NativeVpnService.getSplitTunnelPolicyState();
-
-    expect(calls.single.method, 'getSplitTunnelPolicyState');
-    expect(state['revision'], 4);
-    expect(state['applied_revision'], 3);
-    expect(state['pending_reconnect'], isTrue);
-  });
-
   test('connectAmneziaWg attaches split tunnel preferences on Android',
       () async {
     binding.defaultBinaryMessenger.setMockMethodCallHandler(

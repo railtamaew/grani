@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
-import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
@@ -35,8 +34,17 @@ void _logRouteVerbose(String message) {
 
 String _tokenDebugSummary(String? token) {
   if (token == null || token.isEmpty) return 'present=false len=0';
-  final digest = sha256.convert(utf8.encode(token)).toString();
-  return 'present=true len=${token.length} sha256=${digest.substring(0, 8)}';
+  return 'present=true len=${token.length}';
+}
+
+String _authPayloadDebugSummary(dynamic payload) {
+  if (payload == null) return 'null';
+  if (payload is Map) {
+    final keys = payload.keys.map((key) => key.toString()).toList()..sort();
+    return 'Map keys=$keys';
+  }
+  if (payload is List) return 'List len=${payload.length}';
+  return payload.runtimeType.toString();
 }
 
 String _connectivityLabelForAuth(dynamic result) {
@@ -1171,8 +1179,6 @@ class AuthService extends ChangeNotifier {
       final savedMaxDevices = prefs.getInt('max_devices');
       _maxDevices = savedMaxDevices;
 
-      _syncAllowTileConnect();
-
       // Восстанавливаем пользователя из сохраненного email.
       if (_token != null && email != null) {
         _user = User(
@@ -1185,6 +1191,12 @@ class AuthService extends ChangeNotifier {
           avatarUrl: prefs.getString('user_avatar_url'),
         );
       }
+
+      // isAuthenticated depends on the restored User, not only on the token.
+      // Syncing before _user was restored persisted allow_tile_connect=false
+      // on every cold start and made the Quick Tile open the app instead of
+      // reconnecting with the last verified config.
+      _syncAllowTileConnect();
 
       await _syncFirebaseAnalyticsUserId(_user?.id);
       notifyListeners();
@@ -1796,7 +1808,7 @@ class AuthService extends ChangeNotifier {
           });
           final body = response.data;
           debugPrint(
-              'Google OAuth: CALLBACK FAILED status=${response.statusCode} body=$body');
+              'Google OAuth: CALLBACK FAILED status=${response.statusCode} body=${_authPayloadDebugSummary(body)}');
           final detail = body is Map ? (body['detail'] ?? body['error']) : null;
           final detailStr = detail is String
               ? detail
@@ -1824,7 +1836,8 @@ class AuthService extends ChangeNotifier {
         final statusCode = dioError.response?.statusCode;
         debugPrint(
             'Google OAuth: CALLBACK FAILED DioException type=${dioError.type} status=$statusCode url=${dioError.requestOptions.uri}');
-        debugPrint('Google OAuth: response.data=${dioError.response?.data}');
+        debugPrint(
+            'Google OAuth: response=${_authPayloadDebugSummary(dioError.response?.data)}');
         if (statusCode == 502 || statusCode == 503) {
           final message = LocalizedMessages.errorByHttpCode(503);
           debugPrint('Google OAuth: DioException при callback на сервер');
@@ -2078,7 +2091,8 @@ class AuthService extends ChangeNotifier {
 
       debugPrint(
           'Email Auth: ответ сервера по отправке, статус: ${response.statusCode}');
-      debugPrint('Email Auth: тело ответа: ${response.data}');
+      debugPrint(
+          'Email Auth: ответ: ${_authPayloadDebugSummary(response.data)}');
       if (response.statusCode == 200) {
         // Нормализуем формат ответа: {"ok": true} или {"ok": true, ...}
         final responseData = _normalizeMap(response.data) ?? {};
@@ -2295,7 +2309,8 @@ class AuthService extends ChangeNotifier {
         if ((_authCodeRequestId ?? '').isNotEmpty)
           'request_id': _authCodeRequestId,
       };
-      debugPrint('Email Auth: payload запроса: $requestData');
+      debugPrint(
+          'Email Auth: payload запроса: email_present=${email.isNotEmpty} code_len=${normalizedCode.length} request_id_present=${_authCodeRequestId?.isNotEmpty == true}');
       debugPrint(
           'Email Auth: request_id в verify: ${requestData['request_id'] ?? "none"}');
       debugPrint(
@@ -2318,7 +2333,8 @@ class AuthService extends ChangeNotifier {
 
       debugPrint(
           'Email Auth: ответ сервера по проверке, статус: ${response.statusCode}');
-      debugPrint('Email Auth: тело ответа: ${response.data}');
+      debugPrint(
+          'Email Auth: ответ: ${_authPayloadDebugSummary(response.data)}');
       debugPrint('Email Auth: тип ответа: ${response.data.runtimeType}');
 
       if (response.statusCode == 200) {
@@ -2448,10 +2464,13 @@ class AuthService extends ChangeNotifier {
       debugPrint('Email Auth: ⚠ DioException при проверке кода');
       debugPrint('Email Auth: тип ошибки: ${e.type}');
       debugPrint('Email Auth: статус ответа: ${e.response?.statusCode}');
-      debugPrint('Email Auth: тело ответа: ${e.response?.data}');
-      debugPrint('Email Auth: заголовки ответа: ${e.response?.headers}');
+      debugPrint(
+          'Email Auth: ответ: ${_authPayloadDebugSummary(e.response?.data)}');
+      debugPrint(
+          'Email Auth: имена заголовков ответа: ${e.response?.headers.map.keys.toList()}');
       debugPrint('Email Auth: request URL: ${e.requestOptions.uri}');
-      debugPrint('Email Auth: request payload: ${e.requestOptions.data}');
+      debugPrint(
+          'Email Auth: request payload: ${_authPayloadDebugSummary(e.requestOptions.data)}');
 
       String errorMessage = LocalizedMessages.invalidCode;
 

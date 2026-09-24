@@ -36,6 +36,7 @@ import '../core/vpn_protocol_handler/vpn_protocol_handler.dart';
 import '../protocols/xray/xray_protocol.dart';
 import 'xray_connection_handler.dart';
 import '../simple_vpn/simple_vpn_options_cache.dart';
+import '../simple_vpn/simple_vpn_api.dart';
 // WireGuard протокол работает через базовый VPN интерфейс без полной криптографии
 // Для полной поддержки WireGuard требуется интеграция wireguard-android библиотеки
 // import '../protocols/wireguard/wireguard_protocol.dart';
@@ -579,8 +580,10 @@ class VpnService extends ChangeNotifier {
     final simpleServers = simpleVpnServersFromSnapshot(serversRaw);
     if (simpleServers.isEmpty) return;
     try {
+      final userId = await _cacheService.getString('user_id');
+      final cacheKey = simpleVpnOptionsCacheKeyForUser(userId);
       await _cacheService.setString(
-        simpleVpnOptionsCacheKey,
+        cacheKey,
         jsonEncode(
           buildSimpleVpnOptionsCachePayload(servers: simpleServers),
         ),

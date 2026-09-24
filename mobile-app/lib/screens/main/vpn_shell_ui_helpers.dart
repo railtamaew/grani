@@ -1,4 +1,5 @@
 import '../../core/vpn/vpn_connection_models.dart';
+import '../../simple_vpn/vpn_network_notice.dart';
 import '../../core/vpn_state_machine.dart';
 import '../../l10n/app_localizations.dart';
 import '../../services/vpn_service.dart';
@@ -7,6 +8,24 @@ import '../../services/vpn_service.dart';
 /// (один shell — [MainContentScreen], два варианта контента).
 class VpnShellUiHelpers {
   VpnShellUiHelpers._();
+
+  static String networkNoticeTitle(
+          VpnNetworkNotice notice, AppLocalizations l10n) =>
+      switch (notice) {
+        VpnNetworkNotice.noNetwork => l10n.vpnNoticeNoNetworkTitle,
+        VpnNetworkNotice.internetUnconfirmed => l10n.vpnNoticeInternetTitle,
+        VpnNetworkNotice.vpnUnconfirmed => l10n.vpnNoticeTunnelTitle,
+        VpnNetworkNotice.signIn => l10n.vpnNoticeSignInTitle,
+      };
+
+  static String networkNoticeBody(
+          VpnNetworkNotice notice, AppLocalizations l10n) =>
+      switch (notice) {
+        VpnNetworkNotice.noNetwork => l10n.vpnNoticeNoNetworkBody,
+        VpnNetworkNotice.internetUnconfirmed => l10n.vpnNoticeInternetBody,
+        VpnNetworkNotice.vpnUnconfirmed => l10n.vpnNoticeTunnelBody,
+        VpnNetworkNotice.signIn => l10n.vpnNoticeSignInBody,
+      };
 
   static String friendlyProgressMessage(String? raw, AppLocalizations l10n) {
     return _localizedProgressMessage(raw, l10n);
@@ -100,12 +119,10 @@ class VpnShellUiHelpers {
   static String? simpleConnectionBadge(String? raw, AppLocalizations l10n) {
     if (raw == null || raw.isEmpty) return null;
     final value = raw.toLowerCase();
-    // Cache state is an internal implementation detail, not a separate user
-    // connection mode. Do not expose "first" versus "fast" labels in UI.
-    if (value.contains('быстрое восстановление') ||
-        value.contains('первичная настройка')) {
-      return null;
+    if (value.contains('быстрое восстановление')) {
+      return l10n.vpnBadgeFastReconnect;
     }
+    if (value.contains('первичная настройка')) return l10n.vpnBadgeFirstSetup;
     if (!l10n.localeName.toLowerCase().startsWith('ru') &&
         _containsCyrillic(raw)) {
       return null;
@@ -118,16 +135,21 @@ class VpnShellUiHelpers {
   }
 
   static String? connectionFlowBadge(
-    VpnService vpnService,
-    AppLocalizations l10n,
-  ) {
+      VpnService vpnService, AppLocalizations l10n) {
     final uiState = vpnService.vpnUiSessionState;
     if (uiState != VpnUiSessionState.connecting &&
         uiState != VpnUiSessionState.reconnecting &&
         uiState != VpnUiSessionState.connectedWarm) {
       return null;
     }
-    return null;
+    switch (vpnService.connectionFlowType) {
+      case ConnectionFlowType.warmCacheReconnect:
+        return l10n.vpnBadgeFastReconnect;
+      case ConnectionFlowType.coldCreateConfig:
+        return l10n.vpnBadgeFirstSetup;
+      case ConnectionFlowType.unknown:
+        return null;
+    }
   }
 
   /// [waitTrafficHintWhenConnected] — для trial: пока нет трафика после connect, отдельный подзаголовок.
@@ -142,10 +164,8 @@ class VpnShellUiHelpers {
       return l10n.vpnWaitSecureTraffic;
     }
 
-    final base = friendlyProgressMessage(
-      vpnService.connectionProgress?.message,
-      l10n,
-    );
+    final base =
+        friendlyProgressMessage(vpnService.connectionProgress?.message, l10n);
     final startedAt = vpnService.connectionAttemptStartedAt;
     if (startedAt == null) return base;
 

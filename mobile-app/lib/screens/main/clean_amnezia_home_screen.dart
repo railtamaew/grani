@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -9,13 +10,16 @@ import 'package:share_plus/share_plus.dart';
 import '../../config/app_config.dart';
 import '../../simple_vpn/simple_vpn_api.dart';
 import '../../simple_vpn/simple_vpn_controller.dart';
+import '../../simple_vpn/server_latency_catalog.dart';
 import '../../services/auth_service.dart';
 import '../../services/native_vpn_service.dart';
+import '../../services/desktop_integration.dart';
 import '../../services/vpn_service.dart';
 import '../../theme.dart';
 import '../../utils/flag_emoji.dart';
 import '../../widgets/adaptive_text.dart';
 import '../../widgets/button_connection.dart';
+import '../../widgets/country_flag.dart';
 import '../../widgets/connection_block.dart';
 import '../../widgets/snackbar_utils.dart';
 import '../../widgets/ui_density.dart';
@@ -38,6 +42,8 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
     with WidgetsBindingObserver {
   late final SimpleVpnController _controller;
   Timer? _nativeUiSyncTimer;
+  StreamSubscription<List<ConnectivityResult>>? _latencyNetworkSubscription;
+  bool _wasPausedOrDetached = false;
   bool _quickTileActionInFlight = false;
   bool _subscriptionRedirectScheduled = false;
 
@@ -61,6 +67,14 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
       },
       onDeviceLimit: authService.setPendingDeviceLimit,
     );
+    _latencyNetworkSubscription = Connectivity().onConnectivityChanged.listen((
+      _,
+    ) {
+      if (mounted &&
+          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+        unawaited(_refreshLatencyAfterNetworkChange());
+      }
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_initializeController());
@@ -75,10 +89,34 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
     await _consumeQuickTileAction();
   }
 
+  Future<void> _refreshLatencyAfterNetworkChange() async {
+    await _controller.refreshServerLatencies();
+    // Android may announce Wi-Fi before routing is ready. Recheck once after
+    // that transition and after the short cache for unavailable readings.
+    await Future<void>.delayed(ServerLatencyCatalog.unavailableTtl);
+    if (!mounted ||
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed)
+      return;
+    // If a probe was already running on the old network, recheck after it ends.
+    // An unchanged network reuses the shared cache without opening new sockets.
+    await _controller.refreshServerLatencies();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    DesktopIntegration.bind(
+      _controller,
+      Localizations.localeOf(context).languageCode,
+    );
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _stopNativeUiSyncTimer();
+    _latencyNetworkSubscription?.cancel();
+    DesktopIntegration.unbind(_controller);
     _controller.dispose();
     super.dispose();
   }
@@ -86,17 +124,33 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshLatencyAfterNetworkChange());
+      // Opening and closing the Android notification shade only emits
+      // inactive -> resumed. The tunnel never left the foreground lifecycle,
+      // so reconciling it here can expose a transient native `local_up` state
+      // and make an already committed button jump back to "connecting".
+      if (!_wasPausedOrDetached) return;
+      _wasPausedOrDetached = false;
       unawaited(_restoreControllerAfterResume());
-    } else {
-      _stopNativeUiSyncTimer();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _wasPausedOrDetached = true;
+      // Windows has a live tray even while its window is hidden.
+      if (!DesktopIntegration.enabled) _stopNativeUiSyncTimer();
     }
   }
 
   Future<void> _restoreControllerAfterResume() async {
-    await _controller.restoreInitialNativeState(source: 'home_resume');
+    // Full restore is a cold-start operation and temporarily exposes the
+    // controller's busy/progress state. On resume (including notification
+    // shade close) reconcile silently so a working button stays visually
+    // stable while native remains the source of truth.
+    await _controller.syncNativeUiState(source: 'home_resume');
+    if (!mounted) return;
+    unawaited(_controller.refreshOptionsIfStale());
+    await _consumeQuickTileAction();
     if (!mounted) return;
     _startNativeUiSyncTimer();
-    await _consumeQuickTileAction();
   }
 
   void _startNativeUiSyncTimer() {
@@ -157,6 +211,9 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
 
   String _title(BuildContext context, ButtonConnectionState state) {
     final l10n = context.l10n;
+    final notice = _controller.networkNotice;
+    if (notice != null)
+      return VpnShellUiHelpers.networkNoticeTitle(notice, l10n);
     return switch (state) {
       ButtonConnectionState.connecting => l10n.homeConnecting,
       ButtonConnectionState.disconnecting => l10n.homeDisconnecting,
@@ -168,6 +225,9 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
 
   String _subtitle(BuildContext context, ButtonConnectionState state) {
     final l10n = context.l10n;
+    final notice = _controller.networkNotice;
+    if (notice != null)
+      return VpnShellUiHelpers.networkNoticeBody(notice, l10n);
     return switch (state) {
       ButtonConnectionState.on => l10n.homeProtectedSubtitle,
       ButtonConnectionState.connecting =>
@@ -191,7 +251,9 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
     BuildContext context,
     ButtonConnectionState state,
   ) {
-    if (state != ButtonConnectionState.connecting) return null;
+    if (state != ButtonConnectionState.connecting ||
+        _controller.networkNotice != null)
+      return null;
     return VpnShellUiHelpers.simpleConnectionBadge(
       _controller.connectionModeBadge,
       context.l10n,
@@ -260,43 +322,46 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
       _showLockedSelectorMessage();
       return;
     }
-    if (_controller.servers.isEmpty) {
-      await _controller.loadOptions();
-    }
+    unawaited(_controller.refreshOptionsIfStale());
+    unawaited(_controller.refreshServerLatencies());
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withOpacity(0.4),
-      builder: (context) {
-        final locale = Localizations.localeOf(context);
-        final servers = _controller.servers;
-        return _SelectorBottomSheet(
-          title: context.l10n.serversTitle,
-          child: servers.isEmpty
-              ? _EmptySelectorState(context.l10n.serversNotLoaded)
-              : ListView.separated(
-                  padding: EdgeInsets.zero,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: servers.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    final server = servers[index];
-                    return _ServerSheetRow(
-                      server: server,
-                      locale: locale,
-                      selected: server.id == _controller.selectedServer?.id,
-                      onTap: () {
-                        _controller.selectServer(server);
-                        Navigator.of(context).pop();
-                      },
-                    );
-                  },
-                ),
-        );
-      },
+      builder: (context) => AnimatedBuilder(
+        animation: _controller,
+        builder: (context, _) {
+          final locale = Localizations.localeOf(context);
+          final servers = _controller.servers;
+          return _SelectorBottomSheet(
+            title: context.l10n.serversTitle,
+            child: servers.isEmpty
+                ? _EmptySelectorState(context.l10n.serversNotLoaded)
+                : ListView.separated(
+                    padding: EdgeInsets.zero,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: servers.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (context, index) {
+                      final server = servers[index];
+                      return _ServerSheetRow(
+                        server: server,
+                        locale: locale,
+                        latencyMs: _controller.serverLatencyMs(server.id),
+                        selected: server.id == _controller.selectedServer?.id,
+                        onTap: () {
+                          _controller.selectServer(server);
+                          Navigator.of(context).pop();
+                        },
+                      );
+                    },
+                  ),
+          );
+        },
+      ),
     );
   }
 
@@ -375,7 +440,11 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
             safeBottom -
             GraniTheme.vpnCardBottomMargin * scaleY -
             estimatedButtonGroupHeight;
-        final titleBlockHeight = (flowBadge == null ? 88 : 118) * scaleY;
+        final titleBlockHeight =
+            (_controller.networkNotice != null
+                ? 112
+                : (flowBadge == null ? 88 : 118)) *
+            scaleY;
         final titleBlockTop = math.max(
           minTitleBlockTop,
           math.min(
@@ -541,7 +610,12 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
                                   : state == ButtonConnectionState.connecting
                                   ? context.l10n.btnVpnCancel
                                   : null,
-                              errorMessage: _controller.error,
+                              errorMessage: _controller.networkNotice == null
+                                  ? _controller.error
+                                  : VpnShellUiHelpers.networkNoticeBody(
+                                      _controller.networkNotice!,
+                                      context.l10n,
+                                    ),
                               progressPercent:
                                   _controller.connectionProgressPercent,
                               showCancelHint: false,
@@ -569,17 +643,10 @@ class _CleanAmneziaHomeScreenState extends State<CleanAmneziaHomeScreen>
                                   _SelectorChip(
                                     scaleX: scaleX,
                                     scaleY: scaleY,
-                                    icon: Text(
-                                      FlagEmoji.getFlagEmoji(
-                                        _controller
-                                                .selectedServer
-                                                ?.countryCode ??
-                                            _controller
-                                                .selectedServer
-                                                ?.country ??
-                                            '',
-                                      ),
-                                      style: TextStyle(fontSize: 14 * scaleX),
+                                    icon: CountryFlag(
+                                      country: _controller.selectedServer?.countryCode ??
+                                          _controller.selectedServer?.country ?? '',
+                                      size: 18 * scaleX,
                                     ),
                                     label:
                                         _controller.optionsLoading &&
@@ -947,9 +1014,11 @@ class _ServerSheetRow extends StatelessWidget {
     required this.locale,
     required this.selected,
     required this.onTap,
+    this.latencyMs,
   });
 
   final SimpleVpnServer server;
+  final double? latencyMs;
   final Locale locale;
   final bool selected;
   final VoidCallback onTap;
@@ -967,14 +1036,12 @@ class _ServerSheetRow extends StatelessWidget {
     final title = city.isNotEmpty ? city : countryName;
     final subtitle = city.isNotEmpty ? countryName : server.ipAddress;
     return _SelectorOptionRow(
-      leading: Text(
-        FlagEmoji.getFlagEmoji(
-          server.countryCode.isNotEmpty ? server.countryCode : server.country,
-        ),
-        style: const TextStyle(fontSize: 20),
+      leading: CountryFlag(
+        country: server.countryCode.isNotEmpty ? server.countryCode : server.country,
       ),
       title: title,
-      subtitle: subtitle,
+      subtitle:
+          '$subtitle · ${latencyMs == null ? '—' : '${latencyMs!.round()} ${locale.languageCode == 'ru' ? 'мс' : 'ms'}'}',
       selected: selected,
       onTap: onTap,
     );

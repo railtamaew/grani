@@ -55,16 +55,15 @@ class NetworkPolicyEngine {
 
     switch (plane) {
       case ControlPlanePlane.logging:
+        if (transaction || s == VpnConnectionState.disconnecting) {
+          return PolicyDecision.deny('logging deferred during VPN transition');
+        }
         if (connectivityDiagnosticsFlush) {
           return const PolicyDecision(
             allowed: true,
             route: NetworkRouteHint.direct,
             ownership: NetworkOwnership.sharedBudget,
           );
-        }
-        if (transaction) {
-          return PolicyDecision.deny(
-              'logging blocked during CONNECT transaction');
         }
         if (s != VpnConnectionState.connected) {
           return PolicyDecision.deny('logging only after COMMIT (connected)');

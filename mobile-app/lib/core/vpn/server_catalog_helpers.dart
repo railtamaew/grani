@@ -41,9 +41,7 @@ extension VpnServiceServerCatalogHelpers on VpnService {
         _notifyListenersFromHelper();
         return;
       }
-      final tokenPreview = token.length > 10 ? token.substring(0, 10) : token;
-      _log(
-          'VpnService.refreshServers: Токен получен (длина: ${token.length}), первые 10 символов: $tokenPreview...');
+      _log('VpnService.refreshServers: Токен получен (длина: ${token.length})');
       _log('VpnService.refreshServers: API Base URL: ${AppConfig.apiBaseUrl}');
       _log(
           'VpnService.refreshServers: Полный URL: ${AppConfig.apiBaseUrl}/vpn/servers');
@@ -61,7 +59,8 @@ extension VpnServiceServerCatalogHelpers on VpnService {
       if (isDebug) {
         _log(
             'VpnService.refreshServers: Тип данных: ${response.data.runtimeType}');
-        _log('VpnService.refreshServers: Полный ответ API: ${response.data}');
+        _log(
+            'VpnService.refreshServers: Ответ API (redacted): ${VpnLogRedaction.redactForLog(response.data)}');
       }
 
       // Дополнительная проверка: если ответ не список, логируем детали
@@ -282,7 +281,8 @@ extension VpnServiceServerCatalogHelpers on VpnService {
         _log('VpnService.refreshServers: statusCode=${response.statusCode}');
         _log(
             'VpnService.refreshServers: Тип данных: ${response.data.runtimeType}');
-        _log('VpnService.refreshServers: Данные: ${response.data}');
+        _log(
+            'VpnService.refreshServers: Данные (redacted): ${VpnLogRedaction.redactForLog(response.data)}');
 
         // Если статус 200, но данные не список - это проблема API
         if (response.statusCode == 200) {
@@ -306,11 +306,11 @@ extension VpnServiceServerCatalogHelpers on VpnService {
         _log(
             'VpnService.refreshServers:   - Response status: ${e.response?.statusCode}');
         _log(
-            'VpnService.refreshServers:   - Response data: ${e.response?.data}');
+            'VpnService.refreshServers:   - Response data (redacted): ${VpnLogRedaction.redactForLog(e.response?.data)}');
         _log(
             'VpnService.refreshServers:   - Request path: ${e.requestOptions.path}');
         _log(
-            'VpnService.refreshServers:   - Request headers: ${e.requestOptions.headers}');
+            'VpnService.refreshServers:   - Request header names: ${e.requestOptions.headers.keys.toList()}');
         if (e.response?.statusCode == 401) {
           _log(
               'VpnService.refreshServers: ⚠️ Ошибка авторизации (401) - возможно, токен невалиден или истек');

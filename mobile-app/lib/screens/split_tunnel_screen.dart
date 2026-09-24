@@ -10,7 +10,14 @@ import '../widgets/info_banner.dart';
 import '../l10n/app_localizations.dart';
 import '../l10n/l10n.dart';
 
-enum _SplitTunnelPresetId { banks, gov, maps, messengers, video, games }
+enum _SplitTunnelPresetId {
+  banks,
+  gov,
+  maps,
+  messengers,
+  video,
+  games,
+}
 
 String _splitTunnelPresetLabel(AppLocalizations l10n, _SplitTunnelPresetId id) {
   switch (id) {
@@ -67,7 +74,11 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
     _PresetGroup(
       id: _SplitTunnelPresetId.gov,
       icon: Icons.badge_outlined,
-      packages: ['ru.gov.services.app', 'ru.gosuslugi', 'ru.mos.pgu'],
+      packages: [
+        'ru.gov.services.app',
+        'ru.gosuslugi',
+        'ru.mos.pgu',
+      ],
     ),
     _PresetGroup(
       id: _SplitTunnelPresetId.maps,
@@ -171,7 +182,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
   }
 
   Future<void> _notifyReconnectHintIfNeeded({String? changeMessage}) async {
-    final connectedNow = await NativeVpnService.getNativeConnectionStatus();
+    final connectedNow = await NativeVpnService.getAmneziaWgStatus();
     if (!mounted) return;
     final l10n = context.l10n;
 
@@ -285,8 +296,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
       await NativeVpnService.setSplitTunnelDirectDomains(newList);
     }
     await _notifyReconnectHintIfNeeded(
-      changeMessage: context.l10n.splitTunnelDomainAdded,
-    );
+        changeMessage: context.l10n.splitTunnelDomainAdded);
   }
 
   String _normalizeDirectDomain(String raw) {
@@ -335,17 +345,14 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
       await NativeVpnService.setSplitTunnelDirectDomains(newList);
     }
     await _notifyReconnectHintIfNeeded(
-      changeMessage: context.l10n.splitTunnelDomainRemoved,
-    );
+        changeMessage: context.l10n.splitTunnelDomainRemoved);
   }
 
   Future<void> _addPreset(_PresetGroup group) async {
     final l10n = context.l10n;
     final label = _splitTunnelPresetLabel(l10n, group.id);
-    final installed = _apps
-        .map((a) => a['package'])
-        .whereType<String>()
-        .toSet();
+    final installed =
+        _apps.map((a) => a['package']).whereType<String>().toSet();
     final current = Set<String>.from(_selectedPackages);
     final matched = group.packages.where((p) => installed.contains(p)).toSet();
     if (matched.isEmpty) {
@@ -384,10 +391,8 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
   }
 
   bool _isPresetFullySelected(_PresetGroup group) {
-    final installed = _apps
-        .map((a) => a['package'])
-        .whereType<String>()
-        .toSet();
+    final installed =
+        _apps.map((a) => a['package']).whereType<String>().toSet();
     final matched = group.packages.where(installed.contains).toList();
     if (matched.isEmpty) return false;
     return matched.every(_selectedPackages.contains);
@@ -412,7 +417,9 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
             ),
           ),
         ),
-        body: Center(child: Text(l10n.splitTunnelAndroidOnly)),
+        body: Center(
+          child: Text(l10n.splitTunnelAndroidOnly),
+        ),
       );
     }
 
@@ -493,28 +500,26 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
                         Expanded(
                           child: GraniSplitModeButton(
                             label: l10n.splitTunnelModeExclude,
-                            selected:
-                                _mode ==
+                            selected: _mode ==
                                 NativeVpnService.splitTunnelModeExclude,
                             icon: Icons.alt_route,
                             onTap:
                                 _mode == NativeVpnService.splitTunnelModeExclude
-                                ? null
-                                : _toggleMode,
+                                    ? null
+                                    : _toggleMode,
                           ),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
                           child: GraniSplitModeButton(
                             label: l10n.splitTunnelModeInclude,
-                            selected:
-                                _mode ==
+                            selected: _mode ==
                                 NativeVpnService.splitTunnelModeInclude,
                             icon: Icons.shield_outlined,
                             onTap:
                                 _mode == NativeVpnService.splitTunnelModeInclude
-                                ? null
-                                : _toggleMode,
+                                    ? null
+                                    : _toggleMode,
                           ),
                         ),
                       ],
@@ -532,10 +537,8 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
                         physics: const BouncingScrollPhysics(),
                         itemBuilder: (context, i) {
                           final group = _presetGroups[i];
-                          final presetLabel = _splitTunnelPresetLabel(
-                            context.l10n,
-                            group.id,
-                          );
+                          final presetLabel =
+                              _splitTunnelPresetLabel(context.l10n, group.id);
                           return _PresetChip(
                             group: group,
                             localizedLabel: presetLabel,
@@ -561,9 +564,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
                   if (_activeTabIndex == 0)
                     Padding(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 0,
-                      ),
+                          horizontal: 16, vertical: 0),
                       child: Container(
                         decoration: GraniTheme.graniSurfaceDecoration(
                           radius: 18,
@@ -575,9 +576,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
                             prefixIcon: const Icon(Icons.search, size: 22),
                             border: InputBorder.none,
                             contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
+                                horizontal: 16, vertical: 12),
                           ),
                           onChanged: (v) => setState(() => _searchQuery = v),
                         ),
@@ -596,10 +595,8 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
                           controller: _processController,
                           decoration: InputDecoration(
                             hintText: l10n.splitTunnelWindowsProcessHint,
-                            prefixIcon: const Icon(
-                              Icons.desktop_windows,
-                              size: 22,
-                            ),
+                            prefixIcon:
+                                const Icon(Icons.desktop_windows, size: 22),
                             suffixIcon: IconButton(
                               tooltip: l10n.splitTunnelWindowsProcessAdd,
                               icon: const Icon(Icons.add),
@@ -608,9 +605,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
                             ),
                             border: InputBorder.none,
                             contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
+                                horizontal: 16, vertical: 12),
                           ),
                           onSubmitted: _addWindowsProcess,
                         ),
@@ -621,42 +616,39 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
                   Expanded(
                     child: _activeTabIndex == 0
                         ? _isLoading
-                              ? const Center(child: CircularProgressIndicator())
-                              : _filteredApps.isEmpty
-                              ? Center(
-                                  child: Text(
-                                    _searchQuery.isEmpty
-                                        ? l10n.splitTunnelNoApps
-                                        : l10n.splitTunnelNothingFound,
-                                    style: TextStyle(
-                                      color: GraniTheme.secondaryText,
+                            ? const Center(child: CircularProgressIndicator())
+                            : _filteredApps.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      _searchQuery.isEmpty
+                                          ? l10n.splitTunnelNoApps
+                                          : l10n.splitTunnelNothingFound,
+                                      style: TextStyle(
+                                          color: GraniTheme.secondaryText),
                                     ),
-                                  ),
-                                )
-                              : ListView.builder(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 8,
-                                  ),
-                                  itemCount: _filteredApps.length,
-                                  itemBuilder: (context, i) {
-                                    final app = _filteredApps[i];
-                                    final pkg = app['package'] ?? '';
-                                    final label = app['label'] ?? pkg;
-                                    final selected = _selectedPackages.contains(
-                                      pkg,
-                                    );
-                                    return Padding(
-                                      padding: const EdgeInsets.only(bottom: 8),
-                                      child: GraniSplitAppRow(
-                                        label: label,
-                                        packageName: pkg,
-                                        selected: selected,
-                                        onTap: () => _toggleApp(pkg),
-                                      ),
-                                    );
-                                  },
-                                )
+                                  )
+                                : ListView.builder(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 16, vertical: 8),
+                                    itemCount: _filteredApps.length,
+                                    itemBuilder: (context, i) {
+                                      final app = _filteredApps[i];
+                                      final pkg = app['package'] ?? '';
+                                      final label = app['label'] ?? pkg;
+                                      final selected =
+                                          _selectedPackages.contains(pkg);
+                                      return Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 8),
+                                        child: GraniSplitAppRow(
+                                          label: label,
+                                          packageName: pkg,
+                                          selected: selected,
+                                          onTap: () => _toggleApp(pkg),
+                                        ),
+                                      );
+                                    },
+                                  )
                         : _DomainSplitView(
                             domains: _directDomains,
                             controller: _domainController,
@@ -724,10 +716,8 @@ class _DomainSplitView extends StatelessWidget {
               Expanded(
                 child: Text(
                   l10n.splitTunnelDomainsHint,
-                  style: TextStyle(
-                    color: GraniTheme.secondaryText,
-                    fontSize: 13,
-                  ),
+                  style:
+                      TextStyle(color: GraniTheme.secondaryText, fontSize: 13),
                 ),
               ),
             ],
@@ -748,9 +738,7 @@ class _DomainSplitView extends StatelessWidget {
                     hintText: l10n.splitTunnelSearchDomains,
                     border: InputBorder.none,
                     contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
+                        horizontal: 16, vertical: 12),
                   ),
                   onSubmitted: (v) {
                     if (v.trim().isNotEmpty) onAddDomain(v);
@@ -873,7 +861,11 @@ class _PresetChip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(group.icon, size: 16, color: GraniTheme.primaryText),
+              Icon(
+                group.icon,
+                size: 16,
+                color: GraniTheme.primaryText,
+              ),
               const SizedBox(width: 6),
               Text(
                 '$localizedLabel (${group.packages.length})',
