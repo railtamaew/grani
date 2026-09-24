@@ -11,7 +11,8 @@ GRANI 1.0.44 — Windows 10/11, x64
 Крестик скрывает окно в трей; VPN продолжает работать. Ctrl+Пробел в окне GRANI
 подключает или отключает VPN. Для полного выхода используйте меню значка.
 
-При обновлении сначала завершите старую версию через меню трея.
+При обновлении сначала отключите VPN в старой версии, дождитесь отключения
+и завершите старую версию через меню трея.
 Распакуйте новую версию в отдельную папку и запустите GRANI.exe.
 Аккаунт и настройки хранятся отдельно от папки программы.
 Не переносите один EXE: папки data/ и runtime/, а также DLL необходимы.
@@ -25,7 +26,8 @@ Sign in to your existing account, select a country and connect.
 The GRANI tray icon shows VPN status; right-click it for quick controls.
 Closing the window keeps VPN running. Use “Disconnect VPN and quit” to exit.
 Ctrl+Space toggles VPN while the GRANI window is focused.
-Quit the previous version before upgrading. Account data is stored separately.
+Disconnect VPN in the previous version, wait for it to stop, then quit before
+upgrading. Account data is stored separately.
 Keep data/, runtime/ and all DLL files with GRANI.exe.
 
 https://granilink.com
