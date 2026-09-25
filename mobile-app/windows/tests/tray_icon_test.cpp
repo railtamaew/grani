@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <gdiplus.h>
 #include <cassert>
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -45,7 +46,10 @@ int main() {
       // Regression: neither a mostly transparent fragment nor an opaque square.
       assert(visible > size * size / 5);
       assert(visible < size * size * 4 / 5);
-      assert((pixels.front() >> 24) == 0 && (pixels.back() >> 24) == 0);
+      // GDI+ can leave a tiny antialias tail (alpha 8/255 at 16 px).
+      // Reject a visible square background while allowing that edge coverage.
+      assert((pixels.front() >> 24) <= 16 && (pixels.back() >> 24) <= 16);
+      assert((pixels[size - 1] >> 24) <= 16 && (pixels[size * (size - 1)] >> 24) <= 16);
       assert(accent > 0);
       // Composite the actual HICON pixels on light and dark taskbar backgrounds.
       for (int theme = 0; theme < 2; ++theme) {
@@ -60,7 +64,8 @@ int main() {
           uint32_t output = 0xFF000000;
           for (int shift = 0; shift < 24; shift += 8) {
             const auto component = (pixel >> shift) & 255;
-            const auto value = (component * alpha + base * (255 - alpha)) / 255;
+            // HICON color pixels are already premultiplied by alpha.
+            const auto value = std::min(255u, component + base * (255 - alpha) / 255);
             output |= value << shift;
           }
           preview[(row * 100 + theme * 50 + (50 - size) / 2 + y) * width +
