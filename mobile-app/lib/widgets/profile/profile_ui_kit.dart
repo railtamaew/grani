@@ -9,7 +9,7 @@ bool get isWindowsProfile =>
 // Windows menus need readable wrapped lines, rather than the mobile artwork's
 // tight 0.9 line height. Keep system text scaling and Android styles intact.
 TextStyle get profileBodyStyle => isWindowsProfile
-    ? GraniTheme.bodyMedium.copyWith(height: 1.3, fontSize: 14)
+    ? GraniTheme.bodyMedium.copyWith(height: 1.3, fontSize: 13.5)
     : GraniTheme.bodyMedium;
 
 /// Единый заголовок секции профиля (иконка + title).
@@ -151,7 +151,7 @@ class GraniSectionRow extends StatelessWidget {
     final defaultLabelWidget = Text(
       label ?? '',
       style: profileBodyStyle.copyWith(
-        fontSize: 14.5,
+        fontSize: isWindowsProfile ? 13.5 : 14.5,
         fontWeight: FontWeight.w600,
         letterSpacing: 0,
         color: GraniTheme.primaryText,
@@ -164,7 +164,7 @@ class GraniSectionRow extends StatelessWidget {
       style: profileBodyStyle.copyWith(
         color: GraniTheme.primaryText,
         fontWeight: FontWeight.w600,
-        fontSize: 14.5,
+        fontSize: isWindowsProfile ? 13.5 : 14.5,
         letterSpacing: 0,
       ),
       maxLines: isWindowsProfile ? null : 1,

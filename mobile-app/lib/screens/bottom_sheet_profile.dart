@@ -408,7 +408,7 @@ class _ProfileDrawerContent extends StatelessWidget {
         Text(
           context.l10n.profileTitle,
           style: profileBodyStyle.copyWith(
-            fontSize: isWindowsProfile ? 18 : 19,
+            fontSize: isWindowsProfile ? 17 : 19,
             fontWeight: FontWeight.w800,
             color: GraniTheme.primaryText,
           ),
@@ -464,7 +464,7 @@ class _ProfileDrawerContent extends StatelessWidget {
                 Text(
                   email,
                   style: profileBodyStyle.copyWith(
-                    fontSize: 14,
+                    fontSize: isWindowsProfile ? 13.5 : 14,
                     fontWeight: FontWeight.w700,
                     color: GraniTheme.primaryText,
                   ),
@@ -535,7 +535,7 @@ class _ProfileDrawerContent extends StatelessWidget {
             Text(
               text,
               style: profileBodyStyle.copyWith(
-                fontSize: 15,
+                fontSize: isWindowsProfile ? 13.5 : 15,
                 fontWeight: FontWeight.w700,
                 color: textColor,
               ),
@@ -567,7 +567,7 @@ class _ProfileDrawerContent extends StatelessWidget {
           Text(
             text,
             style: profileBodyStyle.copyWith(
-              fontSize: 15,
+              fontSize: isWindowsProfile ? 13.5 : 15,
               fontWeight: FontWeight.w700,
               color: textColor,
             ),
@@ -679,7 +679,7 @@ class _ProfileDrawerContent extends StatelessWidget {
                         l10n.profileLogoutButton,
                         style: profileBodyStyle.copyWith(
                           color: GraniTheme.destructiveRed,
-                          fontSize: 15,
+                          fontSize: isWindowsProfile ? 13.5 : 15,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0,
                         ),
@@ -953,7 +953,7 @@ class _SubscriptionCard extends StatelessWidget {
     bool valueBold = false,
     bool small = false,
   }) {
-    final fontSize = isWindowsProfile ? 14.0 : (small ? 14.0 : 16.0);
+    final fontSize = isWindowsProfile ? 13.5 : (small ? 14.0 : 16.0);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -1218,7 +1218,7 @@ class _AccountCardState extends State<_AccountCard> {
                               style: profileBodyStyle.copyWith(
                                 color: GraniTheme.primaryText,
                                 fontWeight: FontWeight.w700,
-                                fontSize: 14,
+                                fontSize: isWindowsProfile ? 13.5 : 14,
                               ),
                               children: [
                                 TextSpan(
@@ -1278,7 +1278,7 @@ class _SupportCard extends StatelessWidget {
                   TextSpan(
                     style: profileBodyStyle.copyWith(
                       color: GraniTheme.primaryText,
-                      fontSize: 14,
+                      fontSize: isWindowsProfile ? 13.5 : 14,
                       fontWeight: FontWeight.w500,
                     ),
                     children: [
@@ -1288,7 +1288,7 @@ class _SupportCard extends StatelessWidget {
                         style: profileBodyStyle.copyWith(
                           color: GraniTheme.primaryText,
                           fontWeight: FontWeight.w700,
-                          fontSize: 14,
+                          fontSize: isWindowsProfile ? 13.5 : 14,
                         ),
                       ),
                     ],
@@ -1306,7 +1306,7 @@ class _SupportCard extends StatelessWidget {
                     Text(
                       context.l10n.profileSupportChat,
                       style: profileBodyStyle.copyWith(
-                        fontSize: 14.5,
+                        fontSize: isWindowsProfile ? 13.5 : 14.5,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0,
                         color: GraniTheme.primaryText,
@@ -1345,7 +1345,7 @@ class _SupportCard extends StatelessWidget {
                     Text(
                       context.l10n.profileDiagnostics,
                       style: profileBodyStyle.copyWith(
-                        fontSize: 14.5,
+                        fontSize: isWindowsProfile ? 13.5 : 14.5,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0,
                         color: GraniTheme.primaryText,
