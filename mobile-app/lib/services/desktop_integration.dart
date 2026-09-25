@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../simple_vpn/simple_vpn_controller.dart';
 import 'native_vpn_service.dart';
 
@@ -19,6 +20,9 @@ class DesktopIntegration {
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'toggle') {
         await toggle();
+      } else if (call.method == 'website') {
+        await launchUrl(Uri.parse('https://granilink.com'),
+            mode: LaunchMode.externalApplication);
       } else if (call.method == 'quit') {
         await _quit();
       }

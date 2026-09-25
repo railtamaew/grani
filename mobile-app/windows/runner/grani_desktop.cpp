@@ -1,5 +1,7 @@
 #include "grani_desktop.h"
 #include "resource.h"
+#include "tray_icon.h"
+#include <gdiplus.h>
 #include <flutter/encodable_value.h>
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
@@ -10,7 +12,7 @@
 namespace {
 using Value = flutter::EncodableValue;
 constexpr UINT kTrayMessage = WM_APP + 8;
-constexpr UINT kShow = 2101, kToggle = 2102, kQuit = 2103;
+constexpr UINT kShow = 2101, kToggle = 2102, kQuit = 2103, kWebsite = 2104;
 // Stable identity allows Windows to remember the user's visibility preference.
 const GUID kTrayGuid = {0x6433219a, 0xb147, 0x471d,
                        {0x91, 0x6f, 0x46, 0x72, 0x61, 0x6e, 0x69, 0x44}};
@@ -21,6 +23,7 @@ bool tray_available = false, quitting = false, close_hint_shown = false;
 bool can_toggle = false, connected = false, busy = false, russian = true;
 std::wstring status = L"GRANI", location;
 HICON tray_icon = nullptr;
+ULONG_PTR gdiplus_token = 0;
 
 std::wstring Wide(const std::string& value) {
   if (value.empty()) return {};
@@ -43,47 +46,16 @@ NOTIFYICONDATAW TrayData() {
 }
 
 HICON MakeStatusIcon() {
-  // Use the existing GRANI artwork and add a state dot, visible at 100–200% DPI.
-  const int size = GetSystemMetrics(SM_CXSMICON);
-  HICON base = static_cast<HICON>(LoadImageW(GetModuleHandle(nullptr),
-      MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON, size, size, LR_DEFAULTCOLOR));
-  HDC screen = GetDC(nullptr), dc = CreateCompatibleDC(screen);
-  HBITMAP color = CreateCompatibleBitmap(screen, size, size);
-  HBITMAP mask = CreateBitmap(size, size, 1, 1, nullptr);
-  auto old = SelectObject(dc, color);
-  RECT rect{0, 0, size, size};
-  FillRect(dc, &rect, GetSysColorBrush(COLOR_WINDOW));
-  DrawIconEx(dc, 0, 0, base, size, size, 0, nullptr, DI_NORMAL);
-  const COLORREF state_color = busy ? RGB(255, 153, 30)
-      : connected ? RGB(30, 167, 101) : RGB(130, 143, 157);
-  HBRUSH dot = CreateSolidBrush(state_color);
-  auto old_brush = SelectObject(dc, dot);
-  auto old_pen = SelectObject(dc, GetStockObject(WHITE_PEN));
-  const int diameter = (size * 5) / 10;
-  Ellipse(dc, size - diameter, size - diameter, size, size);
-  SelectObject(dc, old_pen);
-  SelectObject(dc, old_brush);
-  DeleteObject(dot);
-  SelectObject(dc, old);
-  // Opaque small icon: avoids black/transparent state dots on either taskbar.
-  HDC mask_dc = CreateCompatibleDC(screen);
-  auto old_mask = SelectObject(mask_dc, mask);
-  PatBlt(mask_dc, 0, 0, size, size, BLACKNESS);
-  SelectObject(mask_dc, old_mask);
-  ICONINFO info{};
-  info.fIcon = TRUE;
-  info.hbmColor = color;
-  info.hbmMask = mask;
-  HICON icon = CreateIconIndirect(&info);
-  DeleteObject(color); DeleteObject(mask);
-  DeleteDC(mask_dc); DeleteDC(dc); ReleaseDC(nullptr, screen);
-  if (base) DestroyIcon(base);
-  return icon;
+  const UINT dpi = app_window ? GetDpiForWindow(app_window) : GetDpiForSystem();
+  const int size = GetSystemMetricsForDpi(SM_CXSMICON, dpi);
+  return CreateGraniTrayIcon(size, connected, busy);
 }
 
 void UpdateTray(bool add = false) {
-  if (tray_icon) DestroyIcon(tray_icon);
-  tray_icon = MakeStatusIcon();
+  HICON next = MakeStatusIcon();
+  if (!next) return;  // Keep the existing, valid icon on allocation failure.
+  HICON previous = tray_icon;
+  tray_icon = next;
   auto data = TrayData();
   data.uFlags |= NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
   data.uCallbackMessage = kTrayMessage;
@@ -92,6 +64,7 @@ void UpdateTray(bool add = false) {
       (location.empty() ? L"" : L"\n" + location);
   wcsncpy_s(data.szTip, tip.c_str(), _TRUNCATE);
   tray_available = Shell_NotifyIconW(add ? NIM_ADD : NIM_MODIFY, &data) != FALSE;
+  if (previous) DestroyIcon(previous);
   if (!tray_available && !add) {
     UpdateTray(true);
     return;
@@ -123,6 +96,8 @@ void ShowMenu() {
                   : (russian ? L"Подключить VPN" : L"Connect VPN");
   AppendMenuW(menu, MF_STRING | ((!can_toggle || busy) ? MF_DISABLED : 0),
               kToggle, toggle_label);
+  AppendMenuW(menu, MF_STRING, kWebsite,
+      russian ? L"Посетить сайт GRANI" : L"Visit GRANI website");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, kQuit,
       russian ? L"Отключить VPN и выйти" : L"Disconnect VPN and quit");
@@ -133,7 +108,9 @@ void ShowMenu() {
       cursor.x, cursor.y, 0, app_window, nullptr);
   DestroyMenu(menu);
   PostMessageW(app_window, WM_NULL, 0, 0);
+  auto data = TrayData(); Shell_NotifyIconW(NIM_SETFOCUS, &data);
   if (command == kShow) ShowApp();
+  if (command == kWebsite) RequestAction("website");
   if (command == kToggle && can_toggle && !busy) RequestAction("toggle");
   if (command == kQuit && !quitting) RequestAction("quit");
 }
@@ -154,6 +131,8 @@ bool ReadBool(const flutter::EncodableMap& map, const char* key) {
 
 void RegisterGraniDesktop(flutter::BinaryMessenger* messenger, HWND window) {
   app_window = window;
+  Gdiplus::GdiplusStartupInput graphics_startup;
+  Gdiplus::GdiplusStartup(&gdiplus_token, &graphics_startup, nullptr);
   russian = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_RUSSIAN;
   status = russian ? L"Запуск…" : L"Starting…";
   taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
@@ -194,6 +173,10 @@ std::optional<LRESULT> HandleGraniDesktopMessage(HWND, UINT message,
     UpdateTray(true);
     return 0;
   }
+  if (message == WM_DPICHANGED || message == WM_SETTINGCHANGE) {
+    UpdateTray();
+    // The window and Flutter must also receive the DPI/settings change.
+  }
   if (message == kTrayMessage) {
     const auto event = LOWORD(lparam);
     if (event == NIN_SELECT || event == NIN_KEYSELECT || event == WM_LBUTTONDBLCLK)
@@ -230,4 +213,5 @@ void ShutdownGraniDesktop() {
   }
   if (tray_icon) { DestroyIcon(tray_icon); tray_icon = nullptr; }
   channel.reset(); app_window = nullptr;
+  if (gdiplus_token) { Gdiplus::GdiplusShutdown(gdiplus_token); gdiplus_token = 0; }
 }

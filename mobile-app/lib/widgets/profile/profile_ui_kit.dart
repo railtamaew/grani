@@ -1,6 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../theme.dart';
+
+bool get isWindowsProfile =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+
+// Windows menus need readable wrapped lines, rather than the mobile artwork's
+// tight 0.9 line height. Keep system text scaling and Android styles intact.
+TextStyle get profileBodyStyle => isWindowsProfile
+    ? GraniTheme.bodyMedium.copyWith(height: 1.3, fontSize: 14)
+    : GraniTheme.bodyMedium;
 
 /// Единый заголовок секции профиля (иконка + title).
 class GraniSectionHeader extends StatelessWidget {
@@ -28,9 +38,9 @@ class GraniSectionHeader extends StatelessWidget {
         const SizedBox(width: 10),
         Text(
           title,
-          style: GraniTheme.bodyMedium.copyWith(
+          style: profileBodyStyle.copyWith(
             fontWeight: FontWeight.w700,
-            fontSize: 16,
+            fontSize: isWindowsProfile ? 14 : 16,
             color: GraniTheme.primaryText,
           ),
         ),
@@ -58,7 +68,11 @@ class GraniSectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final content = Padding(
-      padding: padding,
+      padding: isWindowsProfile &&
+              padding ==
+                  const EdgeInsets.symmetric(horizontal: 15, vertical: 13)
+          ? const EdgeInsets.symmetric(horizontal: 12, vertical: 4)
+          : padding,
       child: child,
     );
 
@@ -136,31 +150,31 @@ class GraniSectionRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final defaultLabelWidget = Text(
       label ?? '',
-      style: GraniTheme.bodyMedium.copyWith(
+      style: profileBodyStyle.copyWith(
         fontSize: 14.5,
         fontWeight: FontWeight.w600,
         letterSpacing: 0,
         color: GraniTheme.primaryText,
       ),
-      overflow: TextOverflow.ellipsis,
+      overflow: isWindowsProfile ? TextOverflow.visible : TextOverflow.ellipsis,
     );
 
     final defaultValueWidget = Text(
       value ?? '—',
-      style: GraniTheme.bodyMedium.copyWith(
+      style: profileBodyStyle.copyWith(
         color: GraniTheme.primaryText,
         fontWeight: FontWeight.w600,
         fontSize: 14.5,
         letterSpacing: 0,
       ),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
+      maxLines: isWindowsProfile ? null : 1,
+      overflow: isWindowsProfile ? TextOverflow.visible : TextOverflow.ellipsis,
     );
 
     final row = Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 14,
-        vertical: 11,
+      padding: EdgeInsets.symmetric(
+        horizontal: isWindowsProfile ? 0 : 14,
+        vertical: isWindowsProfile ? 10 : 11,
       ),
       child: Row(
         children: [
@@ -186,9 +200,21 @@ class GraniSectionRow extends StatelessWidget {
           ),
           SizedBox(width: spacingAfterIcon),
           Expanded(
-            child: labelWidget ?? defaultLabelWidget,
+            child: isWindowsProfile
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      labelWidget ?? defaultLabelWidget,
+                      if (valueWidget != null || value != null) ...[
+                        const SizedBox(height: 3),
+                        valueWidget ?? defaultValueWidget,
+                      ],
+                    ],
+                  )
+                : labelWidget ?? defaultLabelWidget,
           ),
-          if (valueWidget != null || value != null) ...[
+          if (!isWindowsProfile && (valueWidget != null || value != null)) ...[
             const SizedBox(width: 8),
             valueWidget ?? defaultValueWidget,
           ],

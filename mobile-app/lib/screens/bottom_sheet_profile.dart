@@ -276,7 +276,8 @@ class _ProfileDrawerContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     const ratio = _kDrawerWidth / _kScreenWidth;
-    final drawerWidth = screenWidth * ratio;
+    final drawerWidth =
+        isWindowsProfile ? screenWidth - 12 : screenWidth * ratio;
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -324,7 +325,8 @@ class _ProfileDrawerContent extends StatelessWidget {
                   final email = auth.user?.email ?? '—';
 
                   return SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: EdgeInsets.symmetric(
+                        horizontal: isWindowsProfile ? 12 : 16),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -362,8 +364,8 @@ class _ProfileDrawerContent extends StatelessWidget {
     final initial =
         email.isNotEmpty && email != '—' ? email[0].toUpperCase() : 'G';
     return Container(
-      width: 66,
-      height: 66,
+      width: isWindowsProfile ? 42 : 66,
+      height: isWindowsProfile ? 42 : 66,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: const LinearGradient(
@@ -377,8 +379,8 @@ class _ProfileDrawerContent extends StatelessWidget {
       alignment: Alignment.center,
       child: Text(
         initial,
-        style: GraniTheme.bodyMedium.copyWith(
-          fontSize: 28,
+        style: profileBodyStyle.copyWith(
+          fontSize: isWindowsProfile ? 20 : 28,
           fontWeight: FontWeight.w700,
           color: GraniTheme.primaryText,
         ),
@@ -405,8 +407,8 @@ class _ProfileDrawerContent extends StatelessWidget {
         const Spacer(),
         Text(
           context.l10n.profileTitle,
-          style: GraniTheme.bodyMedium.copyWith(
-            fontSize: 19,
+          style: profileBodyStyle.copyWith(
+            fontSize: isWindowsProfile ? 18 : 19,
             fontWeight: FontWeight.w800,
             color: GraniTheme.primaryText,
           ),
@@ -446,12 +448,14 @@ class _ProfileDrawerContent extends StatelessWidget {
 
     return GraniSectionCard(
       emphasized: true,
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 15),
+      padding: isWindowsProfile
+          ? const EdgeInsets.all(12)
+          : const EdgeInsets.fromLTRB(16, 16, 16, 15),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildAvatar(email),
-          const SizedBox(width: 18),
+          SizedBox(width: isWindowsProfile ? 12 : 18),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -459,13 +463,15 @@ class _ProfileDrawerContent extends StatelessWidget {
               children: [
                 Text(
                   email,
-                  style: GraniTheme.bodyMedium.copyWith(
+                  style: profileBodyStyle.copyWith(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
                     color: GraniTheme.primaryText,
                   ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
+                  overflow: isWindowsProfile
+                      ? TextOverflow.visible
+                      : TextOverflow.ellipsis,
+                  maxLines: isWindowsProfile ? null : 1,
                 ),
                 const SizedBox(height: 12),
                 _buildBadge(isPremium, isTrial, badgeText, badgeTextColor),
@@ -484,7 +490,7 @@ class _ProfileDrawerContent extends StatelessWidget {
                     Expanded(
                       child: Text(
                         statusText,
-                        style: GraniTheme.bodyMedium.copyWith(
+                        style: profileBodyStyle.copyWith(
                           color: GraniTheme.primaryText,
                           fontSize: 13.5,
                           fontWeight: FontWeight.w700,
@@ -528,7 +534,7 @@ class _ProfileDrawerContent extends StatelessWidget {
             const SizedBox(width: 9),
             Text(
               text,
-              style: GraniTheme.bodyMedium.copyWith(
+              style: profileBodyStyle.copyWith(
                 fontSize: 15,
                 fontWeight: FontWeight.w700,
                 color: textColor,
@@ -560,7 +566,7 @@ class _ProfileDrawerContent extends StatelessWidget {
           if (isTrial) const SizedBox(width: 4),
           Text(
             text,
-            style: GraniTheme.bodyMedium.copyWith(
+            style: profileBodyStyle.copyWith(
               fontSize: 15,
               fontWeight: FontWeight.w700,
               color: textColor,
@@ -671,7 +677,7 @@ class _ProfileDrawerContent extends StatelessWidget {
                       const SizedBox(width: 10),
                       Text(
                         l10n.profileLogoutButton,
-                        style: GraniTheme.bodyMedium.copyWith(
+                        style: profileBodyStyle.copyWith(
                           color: GraniTheme.destructiveRed,
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
@@ -698,29 +704,28 @@ class _ProfileDrawerContent extends StatelessWidget {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Text(
           l10n.profileLogoutDialogTitle,
-          style: GraniTheme.bodyMedium.copyWith(
+          style: profileBodyStyle.copyWith(
             fontSize: 18,
             fontWeight: FontWeight.w600,
           ),
         ),
         content: Text(
           l10n.profileLogoutDialogBody,
-          style: GraniTheme.bodyMedium.copyWith(fontSize: 14),
+          style: profileBodyStyle.copyWith(fontSize: 14),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: Text(
               l10n.profileLogoutDialogCancel,
-              style: GraniTheme.bodyMedium
-                  .copyWith(color: GraniTheme.secondaryText),
+              style: profileBodyStyle.copyWith(color: GraniTheme.secondaryText),
             ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: Text(
               l10n.profileLogoutDialogConfirm,
-              style: GraniTheme.bodyMedium.copyWith(
+              style: profileBodyStyle.copyWith(
                 color: GraniTheme.destructiveRed,
                 fontWeight: FontWeight.w600,
               ),
@@ -948,7 +953,7 @@ class _SubscriptionCard extends StatelessWidget {
     bool valueBold = false,
     bool small = false,
   }) {
-    final fontSize = small ? 14.0 : 16.0;
+    final fontSize = isWindowsProfile ? 14.0 : (small ? 14.0 : 16.0);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -962,7 +967,7 @@ class _SubscriptionCard extends StatelessWidget {
         Expanded(
           child: RichText(
             text: TextSpan(
-              style: GraniTheme.bodyMedium.copyWith(
+              style: profileBodyStyle.copyWith(
                 color: GraniTheme.primaryText,
                 fontSize: fontSize,
                 fontWeight: FontWeight.w500,
@@ -1177,7 +1182,7 @@ class _AccountCardState extends State<_AccountCard> {
                 spacingAfterIcon: 14,
               ),
               const Divider(height: 1, color: GraniTheme.surfaceVariant),
-              if (Platform.isAndroid || Platform.isWindows) ...[
+              if (Platform.isAndroid || isWindowsProfile) ...[
                 GraniSectionRow(
                   iconSvg: 'assets/images/figma/profile/split_tunnel_new.svg',
                   label: context.l10n.splitTunnelTitle,
@@ -1196,8 +1201,8 @@ class _AccountCardState extends State<_AccountCard> {
                 label: context.l10n.profileDevices,
                 valueWidget: _devicesLoading
                     ? Text('—',
-                        style: GraniTheme.bodyMedium
-                            .copyWith(color: GraniTheme.secondaryText))
+                        style: profileBodyStyle.copyWith(
+                            color: GraniTheme.secondaryText))
                     : _devicesLoadError != null
                         ? Text(
                             _devicesLoadError!,
@@ -1210,7 +1215,7 @@ class _AccountCardState extends State<_AccountCard> {
                           )
                         : RichText(
                             text: TextSpan(
-                              style: GraniTheme.bodyMedium.copyWith(
+                              style: profileBodyStyle.copyWith(
                                 color: GraniTheme.primaryText,
                                 fontWeight: FontWeight.w700,
                                 fontSize: 14,
@@ -1271,7 +1276,7 @@ class _SupportCard extends StatelessWidget {
                 iconSvg: 'assets/images/figma/profile/share_new.svg',
                 labelWidget: Text.rich(
                   TextSpan(
-                    style: GraniTheme.bodyMedium.copyWith(
+                    style: profileBodyStyle.copyWith(
                       color: GraniTheme.primaryText,
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
@@ -1280,7 +1285,7 @@ class _SupportCard extends StatelessWidget {
                       TextSpan(text: '${context.l10n.profileSharePrefix} '),
                       TextSpan(
                         text: 'GRANI',
-                        style: GraniTheme.bodyMedium.copyWith(
+                        style: profileBodyStyle.copyWith(
                           color: GraniTheme.primaryText,
                           fontWeight: FontWeight.w700,
                           fontSize: 14,
@@ -1300,26 +1305,30 @@ class _SupportCard extends StatelessWidget {
                   children: [
                     Text(
                       context.l10n.profileSupportChat,
-                      style: GraniTheme.bodyMedium.copyWith(
+                      style: profileBodyStyle.copyWith(
                         fontSize: 14.5,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0,
                         color: GraniTheme.primaryText,
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: isWindowsProfile ? null : 1,
+                      overflow: isWindowsProfile
+                          ? TextOverflow.visible
+                          : TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
                     Text(
                       context.l10n.profileSupportChatSubtitle,
-                      style: GraniTheme.bodyMedium.copyWith(
+                      style: profileBodyStyle.copyWith(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w500,
                         letterSpacing: 0,
                         color: GraniTheme.secondaryText,
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: isWindowsProfile ? null : 2,
+                      overflow: isWindowsProfile
+                          ? TextOverflow.visible
+                          : TextOverflow.ellipsis,
                     ),
                   ],
                 ),
@@ -1335,26 +1344,30 @@ class _SupportCard extends StatelessWidget {
                   children: [
                     Text(
                       context.l10n.profileDiagnostics,
-                      style: GraniTheme.bodyMedium.copyWith(
+                      style: profileBodyStyle.copyWith(
                         fontSize: 14.5,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0,
                         color: GraniTheme.primaryText,
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: isWindowsProfile ? null : 1,
+                      overflow: isWindowsProfile
+                          ? TextOverflow.visible
+                          : TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
                     Text(
                       context.l10n.profileDiagnosticsSubtitle,
-                      style: GraniTheme.bodyMedium.copyWith(
+                      style: profileBodyStyle.copyWith(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w500,
                         letterSpacing: 0,
                         color: GraniTheme.secondaryText,
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: isWindowsProfile ? null : 2,
+                      overflow: isWindowsProfile
+                          ? TextOverflow.visible
+                          : TextOverflow.ellipsis,
                     ),
                   ],
                 ),
@@ -1382,7 +1395,8 @@ class _AboutCard extends StatelessWidget {
     final currentLanguageLabel = languageCode == 'ru'
         ? l10n.appLanguageRussian
         : l10n.appLanguageEnglish;
-    final versionStr = '${AppConfig.buildNumber} (${AppConfig.appVersion})';
+    final versionStr =
+        '${AppConfig.buildNumber} (${AppConfig.appVersion})${isWindowsProfile ? ' · r2' : ''}';
     final hasVersion =
         AppConfig.appVersion.isNotEmpty || AppConfig.buildNumber.isNotEmpty;
     final copyText =

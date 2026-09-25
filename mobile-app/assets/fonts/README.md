@@ -1,17 +1,9 @@
-# Шрифты (Montserrat)
+# Montserrat
 
-В теме приложения используется **Montserrat**. Добавьте сюда файлы шрифта, чтобы отображение совпадало с макетом Figma на всех устройствах.
+The application registers static weights 300, 400, 500, 600 and 700 in pubspec.yaml.
+These TrueType files were instantiated from the existing Montserrat-Variable.ttf
+with fontTools 4.60.0 (wght axis). License: OFL.txt.
 
-## Какие файлы нужны
-
-Скачайте семейство Montserrat (например, с [Google Fonts](https://fonts.google.com/specimen/Montserrat)) и поместите в эту папку:
-
-| Файл | Начертание (weight) |
-|------|----------------------|
-| `Montserrat-Light.ttf` | 300 |
-| `Montserrat-Regular.ttf` | 400 |
-| `Montserrat-Medium.ttf` | 500 |
-| `Montserrat-SemiBold.ttf` | 600 |
-| `Montserrat-Bold.ttf` | 700 |
-
-После добавления файлов выполните `flutter pub get` в каталоге `mobile-app`.
+The previous five static .ttf files were HTML download pages, not fonts. They have
+been replaced. The Windows visual regression test checks every TrueType signature
+and loads the same fonts as the release build.
