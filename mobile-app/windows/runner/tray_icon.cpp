@@ -104,8 +104,8 @@ HICON CreateGraniTrayIcon(int size, bool connected, bool busy) {
                   : Gdiplus::Color(255, 130, 143, 157);
   Gdiplus::SolidBrush rim(Gdiplus::Color(255, 255, 255, 255));
   Gdiplus::SolidBrush dot(state);
-  graphics.FillEllipse(&rim, 22.0f, 22.0f, 9.5f, 9.5f);
-  graphics.FillEllipse(&dot, 23.25f, 23.25f, 7.0f, 7.0f);
+  graphics.FillEllipse(&rim, 21.0f, 21.0f, 9.5f, 9.5f);
+  graphics.FillEllipse(&dot, 22.25f, 22.25f, 7.0f, 7.0f);
   graphics.Flush(Gdiplus::FlushIntentionSync);
   HICON icon = nullptr;
   if (bitmap.GetHICON(&icon) != Gdiplus::Ok) return nullptr;
