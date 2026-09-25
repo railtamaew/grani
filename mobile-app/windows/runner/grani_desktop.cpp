@@ -13,13 +13,14 @@ namespace {
 using Value = flutter::EncodableValue;
 constexpr UINT kTrayMessage = WM_APP + 8;
 constexpr UINT kShow = 2101, kToggle = 2102, kQuit = 2103, kWebsite = 2104;
-// Stable identity allows Windows to remember the user's visibility preference.
+// Keep preferences at the same path; unsigned portable moves need an ID fallback.
 const GUID kTrayGuid = {0x6433219a, 0xb147, 0x471d,
                        {0x91, 0x6f, 0x46, 0x72, 0x61, 0x6e, 0x69, 0x44}};
 std::unique_ptr<flutter::MethodChannel<Value>> channel;
 HWND app_window = nullptr;
 UINT taskbar_created = 0;
 bool tray_available = false, quitting = false, close_hint_shown = false;
+bool use_tray_guid = true;
 bool can_toggle = false, connected = false, busy = false, russian = true;
 std::wstring status = L"GRANI", location;
 HICON tray_icon = nullptr;
@@ -40,8 +41,10 @@ NOTIFYICONDATAW TrayData() {
   data.cbSize = sizeof(data);
   data.hWnd = app_window;
   data.uID = 1;
-  data.guidItem = kTrayGuid;
-  data.uFlags = NIF_GUID;
+  if (use_tray_guid) {
+    data.guidItem = kTrayGuid;
+    data.uFlags = NIF_GUID;
+  }
   return data;
 }
 
@@ -64,6 +67,15 @@ void UpdateTray(bool add = false) {
       (location.empty() ? L"" : L"\n" + location);
   wcsncpy_s(data.szTip, tip.c_str(), _TRUNCATE);
   tray_available = Shell_NotifyIconW(add ? NIM_ADD : NIM_MODIFY, &data) != FALSE;
+  if (!tray_available && add && use_tray_guid) {
+    // Explorer binds an unsigned executable's GUID to its original path.
+    // Portable updates can move GRANI.exe, so fall back to the documented
+    // hWnd/uID identity instead of leaving the user without a tray icon.
+    use_tray_guid = false;
+    data.uFlags &= ~NIF_GUID;
+    data.guidItem = {};
+    tray_available = Shell_NotifyIconW(NIM_ADD, &data) != FALSE;
+  }
   if (previous) DestroyIcon(previous);
   if (!tray_available && !add) {
     UpdateTray(true);
