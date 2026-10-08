@@ -372,16 +372,18 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
                                       ? context.l10n.paywallCheckPayment
                                       : context.l10n.paywallRestorePurchases),
                                 ),
-                                TrustItems(
-                                  googlePlay: state.externalCheckout
-                                      ? context.l10n.paywallTrustWata
-                                      : context.l10n.paywallTrustGooglePlay,
-                                  noRenewals:
-                                      context.l10n.paywallTrustNoRenewals,
-                                  restore: state.externalCheckout
-                                      ? context.l10n.paywallSameAccount
-                                      : context.l10n.paywallTrustRestore,
-                                ),
+                                if (state.productsState ==
+                                    PaywallProductsState.ready)
+                                  TrustItems(
+                                    googlePlay: state.externalCheckout
+                                        ? context.l10n.paywallTrustWata
+                                        : context.l10n.paywallTrustGooglePlay,
+                                    noRenewals:
+                                        context.l10n.paywallTrustNoRenewals,
+                                    restore: state.externalCheckout
+                                        ? context.l10n.paywallSameAccount
+                                        : context.l10n.paywallTrustRestore,
+                                  ),
                               ] else if (state.productsState ==
                                   PaywallProductsState.loading)
                                 Text(

@@ -139,12 +139,13 @@ class TvPaywallContent extends StatelessWidget {
         ],
         if (notice != null) ...[const SizedBox(height: 18), TvNotice(notice!)],
         const SizedBox(height: 16),
-        TrustItems(
-            googlePlay: state.externalCheckout
-                ? l10n.paywallTrustWata
-                : l10n.paywallTrustGooglePlay,
-            noRenewals: l10n.paywallTrustNoRenewals,
-            restore: l10n.paywallTrustRestore),
+        if (ready)
+          TrustItems(
+              googlePlay: state.externalCheckout
+                  ? l10n.paywallTrustWata
+                  : l10n.paywallTrustGooglePlay,
+              noRenewals: l10n.paywallTrustNoRenewals,
+              restore: l10n.paywallTrustRestore),
         const SizedBox(height: 16),
         TvRemoteControl(
             onPressed: enabled ? onPurchase : null,
