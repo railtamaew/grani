@@ -18,6 +18,7 @@ class GraniConnectSurfaceButton extends StatefulWidget {
   final double size;
   final String? semanticsLabel;
   final String? semanticsHint;
+  final Widget? centerContent;
 
   const GraniConnectSurfaceButton({
     super.key,
@@ -28,6 +29,7 @@ class GraniConnectSurfaceButton extends StatefulWidget {
     this.size = 330,
     this.semanticsLabel,
     this.semanticsHint,
+    this.centerContent,
   });
 
   @override
@@ -164,7 +166,7 @@ class _GraniConnectSurfaceButtonState extends State<GraniConnectSurfaceButton>
                         _rotationController.value,
                       ),
                     ),
-                    Transform.translate(
+                    widget.centerContent ?? Transform.translate(
                       offset: Offset(contentOffsetX, contentOffsetY),
                       child: SizedBox(
                         width: contentWidth,

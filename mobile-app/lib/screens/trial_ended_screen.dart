@@ -1,14 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 
 import '../config/app_config.dart';
 import '../config/app_navigation.dart';
-import '../config/subscription_products.dart';
 import '../features/paywall/controller/paywall_controller.dart';
 import '../features/paywall/model/paywall_ui_state.dart';
 import '../features/paywall/model/tariff_ui_model.dart';
@@ -19,6 +16,7 @@ import '../features/paywall/widgets/tariff_card.dart';
 import '../features/paywall/widgets/trust_items.dart';
 import '../l10n/l10n.dart';
 import '../services/auth_service.dart';
+import '../services/regional_checkout_service.dart';
 import '../services/native_vpn_service.dart';
 import '../services/subscription_service.dart';
 import '../services/vpn_service.dart';
@@ -52,12 +50,7 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
   late final AnimationController _entranceController;
   PaywallController? _paywallController;
   Timer? _subscriptionPollTimer;
-  Timer? _androidPaymentPollTimer;
   AuthService? _authServiceForListener;
-  DateTime? _androidPaymentBaselineExpiresAt;
-  bool _androidPaymentBaselineActive = false;
-  bool _androidPaymentDialogOpen = false;
-  bool _androidPaymentCheckInFlight = false;
   bool _entitlementNavigationStarted = false;
   int _pulseKey = 0;
   String? _lastSelectedPlanId;
@@ -114,7 +107,7 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
         (_) => _refreshAndNavigate(),
       );
     }
-    if (!mounted || Platform.isWindows) return;
+    if (!mounted) return;
     final auth = context.read<AuthService>();
     final locale = Localizations.localeOf(context);
     final controller = PaywallController(
@@ -131,6 +124,12 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
       appLanguage: locale.languageCode,
       experimentVariant: AppConfig.paywallExperimentVariant,
       onNotice: _handleNotice,
+      onWebsitePurchaseReturn: () async {
+        if (!mounted || _entitlementNavigationStarted) return;
+        _entitlementNavigationStarted = true;
+        Navigator.pushNamedAndRemoveUntil(
+            context, '/payment-result', (_) => false);
+      },
       onEntitlementGranted: () async {
         if (!mounted) return;
         _openMainAfterEntitlement(source: 'purchase');
@@ -179,6 +178,8 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_paywallController?.onAppResumed());
+    } else {
+      _paywallController?.onAppPaused();
     }
   }
 
@@ -193,7 +194,6 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
     appRouteObserver.unsubscribe(this);
     _entranceController.dispose();
     _subscriptionPollTimer?.cancel();
-    _androidPaymentPollTimer?.cancel();
     _authServiceForListener?.removeListener(_onAuthSubscriptionUpdate);
     _paywallController?.removeListener(_handlePaywallState);
     _paywallController?.dispose();
@@ -202,7 +202,6 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
 
   @override
   Widget build(BuildContext context) {
-    if (Platform.isWindows) return _buildWindowsHandoff(context);
     final controller = _paywallController;
     final state = controller?.state ?? const PaywallUiState();
     final reducedMotion = MediaQuery.disableAnimationsOf(context);
@@ -299,6 +298,16 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
                                   onRetry: () => controller?.retryProducts(),
                                 ),
                               const SizedBox(height: 22),
+                              if (state.externalCheckout) ...[
+                                if (state.externalSandbox) ...[
+                                  Text(context.l10n.paywallWataSandboxNotice,
+                                      textAlign: TextAlign.center),
+                                  const SizedBox(height: 8),
+                                ],
+                                Text(context.l10n.paywallExternalBrowserHint,
+                                    textAlign: TextAlign.center),
+                                const SizedBox(height: 12),
+                              ],
                               _entranceItem(
                                 interval: const Interval(
                                   0.55,
@@ -318,7 +327,8 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
                                 ),
                               ),
                               if (state.billingState ==
-                                  PaywallBillingState.pending) ...[
+                                      PaywallBillingState.pending ||
+                                  state.externalPending) ...[
                                 const SizedBox(height: 4),
                                 Text(
                                   context.l10n.paywallPaymentPendingHint,
@@ -329,6 +339,11 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
                                     color: Color(0xFF657487),
                                   ),
                                 ),
+                              ],
+                              if (state.externalReview) ...[
+                                const SizedBox(height: 8),
+                                Text(context.l10n.paywallPaymentReview,
+                                    textAlign: TextAlign.center),
                               ],
                               if (state.productsState ==
                                       PaywallProductsState.ready &&
@@ -346,11 +361,36 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
                                 ),
                               ],
                               const SizedBox(height: 18),
-                              TrustItems(
-                                googlePlay: context.l10n.paywallTrustGooglePlay,
-                                noRenewals: context.l10n.paywallTrustNoRenewals,
-                                restore: context.l10n.paywallTrustRestore,
-                              ),
+                              if (state.productsState ==
+                                  PaywallProductsState.ready) ...[
+                                TextButton(
+                                  onPressed: state.isBusy
+                                      ? null
+                                      : () => controller?.recoverPurchases(
+                                          userInitiated: true),
+                                  child: Text(state.externalCheckout
+                                      ? context.l10n.paywallCheckPayment
+                                      : context.l10n.paywallRestorePurchases),
+                                ),
+                                TrustItems(
+                                  googlePlay: state.externalCheckout
+                                      ? context.l10n.paywallTrustWata
+                                      : context.l10n.paywallTrustGooglePlay,
+                                  noRenewals:
+                                      context.l10n.paywallTrustNoRenewals,
+                                  restore: state.externalCheckout
+                                      ? context.l10n.paywallSameAccount
+                                      : context.l10n.paywallTrustRestore,
+                                ),
+                              ] else if (state.productsState ==
+                                  PaywallProductsState.loading)
+                                Text(
+                                    Localizations.localeOf(context)
+                                                .languageCode ==
+                                            'ru'
+                                        ? 'Загружаем способы оплаты…'
+                                        : 'Loading payment methods…',
+                                    textAlign: TextAlign.center),
                               const SizedBox(height: 8),
                               _buildLegalLinks(),
                             ],
@@ -374,11 +414,13 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
     bool reducedMotion,
   ) {
     final selected = state.selectedPlanId == plan.id;
-    final title = switch (plan.periodMonths) {
-      1 => context.l10n.paywallPlanOneMonth,
-      6 => context.l10n.paywallPlanSixMonths,
-      _ => context.l10n.paywallPlanTwelveMonths,
-    };
+    final title = state.externalCheckout
+        ? '${plan.periodDays} ${Localizations.localeOf(context).languageCode == 'ru' ? 'дней' : 'days'}'
+        : switch (plan.periodMonths) {
+            1 => context.l10n.paywallPlanOneMonth,
+            6 => context.l10n.paywallPlanSixMonths,
+            _ => context.l10n.paywallPlanTwelveMonths,
+          };
     final savings = plan.savingsPercent == null
         ? null
         : context.l10n.paywallSavePercent(plan.savingsPercent!);
@@ -414,11 +456,35 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
           onPressed: () => Navigator.pushNamed(context, '/privacy'),
           child: Text(context.l10n.paywallPrivacy),
         ),
+        const Padding(
+          padding: EdgeInsets.all(12),
+          child: Text('IP Geolocation by DB-IP.com',
+              style: TextStyle(fontSize: 11)),
+        ),
       ],
     );
   }
 
   String _ctaLabel(PaywallUiState state) {
+    if (state.externalCheckout &&
+        state.productsState == PaywallProductsState.ready) {
+      if (state.billingState == PaywallBillingState.success) {
+        return context.l10n.paywallAccessActivated;
+      }
+      if (state.billingState == PaywallBillingState.launching) {
+        return context.l10n.paywallOpeningBrowser;
+      }
+      if (state.isBusy) return context.l10n.paywallVerifyingPayment;
+      if (state.externalReview) return context.l10n.paywallPaymentReviewShort;
+      if (state.externalPending) {
+        return state.externalCanResume
+            ? context.l10n.paywallResumeExternal
+            : context.l10n.paywallVerifyingPayment;
+      }
+      return state.externalSandbox
+          ? context.l10n.paywallTestWataPayment
+          : context.l10n.paywallPaySbp;
+    }
     switch (state.productsState) {
       case PaywallProductsState.loading:
         return context.l10n.paywallLoadingPlans;
@@ -450,10 +516,24 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
       state.productsState == PaywallProductsState.ready &&
       state.selectedPlan != null &&
       !state.isBusy &&
+      !state.externalReview &&
+      (!state.externalPending || state.externalCanResume) &&
       state.billingState != PaywallBillingState.success;
 
   String _errorText(PaywallUiState? state) {
     return switch (state?.errorKind) {
+      PaywallErrorKind.countryUnavailable => _russianUi
+          ? 'Не удалось определить регион для оплаты. Проверьте интернет-соединение и повторите попытку. Если включён другой VPN, временно отключите его.'
+          : 'Could not determine your payment region. Check your internet connection and try again. If another VPN is enabled, temporarily turn it off.',
+      PaywallErrorKind.paymentConflict => _russianUi
+          ? 'У аккаунта уже есть действующая подписка. Проверьте её перед сменой способа оплаты.'
+          : 'Your account already has an active subscription. Check it before changing payment methods.',
+      PaywallErrorKind.accountUnverified => _russianUi
+          ? 'Подтвердите аккаунт GRANI, чтобы перейти к оплате.'
+          : 'Verify your GRANI account to continue to payment.',
+      PaywallErrorKind.regionalUnavailable => _russianUi
+          ? 'Российская оплата сейчас недоступна. Попробуйте ещё раз.'
+          : 'Russian payment is currently unavailable. Please try again.',
       PaywallErrorKind.storeUnavailable => context.l10n.paywallStoreUnavailable,
       PaywallErrorKind.productsUnavailable =>
         context.l10n.paywallProductsUnavailable,
@@ -463,6 +543,8 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
       _ => context.l10n.paywallPaymentErrorOpen,
     };
   }
+
+  bool get _russianUi => Localizations.localeOf(context).languageCode == 'ru';
 
   Widget _entranceItem({
     required Interval interval,
@@ -544,185 +626,29 @@ class _TrialEndedScreenState extends State<TrialEndedScreen>
     return requested;
   }
 
-  Widget _buildWindowsHandoff(BuildContext context) {
-    final products = <({String title, String productId})>[
-      (
-        title: context.l10n.paywallPlanOneMonth,
-        productId: SubscriptionProducts.extension30Days,
-      ),
-      (
-        title: context.l10n.paywallPlanSixMonths,
-        productId: SubscriptionProducts.extension180Days,
-      ),
-      (
-        title: context.l10n.paywallPlanTwelveMonths,
-        productId: SubscriptionProducts.extension365Days,
-      ),
-    ];
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F9FB),
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  PaywallHeader(
-                    title: context.l10n.paywallChoosePlanTitle,
-                    subtitle: context.l10n.subscriptionPayOnAndroidBody,
-                  ),
-                  const SizedBox(height: 24),
-                  for (final product in products)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: SizedBox(
-                        width: double.infinity,
-                        height: 56,
-                        child: FilledButton(
-                          onPressed: () => _showPayOnAndroid(product.productId),
-                          child: Text(product.title),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _androidPaymentUrl(String productId) {
-    final base = Uri.parse(AppConfig.androidPaymentHandoffUrl);
-    return base.replace(queryParameters: {
-      ...base.queryParameters,
-      'plan': productId,
-    }).toString();
-  }
-
-  Future<void> _showPayOnAndroid(String productId) async {
-    if (!Platform.isWindows || _androidPaymentDialogOpen) return;
-    final auth = context.read<AuthService>();
-    _androidPaymentBaselineActive = auth.hasActiveSubscription;
-    _androidPaymentBaselineExpiresAt = auth.subscriptionExpiresAt;
-    _androidPaymentDialogOpen = true;
-    final handoffUrl = _androidPaymentUrl(productId);
-    _androidPaymentPollTimer?.cancel();
-    _androidPaymentPollTimer = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => unawaited(_checkAndroidPayment(showNotFound: false)),
-    );
-    try {
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(context.l10n.subscriptionPayOnAndroidTitle),
-          content: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(context.l10n.subscriptionPayOnAndroidBody),
-                  const SizedBox(height: 16),
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: QrImageView(
-                        data: handoffUrl,
-                        size: 220,
-                        backgroundColor: Colors.white,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(context.l10n.subscriptionPayOnAndroidSameAccount),
-                  const SizedBox(height: 8),
-                  Text(context.l10n.subscriptionPayOnAndroidWaiting),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: handoffUrl));
-                if (mounted) {
-                  showInfoSnackBar(
-                    context,
-                    context.l10n.subscriptionPayOnAndroidLinkCopied,
-                  );
-                }
-              },
-              child: Text(context.l10n.subscriptionPayOnAndroidCopyLink),
-            ),
-            FilledButton(
-              onPressed: () => _checkAndroidPayment(showNotFound: true),
-              child: Text(context.l10n.subscriptionPayOnAndroidCheck),
-            ),
-          ],
-        ),
-      );
-    } finally {
-      _androidPaymentDialogOpen = false;
-      _androidPaymentPollTimer?.cancel();
-      _androidPaymentPollTimer = null;
-    }
-  }
-
-  Future<void> _checkAndroidPayment({required bool showNotFound}) async {
-    if (!_androidPaymentDialogOpen ||
-        _androidPaymentCheckInFlight ||
-        !mounted) {
-      return;
-    }
-    _androidPaymentCheckInFlight = true;
-    final auth = context.read<AuthService>();
-    try {
-      await auth.refreshUserStatus(force: true);
-      if (!mounted || !_androidPaymentDialogOpen) return;
-      final expiresAt = auth.subscriptionExpiresAt;
-      final activated =
-          !_androidPaymentBaselineActive && auth.hasActiveSubscription;
-      final extended = _androidPaymentBaselineActive &&
-          expiresAt != null &&
-          (_androidPaymentBaselineExpiresAt == null ||
-              expiresAt.isAfter(_androidPaymentBaselineExpiresAt!));
-      if (activated || extended) {
-        _androidPaymentDialogOpen = false;
-        _androidPaymentPollTimer?.cancel();
-        Navigator.of(context, rootNavigator: true).pop();
-        _openMainAfterEntitlement(source: 'android_purchase');
-      } else if (showNotFound) {
-        showInfoSnackBar(
-          context,
-          context.l10n.subscriptionPayOnAndroidNotFound,
-        );
-      }
-    } finally {
-      _androidPaymentCheckInFlight = false;
-    }
-  }
-
-  void _openMainAfterEntitlement({required String source}) {
+  Future<void> _openMainAfterEntitlement({required String source}) async {
     if (_entitlementNavigationStarted || !mounted) return;
     _entitlementNavigationStarted = true;
+    final auth = context.read<AuthService>();
+    final account = auth.user?.id;
+    var route = entitlementGrantedRoute;
+    if (_paywallController?.state.externalCheckout == true &&
+        _paywallController?.state.externalSandbox == false) {
+      try {
+        final checkout = RegionalCheckoutService(
+            readCountry: () async => null,
+            request: auth.regionalBillingRequest);
+        final data = await checkout.websiteCheckoutContext();
+        // Existing access is not proof of the payment. Show its owned status.
+        if (data?['order'] != null) route = '/payment-result';
+      } catch (_) {
+        // Keep the saved purchase for a later verified return.
+      }
+    }
+    if (!mounted || auth.user?.id != account || !auth.isAuthenticated) return;
     debugPrint(
-      '[payment-timing] entitlement_navigation source=$source route=/main',
-    );
-    Navigator.pushNamedAndRemoveUntil(
-      context,
-      entitlementGrantedRoute,
-      (_) => false,
-    );
+        '[payment-timing] entitlement_navigation source=$source route=$route');
+    Navigator.pushNamedAndRemoveUntil(context, route, (_) => false);
   }
 }
 

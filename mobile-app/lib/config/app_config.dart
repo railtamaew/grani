@@ -170,9 +170,9 @@ class AppConfig {
   static const String appName = 'GRANI';
 
   // Версия и информация о сборке (загружается из package_info)
-  static String appVersion = '1.0.44';
-  static String buildNumber = '44';
-  static String buildDate = '2026-09-24'; // Автоматически заменяется при сборке
+  static String appVersion = '1.0.61';
+  static String buildNumber = '61';
+  static String buildDate = '2026-10-08'; // Автоматически заменяется при сборке
   static const String diagnosticBuildMarker = String.fromEnvironment(
     'GRANI_BUILD_MARKER',
     defaultValue: 'local-dev',
@@ -189,8 +189,8 @@ class AppConfig {
       );
     } catch (e) {
       // Если не удалось загрузить, используем значения по умолчанию
-      appVersion = '1.0.44';
-      buildNumber = '44';
+      appVersion = '1.0.61';
+      buildNumber = '61';
     }
   }
 

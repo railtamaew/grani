@@ -346,9 +346,10 @@ class ApiClient implements ApiClientInterface {
           options: options,
           cancelToken: cancelToken,
         ),
-        // Only this bounded, durable diagnostics route may flush after STOP.
+        // Bounded durable queues retain failures even when VPN never connects.
         connectivityDiagnosticsFlush:
-            path == '/simple-vpn/logs/batch' && kind == RequestKind.logging,
+            ControlPlanePlaneResolver.isDurableDiagnosticsPath(path) &&
+                kind == RequestKind.logging,
       ),
     );
   }

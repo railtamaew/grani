@@ -10,6 +10,13 @@ class ControlPlanePlaneResolver {
     return q >= 0 ? p.substring(0, q) : p;
   }
 
+  /// Both durable queues must deliver terminal events after a failed connection.
+  static bool isDurableDiagnosticsPath(String path) {
+    final p = _pathOnly(path).toLowerCase();
+    return p == '/simple-vpn/logs/batch' ||
+        p == '/simple-vpn/product-telemetry';
+  }
+
   /// API path вида /vpn/servers или полный URL — для относительных путей бэкенда.
   static ControlPlanePlane planeForApiPath(String path) {
     final p = _pathOnly(path).toLowerCase();
@@ -21,7 +28,8 @@ class ControlPlanePlaneResolver {
     }
     if (p == '/vpn/logs/send' ||
         p == '/simple-vpn/logs' ||
-        p == '/simple-vpn/logs/batch') {
+        p == '/simple-vpn/logs/batch' ||
+        p == '/simple-vpn/product-telemetry') {
       return ControlPlanePlane.logging;
     }
     return ControlPlanePlane.vpnControl;

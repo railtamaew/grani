@@ -21,6 +21,7 @@ void main() {
           {String name = 'connect_tap', String session = 'r1'}) =>
       {
         'event': name,
+        'owner_id': 42,
         'device_id': 'device-1',
         'session_id': session,
         'details': <String, dynamic>{
@@ -54,6 +55,27 @@ void main() {
     );
   });
   tearDown(() => queue.dispose());
+
+  test('pre-device intent and UI error preserve identity and safe cause', () async {
+    final early = event(name: 'connect_intent')..remove('device_id');
+    early['details'] = <String,dynamic>{'intent_id':'i1'};
+    await queue.enqueue(early);
+    final ui = event(name: 'ui_state_transition');
+    ui['details'] = <String,dynamic>{'from':'connecting','to':'error',
+      'reason_code':'permission_denied','failure_stage':'permission','error':'SECRET'};
+    await queue.enqueue(ui);
+    expect(pending(), hasLength(2));
+    expect(pending()[0]['installation_id'], pending()[1]['installation_id']);
+    expect(pending()[1]['owner_id'], 42);
+    expect(pending()[1]['details']['to'], 'error');
+    expect(stored, isNot(contains('SECRET')));
+    expect(pending()[1]['details']['event_sequence'], 2);
+  });
+
+  test('events without an account cannot enter a shared queue', () async {
+    await queue.enqueue(event()..remove('owner_id'));
+    expect(stored, isNull);
+  });
 
   test('enqueue and VPN work never wait for a blocked HTTP request', () async {
     final blocked = Completer<Set<String>>();
@@ -92,6 +114,39 @@ void main() {
     await queue.flush();
     expect(pending(), hasLength(1)); // Restart must respect retry deadline.
     now = now.add(const Duration(minutes: 1));
+    await queue.flush();
+    expect(pending(), isEmpty);
+  });
+
+  test('successful connection clears stale backoff but keeps rate limit', () async {
+    handler = (_) async => throw StateError('offline');
+    await queue.enqueue(event(name: 'connect_intent'));
+    await queue.flush(); // Retry after 1 minute.
+    now = now.add(const Duration(minutes: 1));
+    await queue.flush(); // Retry after 2 minutes.
+    now = now.add(const Duration(minutes: 2));
+    await queue.flush(); // Retry after 4 minutes.
+    expect(requests, hasLength(3));
+    now = now.add(const Duration(seconds: 10));
+    await queue.connectionStateChanged(connectionRecovered: true);
+    handler = null;
+    await queue.flush();
+    expect(requests, hasLength(3)); // Never burst on repeated state callbacks.
+    await queue.connectionStateChanged(connectionRecovered: true);
+    now = now.add(const Duration(seconds: 50));
+    await queue.flush();
+    expect(requests, hasLength(4));
+    expect(pending(), isEmpty);
+  });
+
+  test('state transition resumes a persisted queue without another event', () async {
+    await queue.enqueue(event(name: 'disconnect_ok'));
+    queue.dispose();
+    queue = SimpleVpnTelemetry(read: () async => stored,
+      write: (v) async { stored = v; }, now: () => now,
+      automaticScheduling: false, canSend: () => allowed,
+      send: (batch) async => batch.map((e) => e['event_id'] as String).toSet());
+    await queue.connectionStateChanged();
     await queue.flush();
     expect(pending(), isEmpty);
   });
@@ -148,10 +203,10 @@ void main() {
   test('bounded queue evicts probes before terminal and expires old records',
       () async {
     await queue.enqueue(event(name: 'disconnect_ok'));
-    for (var i = 0; i < 70; i++) {
+    for (var i = 0; i < 140; i++) {
       await queue.enqueue(event(name: 'connectivity_probe', session: 's$i'));
     }
-    expect(pending(), hasLength(64));
+    expect(pending(), hasLength(128));
     expect(pending().any((e) => e['event'] == 'disconnect_ok'), isTrue);
     expect(utf8.encode(stored!).length, lessThan(256 * 1024));
     now = now.add(const Duration(hours: 25));
@@ -167,6 +222,8 @@ void main() {
   });
 
   test('policy denies diagnostic flush during every connect stage', () {
+    expect(ControlPlanePlaneResolver.planeForApiPath('/simple-vpn/product-telemetry'),
+        ControlPlanePlane.logging);
     expect(ControlPlanePlaneResolver.planeForApiPath('/simple-vpn/logs/batch'),
         ControlPlanePlane.logging);
     for (final state in [

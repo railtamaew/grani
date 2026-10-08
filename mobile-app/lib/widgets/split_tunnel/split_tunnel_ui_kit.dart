@@ -116,7 +116,7 @@ class GraniSplitAppRow extends StatelessWidget {
   final String label;
   final String packageName;
   final bool selected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   const GraniSplitAppRow({
     super.key,

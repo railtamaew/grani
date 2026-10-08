@@ -156,37 +156,35 @@ class _PostAuthPreparationCoordinatorScreenState
         );
       }
 
-      var configMatrixReady = await _runSoftStep(
+      var selectedProfileReady = await _runSoftStep(
         PostAuthPreparationStep.servers,
         () async {
           await vpnService.refreshControlPlaneSnapshot(authService,
               force: true);
-          await _prewarmVpnConfigs(vpnService);
+          await _prewarmVpnConfigs(vpnService, authService);
         },
         timeout: AppConfig.postAuthPreparationProtocolWarmupSoftTimeout,
       );
-      if (!configMatrixReady) {
+      if (!selectedProfileReady) {
         debugPrint(
           '[auth-timing] post_auth_protocol_prewarm_retry '
           'source=${widget.source}',
         );
-        configMatrixReady = await _runSoftStep(
+        selectedProfileReady = await _runSoftStep(
           PostAuthPreparationStep.servers,
           () async {
             await vpnService.refreshControlPlaneSnapshot(authService,
                 force: true);
-            await _prewarmVpnConfigs(vpnService);
+            await _prewarmVpnConfigs(vpnService, authService);
           },
           timeout: AppConfig.postAuthPreparationProtocolWarmupSoftTimeout,
         );
       }
-      if (!configMatrixReady) {
-        // Keep the recovery fetch in connect() as a safety net for outages or
-        // cache eviction, but there is no separate user-facing "primary" vs
-        // "fast" path. Normal trial/subscription entry always attempts the
-        // same complete preparation matrix first.
+      if (!selectedProfileReady) {
+        // connect() retains its normal recovery fetch if the selected profile
+        // could not be prepared during a control-plane outage.
         debugPrint(
-          '[auth-timing] post_auth_protocol_matrix_degraded '
+          '[auth-timing] post_auth_selected_profile_degraded '
           'source=${widget.source}',
         );
       }
@@ -355,21 +353,64 @@ class _PostAuthPreparationCoordinatorScreenState
     }
   }
 
-  Future<void> _prewarmVpnConfigs(VpnService vpnService) async {
+  Future<void> _prewarmVpnConfigs(
+    VpnService vpnService,
+    AuthService authService,
+  ) async {
     final controller = SimpleVpnController(
       deviceIdProvider: () async => vpnService.deviceId,
       subscribeNativeState: false,
     );
     final sw = Stopwatch()..start();
+    final userId = authService.user?.id;
+    var disposed = false;
+    void disposeWarmup() {
+      if (disposed) return;
+      disposed = true;
+      controller.dispose();
+    }
+
+    void sessionChanged() {
+      if (!authService.isAuthenticated || authService.user?.id != userId) {
+        disposeWarmup();
+      }
+    }
+
+    authService.addListener(sessionChanged);
+    var backgroundOwnsController = false;
     try {
       await controller.loadOptions();
-      await controller.prewarmAvailableConfigsForPostAuth(
+      await controller.prewarmSelectedConfigForPostAuth(
         reason: 'post_auth_preparation_${widget.source}',
       );
       debugPrint(
         '[auth-timing] post_auth_protocol_prewarm_done '
-        'status=success elapsed_ms=${sw.elapsedMilliseconds}',
+        'status=selected_ready elapsed_ms=${sw.elapsedMilliseconds}',
       );
+      // Keep the isolated preparation controller alive until its work ends.
+      // Logout/account changes stop it before further profiles can be cached.
+      backgroundOwnsController = true;
+      unawaited(() async {
+        final background = Stopwatch()..start();
+        try {
+          await controller
+              .prewarmAvailableConfigsForPostAuth(
+                reason: 'post_auth_background_${widget.source}',
+              )
+              .timeout(const Duration(seconds: 60));
+          if (!disposed) {
+            debugPrint('[auth-timing] post_auth_background_profiles_done '
+                'status=success elapsed_ms=${background.elapsedMilliseconds}');
+          }
+        } catch (error) {
+          debugPrint('[auth-timing] post_auth_background_profiles_done '
+              'status=failed elapsed_ms=${background.elapsedMilliseconds} '
+              'error=$error');
+        } finally {
+          authService.removeListener(sessionChanged);
+          disposeWarmup();
+        }
+      }());
     } catch (error) {
       debugPrint(
         '[auth-timing] post_auth_protocol_prewarm_done '
@@ -377,7 +418,10 @@ class _PostAuthPreparationCoordinatorScreenState
       );
       rethrow;
     } finally {
-      controller.dispose();
+      if (!backgroundOwnsController) {
+        authService.removeListener(sessionChanged);
+        disposeWarmup();
+      }
     }
   }
 

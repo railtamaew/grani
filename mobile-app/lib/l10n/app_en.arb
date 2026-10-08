@@ -293,6 +293,11 @@
   "profileSubscriptionPlan": "Plan:",
   "profileSubscriptionPlanNameFallback": "Premium",
   "profileNextPayment": "Next payment",
+  "profileAccessUntil": "Access until",
+  "profilePaymentMethod": "Payment",
+  "profilePaymentSbp": "SBP",
+  "paywallCheckPayment": "Check payment",
+  "paywallRestorePurchases": "Restore purchases",
   "profileTrialAccess": "Trial access",
   "profileTrialEnds": "Ends:",
   "profileNoPlan": "No subscription",
@@ -529,5 +534,15 @@
   "vpnNoticeTunnelTitle": "VPN is not connected yet",
   "vpnNoticeTunnelBody": "The network responds, but VPN is not connected. Try another network.",
   "vpnNoticeSignInTitle": "Check network access",
-  "vpnNoticeSignInBody": "Wi-Fi may need a sign-in. Open your browser or switch networks."
+  "vpnNoticeSignInBody": "Wi-Fi may need a sign-in. Open your browser or switch networks.",
+  "paywallWataSandboxNotice": "WATA test payment. No real charge.",
+  "paywallExternalBrowserHint": "The GRANI website will open. No second sign-in is needed.",
+  "paywallTrustWata": "WATA payment",
+  "paywallSameAccount": "No second sign-in",
+  "paywallOpeningBrowser": "Opening payment page…",
+  "paywallResumeExternal": "Continue payment",
+  "paywallTestWataPayment": "Test WATA payment",
+  "paywallPaySbp": "Continue to website payment",
+  "paywallPaymentReview": "We are checking your previous payment to prevent a duplicate charge. If the status does not change, contact support@granilink.com.",
+  "paywallPaymentReviewShort": "Checking payment"
 }

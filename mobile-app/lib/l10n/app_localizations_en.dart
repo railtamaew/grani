@@ -754,6 +754,21 @@ class AppLocalizationsEn extends AppLocalizations {
   String get profileNextPayment => 'Next payment';
 
   @override
+  String get profileAccessUntil => 'Access until';
+
+  @override
+  String get profilePaymentMethod => 'Payment';
+
+  @override
+  String get profilePaymentSbp => 'SBP';
+
+  @override
+  String get paywallCheckPayment => 'Check payment';
+
+  @override
+  String get paywallRestorePurchases => 'Restore purchases';
+
+  @override
   String get profileTrialAccess => 'Trial access';
 
   @override
@@ -1358,4 +1373,36 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get vpnNoticeSignInBody =>
       'Wi-Fi may need a sign-in. Open your browser or switch networks.';
+
+  @override
+  String get paywallWataSandboxNotice => 'WATA test payment. No real charge.';
+
+  @override
+  String get paywallExternalBrowserHint =>
+      'The GRANI website will open. No second sign-in is needed.';
+
+  @override
+  String get paywallTrustWata => 'WATA payment';
+
+  @override
+  String get paywallSameAccount => 'No second sign-in';
+
+  @override
+  String get paywallOpeningBrowser => 'Opening payment page…';
+
+  @override
+  String get paywallResumeExternal => 'Continue payment';
+
+  @override
+  String get paywallTestWataPayment => 'Test WATA payment';
+
+  @override
+  String get paywallPaySbp => 'Continue to website payment';
+
+  @override
+  String get paywallPaymentReview =>
+      'We are checking your previous payment to prevent a duplicate charge. If the status does not change, contact support@granilink.com.';
+
+  @override
+  String get paywallPaymentReviewShort => 'Checking payment';
 }

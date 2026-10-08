@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/app_config.dart';
+import 'referral_service.dart';
+import 'regional_checkout_service.dart';
 import '../core/logger/logger.dart';
 import '../core/storage/shared_preferences_holder.dart';
 
@@ -16,6 +18,10 @@ import '../core/storage/shared_preferences_holder.dart';
 /// device model, email, or other personal identifier is stored.
 class InstallAttributionService {
   InstallAttributionService._();
+
+  @visibleForTesting
+  factory InstallAttributionService.forTesting() =>
+      InstallAttributionService._();
 
   static final InstallAttributionService instance =
       InstallAttributionService._();
@@ -59,6 +65,7 @@ class InstallAttributionService {
   final _logger = Logger();
   Map<String, String> _attribution = const {};
   bool _initialized = false;
+  String? _pendingPaymentRoute;
 
   Stream<String> get links => _links.stream;
 
@@ -105,6 +112,7 @@ class InstallAttributionService {
           referrerRead = true;
           final raw = response['install_referrer']?.toString() ?? '';
           final parsed = Uri.splitQueryString(raw);
+          await ReferralService.instance.capture(parsed['referral_code']);
           final safe = _safeAttribution(parsed, base: _attribution);
           final clickTime = int.tryParse(
               response['click_timestamp_seconds']?.toString() ?? '');
@@ -135,10 +143,17 @@ class InstallAttributionService {
     if (uri == null ||
         uri.scheme != 'https' ||
         uri.host != 'granilink.com' ||
-        (uri.path != '/open' && !uri.path.startsWith('/open/'))) {
+        (uri.path != '/open' &&
+            !uri.path.startsWith('/open/') &&
+            !uri.path.startsWith('/r/'))) {
       return;
     }
-    final route = _mapPath(uri.path);
+    final referralCode = ReferralService.codeFromUri(uri);
+    if (uri.path.startsWith('/r/') && referralCode == null) return;
+    await ReferralService.instance.capture(referralCode);
+    final route = referralCode != null || uri.path == '/open/invite'
+        ? '/gift/receive'
+        : _mapPath(uri.path);
     final prefs = await getSharedPreferences();
     final safe = _safeAttribution(uri.queryParameters, base: _attribution);
     if (safe.isNotEmpty) {
@@ -146,7 +161,18 @@ class InstallAttributionService {
       await prefs.setString(_attributionKey, jsonEncode(safe));
       await _logCampaignDetails();
     }
-    await prefs.setString(_pendingRouteKey, route);
+    if (route == '/payment-result') {
+      await RegionalCheckoutService.rememberPaymentReturn(
+          uri.queryParameters['order_id']);
+      // A purchase ID survives independently in RegionalCheckoutService.
+      // Payment navigation belongs to this incoming link, not to a later
+      // ordinary launcher start. Keep it only through the current login flow.
+      _pendingPaymentRoute = route;
+      await prefs.remove(_pendingRouteKey);
+    } else {
+      _pendingPaymentRoute = null;
+      await prefs.setString(_pendingRouteKey, route);
+    }
     _links.add(route);
   }
 
@@ -225,6 +251,8 @@ class InstallAttributionService {
     switch (path) {
       case '/open/settings/split-tunneling':
         return '/split-tunnel';
+      case '/open/payment':
+        return '/payment-result';
       case '/open/pay':
         return '/trial-ended';
       case '/open':
@@ -236,12 +264,45 @@ class InstallAttributionService {
     }
   }
 
+  Future<void> clearGiftRoute() async {
+    final prefs = await getSharedPreferences();
+    if (const {'/referrals', '/gift/receive'}
+        .contains(prefs.getString(_pendingRouteKey))) {
+      await prefs.remove(_pendingRouteKey);
+    }
+  }
+
   Future<String?> takePendingRouteIfAuthorized(bool authorized) async {
-    if (!authorized) return null;
+    if (!authorized) {
+      // A fresh payment return must wait for login, even with a saved gift.
+      if (_pendingPaymentRoute != null) return null;
+      return await ReferralService.instance.needsGiftReturn()
+          ? '/gift/receive'
+          : null;
+    }
+    final paymentRoute = _pendingPaymentRoute;
+    if (paymentRoute != null) {
+      _pendingPaymentRoute = null;
+      return paymentRoute;
+    }
     final prefs = await getSharedPreferences();
     final route = prefs.getString(_pendingRouteKey);
     if (route != null) await prefs.remove(_pendingRouteKey);
-    return route;
+    // Version54 could persist a payment return that had already been shown.
+    // Migrate only navigation; retain the owned purchase and all account data.
+    // Navigation migration never clears the financial intent or invitation.
+    if (await ReferralService.instance.needsGiftReturn())
+      return '/gift/receive';
+    if (route == '/payment-result') return null;
+    return route == '/referrals' ? '/gift/receive' : route;
+  }
+
+  Future<void> acknowledgeHandledRoute(String route) async {
+    if (_pendingPaymentRoute == route) _pendingPaymentRoute = null;
+    final prefs = await getSharedPreferences();
+    if (prefs.getString(_pendingRouteKey) == route) {
+      await prefs.remove(_pendingRouteKey);
+    }
   }
 
   Future<void> logLifecycleEvent(

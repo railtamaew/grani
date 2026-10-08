@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'referral_service.dart';
+import 'origin_billing_transport.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'package:dio/dio.dart';
@@ -8,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../models/user.dart';
+import '../models/profile_access_snapshot.dart';
 import '../config/app_config.dart';
 import '../core/api/api_client.dart';
 import '../core/api/endpoint_router.dart';
@@ -196,6 +199,7 @@ class AuthService extends ChangeNotifier {
   int? _dailyCodeSent;
   String? _authCodeRequestId;
   DateTime? _tokenExpiresAt;
+  ProfileAccessSnapshot? _profileAccessSnapshot;
   int? _trialSecondsLeft; // Оставшееся время триала в секундах.
   int _trialTotalSeconds = 24 * 60 * 60;
   String _trialExperimentVariant = 'legacy_24h';
@@ -203,6 +207,8 @@ class AuthService extends ChangeNotifier {
   DateTime? _subscriptionExpiresAt;
   DateTime? _subscriptionStartedAt;
   String? _subscriptionPlanName;
+  String? _subscriptionSource;
+  bool? _subscriptionAutoRenew;
   // Pending-ошибка лимита устройств, чтобы показать DeviceLimitScreen после авторизации.
   List<dynamic> _pendingDeviceLimitDevices = const [];
   String? _pendingDeviceLimitMessage;
@@ -671,12 +677,41 @@ class AuthService extends ChangeNotifier {
   int? get dailyCodeRemaining => _dailyCodeRemaining;
   String? get authCodeRequestId => _authCodeRequestId;
   int? get dailyCodeSent => _dailyCodeSent;
+  ProfileAccessSnapshot get profileAccessSnapshot =>
+      _profileAccessSnapshot ??
+      ProfileAccessSnapshot(
+        capturedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        // Old paid caches already have a fixed expiry. A trial's old remaining
+        // seconds have no timestamp, so never derive a new expiry from them.
+        known: _hasActiveSubscription && isAuthenticated,
+        active: _hasActiveSubscription && isAuthenticated,
+        source: _subscriptionSource,
+        subscriptionExpiresAt: ProfileAccessSnapshot.serverDate(
+            _subscriptionExpiresAt?.toIso8601String()),
+        autoRenew: _subscriptionAutoRenew == true,
+        subscriptionStartedAt: ProfileAccessSnapshot.serverDate(
+            _subscriptionStartedAt?.toIso8601String()),
+      );
+
   int? get trialSecondsLeft => _trialSecondsLeft;
   int get trialTotalSeconds => _trialTotalSeconds;
   String get trialExperimentVariant => _trialExperimentVariant;
 
   void _applyTrialMetadataFromPayload(dynamic raw) {
     if (raw is! Map) return;
+    if (raw.containsKey('trialSecondsLeft') ||
+        raw.containsKey('trial_seconds_left') ||
+        raw.containsKey('hasActiveSubscription') ||
+        raw.containsKey('has_active_subscription')) {
+      final snapshotAccount = _token == null
+          ? null
+          : ReferralService.instance.presentationAccount(_token!);
+      _profileAccessSnapshot = ProfileAccessSnapshot.fromPayload(
+          Map<String, dynamic>.from(raw),
+          now: DateTime.now(),
+          accountKey: snapshotAccount == 'session' ? null : snapshotAccount,
+          previous: _profileAccessSnapshot);
+    }
     final totalRaw = raw['trialTotalSeconds'] ?? raw['trial_total_seconds'];
     final parsedTotal =
         totalRaw is int ? totalRaw : int.tryParse(totalRaw?.toString() ?? '');
@@ -698,6 +733,10 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> _persistTrialMetadata(SharedPreferences prefs) async {
+    if (_profileAccessSnapshot != null) {
+      await prefs.setString('profile_access_snapshot_v1',
+          jsonEncode(_profileAccessSnapshot!.toJson()));
+    }
     await prefs.setInt('trial_total_seconds', _trialTotalSeconds);
     await prefs.setString(
       'trial_experiment_variant',
@@ -709,6 +748,8 @@ class AuthService extends ChangeNotifier {
   DateTime? get subscriptionExpiresAt => _subscriptionExpiresAt;
   DateTime? get subscriptionStartedAt => _subscriptionStartedAt;
   String? get subscriptionPlanName => _subscriptionPlanName;
+  String? get subscriptionSource => _subscriptionSource;
+  bool? get subscriptionAutoRenew => _subscriptionAutoRenew;
   int get maxDevices => _maxDevices ?? AppConfig.maxDevices;
 
   /// Итоговый статус пользователя по hasActiveSubscription и trialSecondsLeft.
@@ -842,6 +883,7 @@ class AuthService extends ChangeNotifier {
       return;
     }
 
+    await ReferralService.instance.claimPending(_token);
     final flushed = await flushPendingGooglePlayVerification();
     if (flushed) {
       debugPrint(
@@ -976,6 +1018,39 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// Private billing transport. Origin routes use the physical network and
+  /// never send a client-selected country. Legacy Play data is not persisted.
+  Future<Map<String, dynamic>> regionalBillingRequest(
+    String path,
+    Map<String, dynamic>? body,
+  ) async {
+    final accountId = user?.id;
+    if (!path.startsWith('/payments/wata/') ||
+        accountId == null ||
+        !isAuthenticated ||
+        !await ensureValidToken() ||
+        _token == null ||
+        user?.id != accountId) {
+      throw StateError('Checkout unavailable');
+    }
+    if (path.contains('/origin/')) {
+      final data = await OriginBillingTransport.post(path, body ?? {}, _token!);
+      if (user?.id != accountId) throw StateError('Checkout account changed');
+      return data;
+    }
+    final response = body == null
+        ? await _getWithFallbacks(path,
+            headers: {'Authorization': 'Bearer $_token'})
+        : await _postViaApiClient(path, body,
+            extraHeaders: {'Authorization': 'Bearer $_token'},
+            receiveTimeout: const Duration(seconds: 25));
+    final data = _normalizeMap(response.data);
+    if (user?.id != accountId || response.statusCode != 200 || data == null) {
+      throw StateError('Checkout unavailable');
+    }
+    return data;
+  }
+
   /// Верификация покупки Google Play на бэкенде. Вызывать после успешного buy().
   /// Возвращает true при успехе.
   Future<bool> verifyGooglePlayPurchase({
@@ -1082,12 +1157,26 @@ class AuthService extends ChangeNotifier {
         startedStr != null ? DateTime.tryParse(startedStr) : null;
 
     _subscriptionPlanName = data['subscription_plan_name'] as String?;
+    _subscriptionSource = data['subscription_source'] as String?;
+    _subscriptionAutoRenew = data['subscription_auto_renew'] is bool
+        ? data['subscription_auto_renew'] as bool
+        : null;
 
     final md = data['max_devices'];
     _maxDevices = md is int ? md : null;
   }
 
   Future<void> _saveSubscriptionDetailsToPrefs(SharedPreferences prefs) async {
+    if (_subscriptionSource != null) {
+      await prefs.setString('subscription_source', _subscriptionSource!);
+    } else {
+      await prefs.remove('subscription_source');
+    }
+    if (_subscriptionAutoRenew != null) {
+      await prefs.setBool('subscription_auto_renew', _subscriptionAutoRenew!);
+    } else {
+      await prefs.remove('subscription_auto_renew');
+    }
     if (_subscriptionExpiresAt != null) {
       await prefs.setString(
           'subscription_expires_at', _subscriptionExpiresAt!.toIso8601String());
@@ -1162,6 +1251,33 @@ class AuthService extends ChangeNotifier {
       _authType = prefs.getString('auth_type');
       final email = prefs.getString('user_email');
 
+      try {
+        final cached = prefs.getString('profile_access_snapshot_v1');
+        if (cached == null) {
+          _profileAccessSnapshot = null;
+        } else {
+          final snapshotData =
+              Map<String, dynamic>.from(jsonDecode(cached) as Map);
+          final owner = _token == null
+              ? null
+              : ReferralService.instance.presentationAccount(_token!);
+          // Bind the old display cache only when its saved user matches this JWT.
+          if (snapshotData['account_key'] == null &&
+              owner != null &&
+              owner != 'session' &&
+              owner == prefs.getString('user_id')) {
+            snapshotData['account_key'] = owner;
+          }
+          _profileAccessSnapshot = ProfileAccessSnapshot.fromJson(snapshotData);
+          if (snapshotData['account_key'] != null &&
+              snapshotData['account_key'] != owner) {
+            _profileAccessSnapshot = null;
+          }
+        }
+      } catch (_) {
+        _profileAccessSnapshot =
+            null; // A damaged UI cache must not affect sign-in.
+      }
       _trialSecondsLeft = prefs.getInt('trial_seconds_left');
       _trialTotalSeconds = prefs.getInt('trial_total_seconds') ?? 24 * 60 * 60;
       _trialExperimentVariant = prefs.getString('trial_experiment_variant') ??
@@ -1176,6 +1292,8 @@ class AuthService extends ChangeNotifier {
       _subscriptionStartedAt =
           startedStr != null ? DateTime.tryParse(startedStr) : null;
       _subscriptionPlanName = prefs.getString('subscription_plan_name');
+      _subscriptionSource = prefs.getString('subscription_source');
+      _subscriptionAutoRenew = prefs.getBool('subscription_auto_renew');
       final savedMaxDevices = prefs.getInt('max_devices');
       _maxDevices = savedMaxDevices;
 
@@ -1292,6 +1410,12 @@ class AuthService extends ChangeNotifier {
         await prefs.setBool('has_active_subscription', hasActiveSubscription);
       }
       await _syncFirebaseAnalyticsUserId(userId ?? _user?.id);
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+        // Best effort after authentication. Checkout always makes a fresh check.
+        unawaited(OriginBillingTransport.post(
+                '/payments/wata/origin/observe', {}, token)
+            .then<void>((_) {}, onError: (Object _) {}));
+      }
       debugPrint('AuthService._saveToken: успешно сохранено');
     } catch (e, st) {
       debugPrint('AuthService._saveToken: исключение при сохранении: $e');
@@ -1314,7 +1438,11 @@ class AuthService extends ChangeNotifier {
     await prefs.remove('subscription_expires_at');
     await prefs.remove('subscription_started_at');
     await prefs.remove('subscription_plan_name');
+    await prefs.remove('subscription_source');
+    await prefs.remove('subscription_auto_renew');
     await prefs.remove('max_devices');
+    await prefs.remove('profile_access_snapshot_v1');
+    _profileAccessSnapshot = null;
     await prefs.remove(_prefsPendingGooglePlayVerify);
     _token = null;
     _refreshToken = null;
@@ -1324,6 +1452,8 @@ class AuthService extends ChangeNotifier {
     _subscriptionExpiresAt = null;
     _subscriptionStartedAt = null;
     _subscriptionPlanName = null;
+    _subscriptionSource = null;
+    _subscriptionAutoRenew = null;
     _maxDevices = null;
     _authCodeRequestId = null;
     _networkWarmupDone = false;
@@ -1698,6 +1828,7 @@ class AuthService extends ChangeNotifier {
         final response = await _postViaApiClient(
           '/auth/google/callback',
           {
+            'referral_code': await ReferralService.instance.pendingCode(),
             'id_token': googleAuth.idToken,
             'access_token': googleAuth.accessToken,
           },
@@ -2304,6 +2435,7 @@ class AuthService extends ChangeNotifier {
 
       // Формируем payload для запроса.
       final requestData = {
+        'referral_code': await ReferralService.instance.pendingCode(),
         'email': email,
         'code': normalizedCode,
         if ((_authCodeRequestId ?? '').isNotEmpty)

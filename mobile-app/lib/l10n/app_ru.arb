@@ -293,6 +293,11 @@
   "profileSubscriptionPlan": "План:",
   "profileSubscriptionPlanNameFallback": "Premium",
   "profileNextPayment": "Следующий платеж",
+  "profileAccessUntil": "Доступ до",
+  "profilePaymentMethod": "Оплата",
+  "profilePaymentSbp": "СБП",
+  "paywallCheckPayment": "Проверить оплату",
+  "paywallRestorePurchases": "Восстановить покупки",
   "profileTrialAccess": "Тестовый доступ",
   "profileTrialEnds": "Заканчивается:",
   "profileNoPlan": "Подписка отсутствует",
@@ -529,5 +534,15 @@
   "vpnNoticeTunnelTitle": "VPN пока недоступен",
   "vpnNoticeTunnelBody": "Сеть отвечает, но VPN не подключён. Попробуйте другую сеть.",
   "vpnNoticeSignInTitle": "Проверьте доступ к сети",
-  "vpnNoticeSignInBody": "Возможно, нужен вход в Wi-Fi. Откройте браузер или смените сеть."
+  "vpnNoticeSignInBody": "Возможно, нужен вход в Wi-Fi. Откройте браузер или смените сеть.",
+  "paywallWataSandboxNotice": "Тестовая оплата WATA. Без реального списания.",
+  "paywallExternalBrowserHint": "Откроется сайт GRANI. Повторный вход не потребуется.",
+  "paywallTrustWata": "Оплата через WATA",
+  "paywallSameAccount": "Без повторного входа",
+  "paywallOpeningBrowser": "Открываем страницу оплаты…",
+  "paywallResumeExternal": "Продолжить оплату",
+  "paywallTestWataPayment": "Тестовая оплата WATA",
+  "paywallPaySbp": "Перейти к оплате на сайте",
+  "paywallPaymentReview": "Проверяем предыдущий платёж, чтобы не списать деньги дважды. Если статус долго не меняется, напишите на support@granilink.com.",
+  "paywallPaymentReviewShort": "Проверяем платёж"
 }

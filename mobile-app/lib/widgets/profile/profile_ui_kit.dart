@@ -1,49 +1,45 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../theme.dart';
-
-bool get isWindowsProfile =>
-    !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
-
-// Windows menus need readable wrapped lines, rather than the mobile artwork's
-// tight 0.9 line height. Keep system text scaling and Android styles intact.
-TextStyle get profileBodyStyle => isWindowsProfile
-    ? GraniTheme.bodyMedium.copyWith(height: 1.3, fontSize: 13.5)
-    : GraniTheme.bodyMedium;
 
 /// Единый заголовок секции профиля (иконка + title).
 class GraniSectionHeader extends StatelessWidget {
   final String iconSvg;
   final String title;
   final double iconSize;
+  final IconData? icon;
 
   const GraniSectionHeader({
     super.key,
     required this.iconSvg,
     required this.title,
     this.iconSize = 20,
+    this.icon,
   });
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        SvgPicture.asset(
-          iconSvg,
-          width: iconSize,
-          height: iconSize,
-          fit: BoxFit.contain,
-        ),
+        if (icon != null)
+          Icon(icon, size: iconSize, color: GraniTheme.primaryText)
+        else
+          SvgPicture.asset(
+            iconSvg,
+            width: iconSize,
+            height: iconSize,
+            fit: BoxFit.contain,
+          ),
         const SizedBox(width: 10),
-        Text(
+        Expanded(
+            child: Text(
           title,
-          style: profileBodyStyle.copyWith(
+          style: GraniTheme.bodyMedium.copyWith(
             fontWeight: FontWeight.w700,
-            fontSize: isWindowsProfile ? 14 : 16,
+            fontSize: 16,
             color: GraniTheme.primaryText,
           ),
-        ),
+        )),
       ],
     );
   }
@@ -56,6 +52,8 @@ class GraniSectionCard extends StatelessWidget {
   final VoidCallback? onTap;
   final EdgeInsetsGeometry padding;
   final bool emphasized;
+  final Gradient? gradient;
+  final Color? borderColor;
 
   const GraniSectionCard({
     super.key,
@@ -63,38 +61,38 @@ class GraniSectionCard extends StatelessWidget {
     this.onTap,
     this.padding = const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
     this.emphasized = false,
+    this.gradient,
+    this.borderColor,
   });
 
   @override
   Widget build(BuildContext context) {
     final content = Padding(
-      padding: isWindowsProfile &&
-              padding ==
-                  const EdgeInsets.symmetric(horizontal: 15, vertical: 13)
-          ? const EdgeInsets.symmetric(horizontal: 12, vertical: 4)
-          : padding,
+      padding: padding,
       child: child,
     );
 
     final decorated = Container(
       decoration: BoxDecoration(
-        gradient: emphasized
-            ? const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFFFFFFFF),
-                  Color(0xFFF9FBFD),
-                  Color(0xFFF3F6F9),
-                ],
-                stops: [0.0, 0.56, 1.0],
-              )
-            : GraniTheme.surfaceControlGradient,
+        gradient: gradient ??
+            (emphasized
+                ? const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color(0xFFFFFFFF),
+                      Color(0xFFF9FBFD),
+                      Color(0xFFF3F6F9),
+                    ],
+                    stops: [0.0, 0.56, 1.0],
+                  )
+                : GraniTheme.surfaceControlGradient),
         borderRadius: BorderRadius.circular(GraniTheme.profileCardRadius),
         border: Border.all(
-          color: emphasized
-              ? GraniTheme.surfaceControlBorder.withOpacity(0.96)
-              : GraniTheme.surfaceControlBorder.withOpacity(0.78),
+          color: borderColor ??
+              (emphasized
+                  ? GraniTheme.surfaceControlBorder.withOpacity(0.96)
+                  : GraniTheme.surfaceControlBorder.withOpacity(0.78)),
           width: 1,
         ),
         boxShadow: emphasized
@@ -131,6 +129,7 @@ class GraniSectionRow extends StatelessWidget {
   final bool enabled;
   final double iconSize;
   final double spacingAfterIcon;
+  final IconData trailingIcon;
 
   const GraniSectionRow({
     super.key,
@@ -144,37 +143,38 @@ class GraniSectionRow extends StatelessWidget {
     this.enabled = true,
     this.iconSize = 20,
     this.spacingAfterIcon = 10,
+    this.trailingIcon = Icons.chevron_right,
   });
 
   @override
   Widget build(BuildContext context) {
     final defaultLabelWidget = Text(
       label ?? '',
-      style: profileBodyStyle.copyWith(
-        fontSize: isWindowsProfile ? 13.5 : 14.5,
+      style: GraniTheme.bodyMedium.copyWith(
+        fontSize: 14.5,
         fontWeight: FontWeight.w600,
         letterSpacing: 0,
         color: GraniTheme.primaryText,
       ),
-      overflow: isWindowsProfile ? TextOverflow.visible : TextOverflow.ellipsis,
+      overflow: TextOverflow.ellipsis,
     );
 
     final defaultValueWidget = Text(
       value ?? '—',
-      style: profileBodyStyle.copyWith(
+      style: GraniTheme.bodyMedium.copyWith(
         color: GraniTheme.primaryText,
         fontWeight: FontWeight.w600,
-        fontSize: isWindowsProfile ? 13.5 : 14.5,
+        fontSize: 14.5,
         letterSpacing: 0,
       ),
-      maxLines: isWindowsProfile ? null : 1,
-      overflow: isWindowsProfile ? TextOverflow.visible : TextOverflow.ellipsis,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
     );
 
     final row = Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: isWindowsProfile ? 0 : 14,
-        vertical: isWindowsProfile ? 10 : 11,
+      padding: const EdgeInsets.symmetric(
+        horizontal: 14,
+        vertical: 11,
       ),
       child: Row(
         children: [
@@ -200,31 +200,21 @@ class GraniSectionRow extends StatelessWidget {
           ),
           SizedBox(width: spacingAfterIcon),
           Expanded(
-            child: isWindowsProfile
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      labelWidget ?? defaultLabelWidget,
-                      if (valueWidget != null || value != null) ...[
-                        const SizedBox(height: 3),
-                        valueWidget ?? defaultValueWidget,
-                      ],
-                    ],
-                  )
-                : labelWidget ?? defaultLabelWidget,
+            child: labelWidget ?? defaultLabelWidget,
           ),
-          if (!isWindowsProfile && (valueWidget != null || value != null)) ...[
+          if (valueWidget != null || value != null) ...[
             const SizedBox(width: 8),
-            valueWidget ?? defaultValueWidget,
+            Flexible(child: valueWidget ?? defaultValueWidget),
           ],
-          const SizedBox(width: 4),
-          Icon(
-            Icons.chevron_right,
-            size: 20,
-            color:
-                enabled ? const Color(0xFF8A96A3) : GraniTheme.surfaceVariant,
-          ),
+          if (onTap != null) ...[
+            const SizedBox(width: 4),
+            Icon(
+              trailingIcon,
+              size: 20,
+              color:
+                  enabled ? const Color(0xFF8A96A3) : GraniTheme.surfaceVariant,
+            )
+          ],
         ],
       ),
     );
@@ -237,7 +227,8 @@ class GraniSectionRow extends StatelessWidget {
 
     return Semantics(
       label: semanticLabel,
-      button: true,
+      button: onTap != null,
+      enabled: enabled,
       child: tappable,
     );
   }

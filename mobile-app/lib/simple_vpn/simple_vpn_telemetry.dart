@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 typedef TelemetrySender = Future<Set<String>> Function(
@@ -21,13 +23,23 @@ class SimpleVpnTelemetry {
         _write = write ?? _writePreferences,
         _now = now ?? DateTime.now;
 
-  static const storageKey = 'simple_vpn_telemetry_v2';
-  static const maxEntries = 64;
+  // v2 has no account ownership. Never relabel its queued records after login.
+  static const storageKey = 'simple_vpn_telemetry_v3';
+  static const maxEntries = 128;
   static const maxEventBytes = 3072;
   static const maxBatch = 8;
   static const minInterval = Duration(minutes: 1);
   static const maxAge = Duration(hours: 24);
   static const acceptedEvents = <String>{
+    'connect_intent',
+    'attempt_started',
+    'connect_deferred',
+    'vpn_existing_session_adopted',
+    'ui_state_transition',
+    'attempt_blocked',
+    'device_limit_blocked',
+    'access_required_disconnect',
+    'telemetry_health',
     'connect_tap',
     'native_start_ok',
     'connect_failed',
@@ -40,6 +52,17 @@ class SimpleVpnTelemetry {
     'connectivity_probe',
   };
   static const detailFields = <String>{
+    'intent_id',
+    'attempt_id',
+    'reason_code',
+    'failure_stage',
+    'error_family',
+    'from',
+    'to',
+    'ui_state_from',
+    'ui_state_to',
+    'state_reason',
+    'contract_version',
     'protocol',
     'selected_protocol',
     'runtime_protocol',
@@ -112,11 +135,20 @@ class SimpleVpnTelemetry {
   Future<void> _serial = Future<void>.value();
   Timer? _timer;
   DateTime? _nextSend;
+  DateTime? _lastAttempt;
   bool _loaded = false;
   bool _sending = false;
   bool _disposed = false;
   int _failures = 0;
   int droppedEvents = 0;
+  String? _installationId;
+  int _sequence = 0;
+
+  static String _randomId() {
+    final random = Random.secure();
+    return List.generate(16,
+        (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+  }
 
   static Future<String?> _readPreferences() async =>
       (await SharedPreferences.getInstance()).getString(storageKey);
@@ -137,7 +169,11 @@ class SimpleVpnTelemetry {
       if (raw != null && utf8.encode(raw).length <= 256 * 1024) {
         final value = jsonDecode(raw) as Map;
         _nextSend = DateTime.tryParse(value['next_send']?.toString() ?? '');
+        _lastAttempt = DateTime.tryParse(value['last_attempt']?.toString() ?? '');
         _failures = (value['failures'] as num?)?.toInt() ?? 0;
+        _installationId = value['installation_id'] as String?;
+        _sequence = (value['sequence'] as num?)?.toInt() ?? 0;
+        droppedEvents = (value['dropped_events'] as num?)?.toInt() ?? 0;
         for (final item
             in (value['events'] as List? ?? const []).take(maxEntries)) {
           if (item is Map &&
@@ -150,6 +186,7 @@ class SimpleVpnTelemetry {
       // A corrupt diagnostic cache must never prevent a VPN connection.
     }
     _loaded = true;
+    _installationId ??= _randomId();
     _prune();
   }
 
@@ -172,13 +209,20 @@ class SimpleVpnTelemetry {
   Future<void> _persist() => _write(jsonEncode({
         'events': _entries,
         'next_send': _nextSend?.toUtc().toIso8601String(),
+        'last_attempt': _lastAttempt?.toUtc().toIso8601String(),
         'failures': _failures,
+        'installation_id': _installationId,
+        'sequence': _sequence,
+        'dropped_events': droppedEvents,
       }));
 
   /// Completes after local enqueue, never after an HTTP request.
   Future<void> enqueue(Map<String, dynamic> payload) async {
     if (_disposed || !acceptedEvents.contains(payload['event'])) return;
-    if ((payload['device_id']?.toString() ?? '').isEmpty) return;
+    if (int.tryParse(payload['owner_id']?.toString() ?? '') == null) {
+      debugPrint('[PRODUCT_TELEMETRY] dropped reason=invalid_account');
+      return;
+    }
     try {
       await _locked(() async {
         await _load();
@@ -208,15 +252,16 @@ class SimpleVpnTelemetry {
           }
           _probeTimes[key] = now;
         }
-        final random = Random.secure();
-        final id = List.generate(16,
-                (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'))
-            .join();
-        details['schema_version'] = 2;
+        final id = _randomId();
+        details['schema_version'] = 3;
+        details['event_sequence'] = ++_sequence;
+        details['queue_dropped_events'] = droppedEvents;
         details['observed_at'] = now.toUtc().toIso8601String();
         details['idempotency_key'] = id;
         final item = <String, dynamic>{
           'event_id': id,
+          'installation_id': _installationId,
+          'owner_id': int.parse(payload['owner_id'].toString()),
           'observed_at': details['observed_at'],
           'event': payload['event'],
           'device_id': payload['device_id'],
@@ -232,16 +277,37 @@ class SimpleVpnTelemetry {
         _entries.add(item);
         _prune();
         await _persist();
+        debugPrint('[PRODUCT_TELEMETRY] queued event=${payload['event']} count=${_entries.length}');
       });
       _schedule();
-    } catch (_) {
+    } catch (error) {
       // Storage failure affects diagnostics only.
+      debugPrint('[PRODUCT_TELEMETRY] storage_error type=${error.runtimeType}');
     }
   }
 
-  void connectionStateChanged() {
+  Future<void> connectionStateChanged({bool connectionRecovered = false}) async {
     if (!canSend()) cancelSend?.call();
-    _schedule();
+    try {
+      await _locked(() async {
+        await _load();
+        if (connectionRecovered && canSend() && _failures > 0) {
+          // A working VPN is new evidence that a queued retry can succeed.
+          // Keep the one-batch-per-minute cap, including persisted old queues.
+          final earliest = (_lastAttempt ?? _now()).add(minInterval);
+          final retry = earliest.isAfter(_now()) ? earliest : _now();
+          if (_nextSend == null || _nextSend!.isAfter(retry)) _nextSend = retry;
+          _failures = 0;
+          await _persist();
+        }
+      });
+    } catch (error) {
+      debugPrint('[PRODUCT_TELEMETRY] resume_error type=${error.runtimeType}');
+    } finally {
+      _timer?.cancel();
+      _timer = null;
+      _schedule();
+    }
   }
 
   Future<void> resume() async {
@@ -286,9 +352,15 @@ class SimpleVpnTelemetry {
         }
         batch = _entries
             .take(maxBatch)
-            .map((e) => Map<String, dynamic>.from(e))
+            .map((e) => <String,dynamic>{...e, 'details': <String,dynamic>{
+              ...Map<String,dynamic>.from(e['details'] as Map),
+              'queue_dropped_events': droppedEvents,
+              'queue_oldest_age_ms': max(0, _now().difference(
+                DateTime.tryParse(e['observed_at'].toString()) ?? _now()).inMilliseconds),
+            }})
             .toList();
         if (batch.isNotEmpty) {
+          _lastAttempt = _now();
           _nextSend = _now().add(minInterval);
           await _persist();
         }
@@ -306,7 +378,8 @@ class SimpleVpnTelemetry {
         _failures = 0;
         await _persist();
       });
-    } catch (_) {
+    } catch (error) {
+      debugPrint('[PRODUCT_TELEMETRY] retry type=${error.runtimeType}');
       try {
         await _locked(() async {
           _failures = min(_failures + 1, 6);

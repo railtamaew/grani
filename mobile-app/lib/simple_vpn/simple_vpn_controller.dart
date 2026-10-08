@@ -455,6 +455,9 @@ class SimpleVpnController extends ChangeNotifier {
   int _connectAttemptId = 0;
   int _disconnectOperationId = 0;
   int _uiStateTraceSeq = 0;
+  String? _lastUiTelemetrySessionId;
+  String? _lastUiTelemetryRuntimeId;
+  String? _lastUiTelemetryDeviceId;
   int _lastNativeStateSequence = 0;
   String? _activeNativeProtocolId;
   bool _connectCancelRequested = false;
@@ -519,6 +522,9 @@ class SimpleVpnController extends ChangeNotifier {
 
   SimpleVpnState get state => _state;
   String? get sessionId => _sessionId;
+
+  /// Stable tunnel identity; the backend session may arrive asynchronously.
+  String? get nativeRuntimeSessionId => _currentNativeRuntimeSessionId();
   String get serverName => _serverName ?? _selectedServer?.name ?? 'GRANI VPN';
   String? get error => _error;
   VpnNetworkNotice? get networkNotice =>
@@ -700,6 +706,32 @@ class SimpleVpnController extends ChangeNotifier {
     _dataPlaneReadyCompleter = null;
     _dataPlaneReadySessionId = null;
     _dataPlaneGateError = null;
+  }
+
+  Future<String> _prepareNativeConfigRetry({
+    required int attemptId,
+    required String protocol,
+    required String? previousSessionId,
+  }) async {
+    _throwIfConnectCancelled(attemptId);
+    // The native start result has crossed its teardown barrier. Give the
+    // replacement runtime its own gate and identity so queued error/stop
+    // events from the failed cached profile cannot cancel the fresh profile.
+    _markRuntimeSessionTerminal(previousSessionId);
+    final retrySessionId = _createRuntimeOnlySessionId(
+      attemptId: attemptId,
+      protocol: protocol,
+    );
+    if (_isRuntimeOnlySessionId(_sessionId)) _sessionId = retrySessionId;
+    _runtimeSessionId = retrySessionId;
+    _activeConnectSessionId = retrySessionId;
+    _pendingNativeTrafficProof = null;
+    _prepareDataPlaneGate(retrySessionId);
+    _error = null;
+    _setState(SimpleVpnState.connecting);
+    await _persistActiveRuntimeSessionId(retrySessionId);
+    _throwIfConnectCancelled(attemptId);
+    return retrySessionId;
   }
 
   Future<void> _terminateBackendSession({
@@ -920,7 +952,9 @@ class SimpleVpnController extends ChangeNotifier {
     required List<SimpleVpnProtocol> protocols,
     required int? preferredServerId,
     required String? preferredProtocolId,
+    bool preserveProtocolMissingFromCache = false,
   }) {
+    final previousProtocols = _protocols;
     if (servers.isNotEmpty) {
       _servers = servers;
     }
@@ -954,9 +988,19 @@ class SimpleVpnController extends ChangeNotifier {
                   : fallbackProtocolId;
       _selectedProtocol = _protocols.firstWhere(
         (protocol) => protocol.id == preferredId,
-        orElse: () => _protocols.firstWhere(
-          (protocol) => protocol.id == fallbackProtocolId,
-        ),
+        orElse: () {
+          // The startup server snapshot contains only fallback protocols.
+          // Keep the saved selection until the authoritative catalog arrives;
+          // a partial cache must not persist VLESS over a saved WireGuard.
+          if (preserveProtocolMissingFromCache) {
+            for (final protocol in previousProtocols) {
+              if (protocol.id == preferredId) return protocol;
+            }
+          }
+          return _protocols.firstWhere(
+            (protocol) => protocol.id == fallbackProtocolId,
+          );
+        },
       );
       unawaited(_persistSelectedProtocolId(_selectedProtocol.id));
     }
@@ -1010,6 +1054,7 @@ class SimpleVpnController extends ChangeNotifier {
         protocols: cachedProtocols,
         preferredServerId: preferredServerId,
         preferredProtocolId: preferredProtocolId,
+        preserveProtocolMissingFromCache: true,
       );
       _error = null;
       _notify();
@@ -1082,10 +1127,16 @@ class SimpleVpnController extends ChangeNotifier {
             orElse: () => server,
           );
           _serverName = cachedConfig.serverName;
+          // A cached profile can provide a location without changing the
+          // protocol explicitly saved by the user for the next connection.
+          final selectionProtocolId =
+              _isProtocolSupportedByRuntime(preferredProtocolId)
+                  ? preferredProtocolId!
+                  : cachedConfig.protocol;
           _selectedProtocol = _protocols.firstWhere(
-            (protocol) => protocol.id == cachedConfig.protocol,
+            (protocol) => protocol.id == selectionProtocolId,
             orElse: () => SimpleVpnProtocol(
-              id: cachedConfig.protocol,
+              id: selectionProtocolId,
               engine: cachedConfig.engine,
               status: 'active',
               role: 'cached_config',
@@ -1093,7 +1144,7 @@ class SimpleVpnController extends ChangeNotifier {
           );
           _error = null;
           unawaited(_persistSelectedServerId(server.id));
-          unawaited(_persistSelectedProtocolId(cachedConfig.protocol));
+          unawaited(_persistSelectedProtocolId(selectionProtocolId));
           await _persistCachedOptions();
           debugPrint(
             'SimpleVpnController.options_hydrated_from_config '
@@ -1141,16 +1192,50 @@ class SimpleVpnController extends ChangeNotifier {
     }
   }
 
-  /// Fetches and caches every active (server, protocol) profile while the
-  /// post-auth preparation screen is visible. This is the single heavy
-  /// control-plane stage shared by trial and subscribed users; later connects
-  /// should only apply an already issued local profile and start the backend
-  /// accounting session in the background.
+  /// Prepares the exact profile the home screen will use first. Other nodes
+  /// and protocols are not prerequisites for using this profile.
+  Future<void> prewarmSelectedConfigForPostAuth({
+    String reason = 'post_auth_selected',
+  }) async {
+    if (_disposed) throw StateError('Profile preparation cancelled');
+    if (_servers.isEmpty || _selectedServer == null) await loadOptions();
+    await refreshServerLatencies();
+    await _chooseAutomaticServer(forPreparation: true);
+    if (_disposed) throw StateError('Profile preparation cancelled');
+    final server = _selectedServer;
+    final protocol = _selectedProtocol.id;
+    final deviceId = await _resolveDeviceId(ensureRegistered: false);
+    if (server == null ||
+        deviceId == null ||
+        deviceId.isEmpty ||
+        !_isProtocolSupportedByRuntime(protocol)) {
+      throw StateError('Selected VPN profile is unavailable');
+    }
+    await _warmConfigForFastPath(
+      serverId: server.id,
+      protocol: protocol,
+      deviceId: deviceId,
+      reason: reason,
+    );
+    if (_disposed) throw StateError('Profile preparation cancelled');
+    final config = await _readCachedConfig(
+      serverId: server.id,
+      protocol: protocol,
+      deviceId: deviceId,
+    );
+    if (config == null)
+      throw StateError('Selected VPN profile was not prepared');
+    debugPrint('SimpleVpnController.post_auth_selected_profile_ready '
+        'server_id=${server.id} protocol=$protocol');
+  }
+
+  /// Fetches and caches every active (server, protocol) profile. The onboarding
+  /// coordinator runs this after preparing the selected profile, in the
+  /// background, so slow optional nodes do not block account preparation.
   ///
   /// This method never requests Android VPN permission and never starts a
   /// tunnel. It verifies cache coverage before returning so the preparation
-  /// screen cannot report success after warming only the initially selected
-  /// server.
+  /// background completion is reported only with full cache coverage.
   Future<void> prewarmAvailableConfigsForPostAuth({
     String reason = 'post_auth_preparation',
   }) async {
@@ -1948,6 +2033,7 @@ class SimpleVpnController extends ChangeNotifier {
     StackTrace? lastStackTrace;
     final maxAttempts = 1 + _configFetchRetryDelays.length;
     for (var index = 0; index < maxAttempts; index += 1) {
+      if (_disposed) throw const _SimpleVpnConnectCancelled();
       final retryNumber = index + 1;
       try {
         final config = await _api.fetchConfig(
@@ -2816,6 +2902,11 @@ class SimpleVpnController extends ChangeNotifier {
         final runtimeStatus =
             diagnostics?['runtime_status']?.toString().toLowerCase().trim() ??
                 '';
+        // A late native snapshot cannot revive an explicitly failed attempt.
+        if (_isTerminalRuntimeSession(
+            diagnostics?['runtime_session_id']?.toString())) {
+          return _NativeRuntimeUiTruth.unknown;
+        }
         if (_syncNativeProtocolSelection(
           diagnostics?['runtime_protocol'],
           runtimeStatus,
@@ -3100,7 +3191,10 @@ class SimpleVpnController extends ChangeNotifier {
     final connectedEdge = serviceState == 'dataplane_verified' ||
         serviceState == 'committed' ||
         (event['connected'] == true && serviceState.isEmpty);
-    if (connectedEdge && _isTerminalRuntimeSession(eventSessionId)) {
+    if (_isTerminalRuntimeSession(eventSessionId) &&
+        (connectedEdge ||
+            serviceState == 'prepare' ||
+            serviceState == 'local_up')) {
       _traceNativeStateEvent(
         event,
         decision: 'ignored',
@@ -3251,6 +3345,14 @@ class SimpleVpnController extends ChangeNotifier {
           StateError('VPN runtime disconnected before traffic verification'),
           runtimeSessionId: eventSessionId,
         );
+        if (_activeConnectSessionId != null && !_dataPlaneRecoveryPending) {
+          return;
+        }
+        // connect() owns a pending start, including the cached-profile retry.
+        // Let its result decide whether the backend session is terminal.
+        if (_activeConnectSessionId != null && !_dataPlaneRecoveryPending) {
+          return;
+        }
         if (_state == SimpleVpnState.connected ||
             _state == SimpleVpnState.connecting) {
           _setState(SimpleVpnState.disconnecting);
@@ -3355,7 +3457,8 @@ class SimpleVpnController extends ChangeNotifier {
     }
     final rxBytes = _nativeTrafficCounter(event, 'rx_bytes');
     final txBytes = _nativeTrafficCounter(event, 'tx_bytes');
-    if (rxBytes <= 0 && txBytes <= 0) return;
+    if (rxBytes <= 0)
+      return; // Outbound requests alone do not establish received service.
 
     final eventSessionId = event['runtime_session_id']?.toString().trim() ?? '';
     final expectedSessionId = _currentNativeRuntimeSessionId();
@@ -4035,6 +4138,9 @@ class SimpleVpnController extends ChangeNotifier {
     return second == false;
   }
 
+  String? _productFailureReason;
+  String? _productFailureStage;
+
   Future<void> connect({String source = 'simple_vpn'}) async {
     if (_initialNativeRestorePending) {
       await restoreInitialNativeState(source: '${source}_connect_restore');
@@ -4044,6 +4150,16 @@ class SimpleVpnController extends ChangeNotifier {
     if (_state == SimpleVpnState.disconnecting && _disconnectInFlight == null) {
       return;
     }
+    final productIntentId = 'intent_${DateTime.now().microsecondsSinceEpoch}';
+    unawaited(_api.log(
+        event: 'connect_intent',
+        sessionId: productIntentId,
+        details: <String, dynamic>{
+          'intent_id': productIntentId,
+          'source': source,
+          'protocol': _selectedProtocol.id,
+          'server_id': _selectedServer?.id
+        }));
     final nativeConnected = await _readStableNativeConnectedStatus();
     if (nativeConnected == true) {
       await _adoptNativeConnectedEvent(source: '${source}_connect_preflight');
@@ -4051,7 +4167,11 @@ class SimpleVpnController extends ChangeNotifier {
         _api.log(
           event: 'vpn_existing_session_adopted',
           sessionId: _sessionId,
-          details: <String, dynamic>{'source': source, 'phase': 'connect'},
+          details: <String, dynamic>{
+            'source': source,
+            'phase': 'connect',
+            'intent_id': productIntentId
+          },
         ),
       );
       return;
@@ -4059,10 +4179,15 @@ class SimpleVpnController extends ChangeNotifier {
     if (nativeConnected == null) {
       unawaited(
         _api.log(
-          event: 'vpn_connect_deferred_native_state_unknown',
+          event: 'connect_deferred',
           level: 'warning',
-          sessionId: _sessionId,
-          details: <String, dynamic>{'source': source},
+          sessionId: productIntentId,
+          details: <String, dynamic>{
+            'source': source,
+            'intent_id': productIntentId,
+            'reason_code': 'native_state_unknown',
+            'failure_stage': 'native_preflight'
+          },
         ),
       );
       return;
@@ -4075,6 +4200,19 @@ class SimpleVpnController extends ChangeNotifier {
       protocol: _selectedProtocol.id,
     );
     _terminalRuntimeSessionIds.remove(attemptSessionId);
+    _productFailureReason = null;
+    _productFailureStage = null;
+    unawaited(_api.log(
+        event: 'attempt_started',
+        sessionId: attemptSessionId,
+        details: <String, dynamic>{
+          'intent_id': productIntentId,
+          'runtime_session_id': attemptSessionId,
+          'attempt_id': attemptSessionId,
+          'protocol': _selectedProtocol.id,
+          'server_id': _selectedServer?.id,
+          'source': source
+        }));
     _connectCancelRequested = false;
     _dataPlaneRecoveryPending = false;
     _activeConnectSessionId = attemptSessionId;
@@ -4127,6 +4265,24 @@ class SimpleVpnController extends ChangeNotifier {
       if (analyticsResultLogged) return;
       analyticsResultLogged = true;
       analyticsStopwatch.stop();
+      if (errorFamily != null && errorFamily != 'cancelled') {
+        _productFailureReason = errorFamily;
+        _productFailureStage = analyticsStage;
+      }
+      if (result == 'access_required' || result == 'device_limit') {
+        unawaited(_api.log(
+            event: 'attempt_blocked',
+            sessionId: attemptSessionId,
+            deviceId: deviceId,
+            details: <String, dynamic>{
+              'runtime_session_id': attemptSessionId,
+              'intent_id': productIntentId,
+              'reason_code': errorFamily,
+              'failure_stage': analyticsStage,
+              'protocol': config?.protocol ?? _selectedProtocol.id,
+              'server_id': config?.server?.id ?? _selectedServer?.id
+            }));
+      }
       unawaited(
         _analyticsService.logVpnConnectResult(
           result: result,
@@ -4198,6 +4354,7 @@ class SimpleVpnController extends ChangeNotifier {
       // This is a local interface snapshot, not an internet/site probe. Avoid
       // starting any protocol only when absence is confirmed twice. Existing
       // tunnel recovery never enters this new-connection path.
+      analyticsStage = 'network_preflight';
       if (await _confirmNoUnderlyingNetwork(attemptId)) {
         throw const _SimpleVpnNoNetwork();
       }
@@ -4547,6 +4704,7 @@ class SimpleVpnController extends ChangeNotifier {
           rethrow;
         }
         if (!configFromCache) rethrow;
+        _throwIfConnectCancelled(attemptId);
         await _removeCachedConfig(
           serverId: selectedServerId,
           protocol: _selectedProtocol.id,
@@ -4574,6 +4732,12 @@ class SimpleVpnController extends ChangeNotifier {
         _setConnectionProgress(
           'Пробуем другой маршрут подключения...',
           percent: 72,
+        );
+        configFromCache = false;
+        sessionId = await _prepareNativeConfigRetry(
+          attemptId: attemptId,
+          protocol: selectedProtocolId,
+          previousSessionId: sessionId,
         );
         _traceConnectPhase(
           'native_start_retry_begin',
@@ -4638,6 +4802,12 @@ class SimpleVpnController extends ChangeNotifier {
           'Пробуем оптимизировать маршрут...',
           percent: 72,
         );
+        configFromCache = false;
+        sessionId = await _prepareNativeConfigRetry(
+          attemptId: attemptId,
+          protocol: selectedProtocolId,
+          previousSessionId: sessionId,
+        );
         _traceConnectPhase(
           'native_start_retry_begin',
           attemptId: attemptId,
@@ -4682,7 +4852,7 @@ class SimpleVpnController extends ChangeNotifier {
       // down a healthy tunnel.
       if (_nativeStartResultVerifiesDataPlane) {
         _markDataPlaneReady(
-          attemptSessionId,
+          sessionId,
           source: 'native_start_verified_result',
         );
       }
@@ -4696,13 +4866,13 @@ class SimpleVpnController extends ChangeNotifier {
       analyticsStage = 'connectivity_gate';
       _throwIfConnectCancelled(attemptId);
       try {
-        await _waitForVerifiedDataPlane(attemptSessionId);
+        await _waitForVerifiedDataPlane(sessionId!);
       } on TimeoutException {
         await _runtime
             .disconnect(
               reason: 'dataplane_verification_timeout',
               source: '${source}_dataplane_gate',
-              sessionId: attemptSessionId,
+              sessionId: sessionId,
               includeLegacy: true,
             )
             .catchError((_) => false);
@@ -4936,6 +5106,9 @@ class SimpleVpnController extends ChangeNotifier {
         result: cancelled ? 'cancelled' : 'failed',
         errorFamily: _connectFailureFamily(e),
       );
+      if (e is _SimpleVpnNoNetwork) {
+        _productFailureReason = 'no_underlying_network';
+      }
       if (!_isCurrentConnectOwner(attemptId: attemptId, sessionId: sessionId)) {
         _traceConnectPhase(
           cancelled
@@ -4955,6 +5128,21 @@ class SimpleVpnController extends ChangeNotifier {
         return;
       }
       _error = e.toString();
+      // Retire this owner before any network await. A timeout does not mean
+      // Android stopped its worker; late LOCAL_UP/VERIFIED edges must neither
+      // revive the button nor lose the failed attempt's correlation.
+      _markRuntimeSessionTerminal(sessionId);
+      if (!cancelled &&
+          (analyticsStage == 'native_start' ||
+              analyticsStage == 'connectivity_gate')) {
+        unawaited(_runtime
+            .disconnect(
+              reason: 'connect_failed',
+              source: source,
+              sessionId: sessionId,
+            )
+            .catchError((_) => false));
+      }
       if (e is _SimpleVpnNoNetwork) {
         // Retain the last attempt's explanation until retry/selection; the
         // ordinary diagnostic notice has a TTL and is not a terminal result.
@@ -5025,6 +5213,14 @@ class SimpleVpnController extends ChangeNotifier {
         sessionId: backendSessionToStop ?? sessionId,
         deviceId: deviceId,
         details: <String, dynamic>{
+          'reason_code': e is _SimpleVpnNoNetwork
+              ? 'no_underlying_network'
+              : _connectFailureFamily(e),
+          'error_family': _connectFailureFamily(e),
+          'failure_stage': analyticsStage,
+          'intent_id': productIntentId,
+          'protocol': config?.protocol ?? _selectedProtocol.id,
+          'server_id': config?.server?.id ?? _selectedServer?.id,
           'error': _error,
           'source': source,
           'runtime_session_id': sessionId,
@@ -5346,8 +5542,22 @@ class SimpleVpnController extends ChangeNotifier {
 
   void _traceUiStateTransition(SimpleVpnState previous, SimpleVpnState next) {
     final traceId = ++_uiStateTraceSeq;
-    final sessionId = _activeConnectSessionId ?? _sessionId;
-    final deviceId = _activeConnectDeviceId ?? _lastConnectedDeviceId;
+    // Runtime cleanup can clear live IDs before publishing the terminal UI.
+    // Retain correlation from the preceding transition for this terminal only.
+    final terminal = previous != SimpleVpnState.disconnected &&
+        (next == SimpleVpnState.disconnected || next == SimpleVpnState.error);
+    final sessionId = _activeConnectSessionId ??
+        _sessionId ??
+        (terminal ? _lastUiTelemetrySessionId : null);
+    final deviceId = _activeConnectDeviceId ??
+        _lastConnectedDeviceId ??
+        (terminal ? _lastUiTelemetryDeviceId : null);
+    final runtimeId = _currentNativeRuntimeSessionId() ??
+        (terminal ? _lastUiTelemetryRuntimeId : null) ??
+        sessionId;
+    _lastUiTelemetrySessionId = sessionId;
+    _lastUiTelemetryRuntimeId = runtimeId;
+    _lastUiTelemetryDeviceId = deviceId;
     final payload = <String, dynamic>{
       'trace_id': traceId,
       'from': previous.name,
@@ -5367,62 +5577,28 @@ class SimpleVpnController extends ChangeNotifier {
     payload.removeWhere((_, value) => value == null || value == '');
     debugPrint('[UI_STATE_TRACE] ${jsonEncode(payload)}');
 
-    if (deviceId == null || deviceId.isEmpty) return;
-    unawaited(
-      _logUiStateTransition(
-        traceId: traceId,
-        previous: previous,
-        next: next,
-        sessionId: sessionId,
-        deviceId: deviceId,
-        base: payload,
-      ),
-    );
-  }
-
-  Future<void> _logUiStateTransition({
-    required int traceId,
-    required SimpleVpnState previous,
-    required SimpleVpnState next,
-    required String? sessionId,
-    required String deviceId,
-    required Map<String, dynamic> base,
-  }) async {
-    try {
-      bool? nativeConnected;
-      bool? awgConnected;
-      String? nativeError;
-      String? awgError;
-      try {
-        nativeConnected = await _runtime.getNativeConnectionStatus().timeout(
-              const Duration(milliseconds: 800),
-            );
-      } catch (e) {
-        nativeError = e.toString();
-      }
-      try {
-        awgConnected = await _runtime.getAmneziaWgStatus().timeout(
-              const Duration(milliseconds: 800),
-            );
-      } catch (e) {
-        awgError = e.toString();
-      }
-      await _api.log(
-        event: 'ui_state_transition',
-        level: next == SimpleVpnState.error ? 'warning' : 'info',
-        sessionId: sessionId,
-        deviceId: deviceId,
-        details: <String, dynamic>{
-          ...base,
-          'trace_id': traceId,
-          'native_connected': nativeConnected,
-          'awg_connected': awgConnected,
-          if (nativeError != null) 'native_status_error': nativeError,
-          if (awgError != null) 'awg_status_error': awgError,
-        },
-      );
-    } catch (_) {
-      // Diagnostics must never affect connection lifecycle.
+    // Persist the visible transition before any asynchronous native diagnosis.
+    unawaited(_api.log(
+      event: 'ui_state_transition',
+      level: next == SimpleVpnState.error ? 'warning' : 'info',
+      sessionId: sessionId,
+      deviceId: deviceId,
+      details: <String, dynamic>{
+        'from': previous.name,
+        'to': next.name,
+        'runtime_session_id': runtimeId,
+        'protocol': _selectedProtocol.id,
+        'server_id': _selectedServer?.id,
+        'contract_version': 3,
+        'state_reason': 'controller_transition',
+        if (next == SimpleVpnState.error) 'reason_code': _productFailureReason,
+        if (next == SimpleVpnState.error) 'failure_stage': _productFailureStage,
+      },
+    ));
+    if (next == SimpleVpnState.disconnected) {
+      _lastUiTelemetrySessionId = null;
+      _lastUiTelemetryRuntimeId = null;
+      _lastUiTelemetryDeviceId = null;
     }
   }
 
@@ -5447,7 +5623,9 @@ class SimpleVpnController extends ChangeNotifier {
       SimpleVpnState.error => VpnConnectionState.error,
     };
     VpnOrchestrationRuntime.instance.setVpnState(policyState);
-    _api.telemetryConnectionStateChanged();
+    _api.telemetryConnectionStateChanged(
+        connectionRecovered:
+            previous != next && next == SimpleVpnState.connected);
     if (next == SimpleVpnState.connected) _qualityConnectWatch?.stop();
     if (previous != next || next == SimpleVpnState.error) {
       _traceUiStateTransition(previous, next);

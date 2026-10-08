@@ -121,6 +121,15 @@ class GraniTheme {
   static const Color buttonPrimary = Color(0xFF182D3D); // fill_IVTB46
   static const Color buttonSecondary = Color(0xFFF6F8F9); // fill_I4MEQS
 
+  /// Shared title for gifts, devices and split tunneling.
+  static const TextStyle detailPageTitle = TextStyle(
+    fontFamily: 'Montserrat',
+    fontSize: 24,
+    height: 1.15,
+    fontWeight: FontWeight.w600,
+    color: primaryText,
+  );
+
   // Цвета статуса подключения
   static const Color connectedStatus = Color(0xFF20704C); // fill_0R36G7
 

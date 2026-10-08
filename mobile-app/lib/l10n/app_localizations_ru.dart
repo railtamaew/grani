@@ -765,6 +765,21 @@ class AppLocalizationsRu extends AppLocalizations {
   String get profileNextPayment => 'Следующий платеж';
 
   @override
+  String get profileAccessUntil => 'Доступ до';
+
+  @override
+  String get profilePaymentMethod => 'Оплата';
+
+  @override
+  String get profilePaymentSbp => 'СБП';
+
+  @override
+  String get paywallCheckPayment => 'Проверить оплату';
+
+  @override
+  String get paywallRestorePurchases => 'Восстановить покупки';
+
+  @override
   String get profileTrialAccess => 'Тестовый доступ';
 
   @override
@@ -1375,4 +1390,37 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get vpnNoticeSignInBody =>
       'Возможно, нужен вход в Wi-Fi. Откройте браузер или смените сеть.';
+
+  @override
+  String get paywallWataSandboxNotice =>
+      'Тестовая оплата WATA. Без реального списания.';
+
+  @override
+  String get paywallExternalBrowserHint =>
+      'Откроется сайт GRANI. Повторный вход не потребуется.';
+
+  @override
+  String get paywallTrustWata => 'Оплата через WATA';
+
+  @override
+  String get paywallSameAccount => 'Без повторного входа';
+
+  @override
+  String get paywallOpeningBrowser => 'Открываем страницу оплаты…';
+
+  @override
+  String get paywallResumeExternal => 'Продолжить оплату';
+
+  @override
+  String get paywallTestWataPayment => 'Тестовая оплата WATA';
+
+  @override
+  String get paywallPaySbp => 'Перейти к оплате на сайте';
+
+  @override
+  String get paywallPaymentReview =>
+      'Проверяем предыдущий платёж, чтобы не списать деньги дважды. Если статус долго не меняется, напишите на support@granilink.com.';
+
+  @override
+  String get paywallPaymentReviewShort => 'Проверяем платёж';
 }

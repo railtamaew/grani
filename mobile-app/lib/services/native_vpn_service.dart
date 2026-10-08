@@ -743,15 +743,22 @@ class NativeVpnService {
   static const String splitTunnelModeInclude = 'include';
 
   /// Режим split tunnel: exclude (выбранные в обход) или include (только выбранные используют VPN)
-  static Future<String> getSplitTunnelMode() async {
+  static Future<String> getSplitTunnelMode({bool strict = false}) async {
     try {
       final result = await _channel.invokeMethod<String>('getSplitTunnelMode');
+      if (strict &&
+          result != splitTunnelModeExclude &&
+          result != splitTunnelModeInclude) {
+        throw StateError('Split tunnel mode is unavailable');
+      }
       return result ?? splitTunnelModeExclude;
     } on PlatformException catch (e) {
       debugPrint('NativeVpnService: getSplitTunnelMode: ${e.message}');
+      if (strict) rethrow;
       return splitTunnelModeExclude;
     } catch (e) {
       debugPrint('NativeVpnService: getSplitTunnelMode: $e');
+      if (strict) rethrow;
       return splitTunnelModeExclude;
     }
   }
@@ -768,16 +775,21 @@ class NativeVpnService {
   }
 
   /// Список выбранных приложений для split tunnel
-  static Future<List<String>> getSplitTunnelExcludedApps() async {
+  static Future<List<String>> getSplitTunnelExcludedApps(
+      {bool strict = false}) async {
     try {
       final result = await _channel
           .invokeMethod<List<dynamic>>('getSplitTunnelExcludedApps');
+      if (strict && result == null)
+        throw StateError('Split tunnel packages are unavailable');
       return result?.map((e) => e.toString()).toList() ?? [];
     } on PlatformException catch (e) {
       debugPrint('NativeVpnService: getSplitTunnelExcludedApps: ${e.message}');
+      if (strict) rethrow;
       return [];
     } catch (e) {
       debugPrint('NativeVpnService: getSplitTunnelExcludedApps: $e');
+      if (strict) rethrow;
       return [];
     }
   }
@@ -901,11 +913,15 @@ class NativeVpnService {
   }
 
   /// Список установленных приложений для выбора (package, label)
-  static Future<List<Map<String, String>>> getInstalledApps() async {
+  static Future<List<Map<String, String>>> getInstalledApps(
+      {bool strict = false}) async {
     try {
       final result =
           await _channel.invokeMethod<List<dynamic>>('getInstalledApps');
-      if (result == null) return [];
+      if (result == null) {
+        if (strict) throw StateError('Installed apps are unavailable');
+        return [];
+      }
       final list = <Map<String, String>>[];
       for (final e in result) {
         if (e is Map) {
@@ -916,9 +932,11 @@ class NativeVpnService {
       return list;
     } on PlatformException catch (e) {
       debugPrint('NativeVpnService: getInstalledApps: ${e.message}');
+      if (strict) rethrow;
       return [];
     } catch (e) {
       debugPrint('NativeVpnService: getInstalledApps: $e');
+      if (strict) rethrow;
       return [];
     }
   }

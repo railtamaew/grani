@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'grani_top_icon_button.dart';
+import 'grani_gift_art.dart';
 import '../theme.dart';
 
 class VpnTopBar extends StatelessWidget {
@@ -32,16 +33,20 @@ class VpnTopBar extends StatelessWidget {
         ),
         child: Row(
           children: [
-            GraniTopIconButton(
-              assetName: 'assets/images/figma/profile/menu_new.svg',
-              onTap: onMenuTap,
-              width: 40 * scaleX,
-              height: 40 * scaleY,
-              iconWidth: 26 * scaleX,
-              iconHeight: 20 * scaleY,
-              surfaceSize: 38 * scaleX,
-              fallbackIcon: Icons.menu,
-            ),
+            SizedBox(
+                width: 72,
+                child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: GraniTopIconButton(
+                      assetName: 'assets/images/figma/profile/menu_new.svg',
+                      onTap: onMenuTap,
+                      width: 40 * scaleX,
+                      height: 40 * scaleY,
+                      iconWidth: 26 * scaleX,
+                      iconHeight: 20 * scaleY,
+                      surfaceSize: 38 * scaleX,
+                      fallbackIcon: Icons.menu,
+                    ))),
             const Spacer(),
             SizedBox(
               width: GraniTheme.logoWidth * 1.08 * scaleX,
@@ -59,16 +64,20 @@ class VpnTopBar extends StatelessWidget {
               ),
             ),
             const Spacer(),
-            GraniTopIconButton(
-              assetName: 'assets/images/figma/share_icon.svg',
-              onTap: onShareTap,
-              width: 40 * scaleX,
-              height: 40 * scaleY,
-              iconWidth: 22 * scaleX,
-              iconHeight: 22 * scaleY,
-              surfaceSize: 38 * scaleX,
-              fallbackIcon: Icons.share,
-            ),
+            Semantics(
+                button: true,
+                label: Localizations.localeOf(context).languageCode == 'ru'
+                    ? 'Подарить другу 7 дней GRANI'
+                    : 'Give a friend 7 days of GRANI',
+                child: Tooltip(
+                    message:
+                        Localizations.localeOf(context).languageCode == 'ru'
+                            ? 'Подарить другу'
+                            : 'Give a friend a gift',
+                    child: InkResponse(
+                        onTap: onShareTap,
+                        radius: 36,
+                        child: const GraniGiftArt(size: 72)))),
           ],
         ),
       ),

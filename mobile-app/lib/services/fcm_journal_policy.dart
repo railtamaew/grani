@@ -22,11 +22,16 @@ class FcmJournalPolicy {
     'trial_activated',
     'trial_ended',
     'lifecycle_message',
+    'referral_gift_received',
+    'referral_reward_granted',
   };
 
   static bool shouldAppendToJournal(RemoteMessage message) {
     final raw = message.data['event']?.toString().trim() ?? '';
-    return raw.isNotEmpty && productDataEvents.contains(raw);
+    return productDataEvents.contains(raw) ||
+        (message.notification?.title ?? '').trim().isNotEmpty ||
+        (message.notification?.body ?? '').trim().isNotEmpty ||
+        (message.data['title']?.toString() ?? '').trim().isNotEmpty;
   }
 
   /// Заголовок и текст для журнала / локального баннера (язык из [l10n]).
@@ -37,6 +42,9 @@ class FcmJournalPolicy {
     final data = Map<String, dynamic>.from(message.data);
     final notificationBody = (message.notification?.body ?? '').trim();
     final event = (data['event'] ?? '').toString().trim();
+    if ((data['title']?.toString() ?? '').isNotEmpty) {
+      return (title: data['title'].toString(), body: (data['body'] ?? '').toString());
+    }
     switch (event) {
       case 'payment_completed':
         return (

@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 import 'package:mobile_app/core/session/locale_controller.dart';
 import 'package:mobile_app/l10n/app_localizations.dart';
 import 'package:mobile_app/models/user.dart';
+import 'package:mobile_app/models/profile_access_snapshot.dart';
 import 'package:mobile_app/screens/bottom_sheet_profile.dart';
 import 'package:mobile_app/services/auth_service.dart';
 import 'package:mobile_app/services/vpn_service.dart';
@@ -51,6 +52,10 @@ void main() {
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
         final auth = _Auth(), locale = _Locale();
+        when(() => auth.profileAccessSnapshot).thenReturn(ProfileAccessSnapshot(
+          capturedAt: DateTime.now().toUtc(), known: true, active: true,
+          source: 'wata', subscriptionStartedAt: DateTime.utc(2026, 8, 4),
+          subscriptionExpiresAt: DateTime.utc(2028, 8, 4), autoRenew: false));
         when(() => auth.hasActiveSubscription).thenReturn(true);
         when(() => auth.trialSecondsLeft).thenReturn(0);
         when(() => auth.subscriptionExpiresAt).thenReturn(DateTime(2028, 8, 4));
@@ -122,7 +127,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
         for (final label in language == 'ru'
-            ? ['Email', 'Раздельный туннель', 'Написать в поддержку']
+            ? ['Почта', 'Раздельный туннель', 'Написать в поддержку']
             : ['Email']) {
           final matches = find.text(label);
           expect(matches, findsOneWidget);

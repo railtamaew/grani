@@ -1,6 +1,6 @@
 import 'package:in_app_purchase/in_app_purchase.dart';
 
-/// Immutable UI representation of a Google Play one-time access product.
+/// Immutable UI representation of a one-time access product.
 class TariffUiModel {
   const TariffUiModel({
     required this.id,
@@ -14,7 +14,7 @@ class TariffUiModel {
     required this.currencyCode,
     required this.illustrationNeutral,
     required this.illustrationSelected,
-    required this.productDetails,
+    this.productDetails,
     this.savingsPercent,
     this.isBestValue = false,
   });
@@ -32,5 +32,5 @@ class TariffUiModel {
   final bool isBestValue;
   final String illustrationNeutral;
   final String illustrationSelected;
-  final ProductDetails productDetails;
+  final ProductDetails? productDetails;
 }

@@ -21,6 +21,8 @@ import 'entitlement_push_handler.dart';
 import 'fcm_journal_policy.dart';
 import 'in_app_event_banner_service.dart';
 import 'notification_journal_service.dart';
+import 'gift_notification_copy.dart';
+import 'gift_presentation_policy.dart';
 
 AppLocalizations _fcmL10n() =>
     lookupAppLocalizations(Locale(LocalizedMessages.currentLanguageCode));
@@ -598,6 +600,7 @@ class PushNotificationService {
   }
 
   Future<void> _handleForegroundMessage(RemoteMessage message) async {
+    if (!NotificationJournalService.instance.accepts(message.data)) return;
     await EntitlementPushHandler.handleFcmData(
       Map<String, dynamic>.from(message.data),
       source: 'fcm_foreground',
@@ -607,15 +610,34 @@ class PushNotificationService {
       return;
     }
     final pair = FcmJournalPolicy.titlesForMessage(message, l10n);
+    final giftData = Map<String, dynamic>.from(message.data);
+    final giftEvent = isGiftNotification(giftData);
+    await NotificationJournalService.instance.ensureLoaded();
+    final notificationId = giftData['notification_id']?.toString();
+    final alreadyInJournal =
+        notificationId != null &&
+        NotificationJournalService.instance.entries.any(
+          (e) => e.id == notificationId,
+        );
+    final copy = giftNotificationCopy(
+      giftData,
+      russian: LocalizedMessages.currentLanguageCode == 'ru',
+    );
+    final title = copy?.title ?? pair.title;
+    final body = copy?.body ?? pair.body;
     await NotificationJournalService.instance.append(
-      title: pair.title,
-      body: pair.body,
+      title: title,
+      body: body,
       source: 'fcm_foreground',
       data: Map<String, dynamic>.from(message.data),
     );
+    if (giftEvent &&
+        !showGiftForegroundBanner(giftData, alreadyInJournal: alreadyInJournal))
+      return;
     InAppEventBannerService.instance.show(
-      title: pair.title,
-      body: pair.body,
+      recordInJournal: false,
+      title: title,
+      body: body,
       data: Map<String, dynamic>.from(message.data),
       actionLabel: message.data['event'] == 'lifecycle_message'
           ? ((message.data['cta'] ?? '').toString().trim().isNotEmpty
@@ -635,7 +657,7 @@ class PushNotificationService {
     );
     // Lifecycle messages already have an in-app banner with a CTA. Showing a
     // local notification as well would duplicate the same message in foreground.
-    if (message.data['event'] != 'lifecycle_message') {
+    if (message.data['event'] != 'lifecycle_message' && !giftEvent) {
       await _showLocalBanner(
         pair.title,
         pair.body,
@@ -651,6 +673,7 @@ class PushNotificationService {
   }
 
   Future<void> _handleMessageOpenedApp(RemoteMessage message) async {
+    if (!NotificationJournalService.instance.accepts(message.data)) return;
     final l10n = _fcmL10n();
     if (FcmJournalPolicy.shouldAppendToJournal(message)) {
       final pair = FcmJournalPolicy.titlesForMessage(message, l10n);
@@ -673,6 +696,7 @@ class PushNotificationService {
   }
 
   Future<void> _handleInitialMessage(RemoteMessage message) async {
+    if (!NotificationJournalService.instance.accepts(message.data)) return;
     final l10n = _fcmL10n();
     if (FcmJournalPolicy.shouldAppendToJournal(message)) {
       final pair = FcmJournalPolicy.titlesForMessage(message, l10n);

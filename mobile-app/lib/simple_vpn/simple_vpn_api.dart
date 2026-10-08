@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_config.dart';
 import '../core/vpn/vpn_orchestration_runtime.dart';
 import '../core/vpn_state_machine.dart';
@@ -379,6 +380,17 @@ class SimpleVpnApi {
   static SimpleVpnTelemetry? _sharedTelemetry;
   static CancelToken? _telemetryCancel;
 
+  @visibleForTesting
+  static Future<void> flushTelemetryForTesting() async {
+    await _sharedTelemetry?.flush();
+  }
+
+  @visibleForTesting
+  static void resetTelemetryForTesting() {
+    _sharedTelemetry?.dispose();
+    _sharedTelemetry = null;
+  }
+
   SimpleVpnTelemetry get _telemetry => _sharedTelemetry ??= SimpleVpnTelemetry(
         canSend: () {
           final state = VpnOrchestrationRuntime.instance.vpnState;
@@ -391,8 +403,9 @@ class SimpleVpnApi {
           final cancel = CancelToken();
           _telemetryCancel = cancel;
           try {
+            debugPrint('[PRODUCT_TELEMETRY] send batch=${events.length}');
             final response = await _apiClient.post(
-              '/simple-vpn/logs/batch',
+              '/simple-vpn/product-telemetry',
               data: <String, dynamic>{'events': events},
               requestKind: RequestKind.logging,
               cancelToken: cancel,
@@ -401,6 +414,7 @@ class SimpleVpnApi {
                 receiveTimeout: const Duration(seconds: 5),
               ),
             );
+            debugPrint('[PRODUCT_TELEMETRY] response status=${response.statusCode}');
             final body = _asMap(response.data);
             if (body['success'] != true || body['receipts'] is! List) {
               throw StateError('Missing durable telemetry receipt');
@@ -408,17 +422,23 @@ class SimpleVpnApi {
             return (body['receipts'] as List)
                 .whereType<Map>()
                 .where((r) =>
-                    r['status'] == 'stored' || r['status'] == 'duplicate')
+                    r['status'] == 'stored' || r['status'] == 'duplicate' ||
+                    r['status'] == 'discarded_owner_mismatch')
                 .map((r) => r['event_id'].toString())
                 .toSet();
+          } catch (error) {
+            final status = error is DioException ? error.response?.statusCode : null;
+            debugPrint('[PRODUCT_TELEMETRY] transport_error type=${error.runtimeType} status=$status');
+            rethrow;
           } finally {
             if (identical(_telemetryCancel, cancel)) _telemetryCancel = null;
           }
         },
       );
 
-  void telemetryConnectionStateChanged() {
-    _sharedTelemetry?.connectionStateChanged();
+  void telemetryConnectionStateChanged({bool connectionRecovered = false}) {
+    unawaited(_sharedTelemetry?.connectionStateChanged(
+      connectionRecovered: connectionRecovered));
   }
 
   static List<SimpleVpnProtocol> get displayProtocols => <SimpleVpnProtocol>[
@@ -594,8 +614,16 @@ class SimpleVpnApi {
     String? sessionId,
     String? deviceId,
     Map<String, dynamic>? details,
-  }) =>
-      _telemetry.enqueue(<String, dynamic>{
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final ownerId = prefs.getString('user_id');
+      if (ownerId == null) {
+        debugPrint('[PRODUCT_TELEMETRY] dropped reason=missing_account');
+        return;
+      }
+      await _telemetry.enqueue(<String, dynamic>{
+        'owner_id': ownerId,
         'event': event,
         'level': level,
         'session_id': sessionId,
@@ -607,6 +635,11 @@ class SimpleVpnApi {
           'platform': defaultTargetPlatform.name,
         },
       });
+    } catch (error) {
+      // Diagnostics must never affect the VPN operation.
+      debugPrint('[PRODUCT_TELEMETRY] enqueue_error type=${error.runtimeType}');
+    }
+  }
 
   Map<String, dynamic> _asMap(dynamic data) {
     if (data is Map<String, dynamic>) return data;

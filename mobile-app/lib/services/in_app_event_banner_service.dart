@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../config/app_navigation.dart';
 import '../l10n/localized_messages.dart';
+import 'notification_journal_service.dart';
 
 enum InAppEventTone { success, warning, critical, info }
 
@@ -24,7 +25,15 @@ class InAppEventBannerService {
     Map<String, dynamic>? data,
     String? actionLabel,
     VoidCallback? onAction,
+    bool recordInJournal = true,
   }) {
+    if (recordInJournal) {
+      unawaited(NotificationJournalService.instance.append(
+        title: title, body: body, source: 'in_app', data: data,
+      ).catchError((Object e) {
+        debugPrint('[IN_APP_EVENT] journal failed: ${e.runtimeType}');
+      }));
+    }
     final eventName = (data?['event'] ?? data?['type'] ?? '').toString();
     final tone = _toneFor(data);
     final resolvedActionLabel = actionLabel ??
@@ -80,6 +89,8 @@ class InAppEventBannerService {
       return InAppEventTone.warning;
     }
     if (event == 'payment_completed' ||
+        event == 'referral_gift_received' ||
+        event == 'referral_reward_granted' ||
         event == 'subscription_activated' ||
         event == 'access_changed') {
       return InAppEventTone.success;

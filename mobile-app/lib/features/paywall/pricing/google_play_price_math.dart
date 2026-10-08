@@ -14,9 +14,7 @@ class GooglePlayPriceMath {
   static int? priceMicros(ProductDetails details) {
     if (details is! GooglePlayProductDetails) return null;
     return details
-        .productDetails
-        .oneTimePurchaseOfferDetails
-        ?.priceAmountMicros;
+        .productDetails.oneTimePurchaseOfferDetails?.priceAmountMicros;
   }
 
   static int fractionDigits(String currencyCode, String locale) {
@@ -123,10 +121,9 @@ class GooglePlayPriceMath {
   }) {
     final valueForFormatting = minor / scale;
     final storeSymbol = details.currencySymbol.trim();
-    final displaySymbol = storeSymbol.isEmpty
-        ? details.currencyCode
-        : storeSymbol;
-    return NumberFormat.currency(
+    final displaySymbol =
+        storeSymbol.isEmpty ? details.currencyCode : storeSymbol;
+    final formatted = NumberFormat.currency(
       locale: locale,
       name: details.currencyCode,
       // Some Play Billing responses contain an empty currencySymbol even
@@ -135,6 +132,15 @@ class GooglePlayPriceMath {
       symbol: displaySymbol,
       decimalDigits: fractionDigits,
     ).format(valueForFormatting);
+    if (!RegExp(r'^[A-Z]{3}$').hasMatch(displaySymbol)) return formatted;
+    // ISO currency codes need separation from digits even in prefix locales.
+    // Keep the code and amount together when the price wraps in a tariff card.
+    final code = RegExp.escape(displaySymbol);
+    return formatted
+        .replaceAllMapped(
+            RegExp('($code)([0-9])'), (match) => '${match[1]}\u00a0${match[2]}')
+        .replaceAllMapped(RegExp('([0-9])($code)'),
+            (match) => '${match[1]}\u00a0${match[2]}');
   }
 
   static int _pow10(int exponent) => math.pow(10, exponent).toInt();

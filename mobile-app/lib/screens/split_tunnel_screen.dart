@@ -410,11 +410,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
           centerTitle: true,
           title: Text(
             l10n.splitTunnelTitle,
-            style: GraniTheme.bodyMedium.copyWith(
-              fontSize: 24,
-              fontWeight: FontWeight.w600,
-              color: GraniTheme.primaryText,
-            ),
+            style: GraniTheme.detailPageTitle,
           ),
         ),
         body: Center(
@@ -443,11 +439,7 @@ class _SplitTunnelScreenState extends State<SplitTunnelScreen> {
           centerTitle: true,
           title: Text(
             l10n.splitTunnelTitle,
-            style: GraniTheme.bodyMedium.copyWith(
-              fontSize: 24,
-              fontWeight: FontWeight.w600,
-              color: GraniTheme.primaryText,
-            ),
+            style: GraniTheme.detailPageTitle,
           ),
           backgroundColor: const Color(0xFFF7F9FA),
           surfaceTintColor: Colors.transparent,

@@ -7,9 +7,11 @@ import 'package:flutter/foundation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 import 'package:in_app_purchase_android/billing_client_wrappers.dart';
+import 'package:in_app_purchase_platform_interface/in_app_purchase_platform_interface.dart';
 
 import '../config/subscription_products.dart';
 import '../l10n/localized_messages.dart';
+import 'play_billing_country.dart';
 
 enum BillingPurchaseStatus { pending, purchased, canceled, error }
 
@@ -96,6 +98,24 @@ class SubscriptionService extends ChangeNotifier {
 
   /// Поддерживается ли покупка на текущей платформе (сейчас только Android).
   static bool get supported => _isAndroid;
+
+  /// Fresh billing input for this operation only; never stored or logged.
+  Future<String?> readPlayBillingCountry() async {
+    if (!_isAndroid) return null;
+    try {
+      final platform = InAppPurchasePlatform.instance;
+      if (platform is! InAppPurchaseAndroidPlatform) return null;
+      // Pinned Android plugin 0.5.0's countryCode() discards the response code.
+      // Reuse its existing client so an erroneous response cannot select WATA.
+      // ignore: invalid_use_of_visible_for_testing_member
+      final config = await platform.billingClientManager
+          .runWithClient((client) => client.getBillingConfig())
+          .timeout(const Duration(seconds: 8));
+      return verifiedPlayBillingCountry(config.responseCode, config.countryCode);
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Инициализация и загрузка продуктов. Вызывать при старте экрана подписки.
   Future<void> initialize({bool reconnectStore = false}) async {

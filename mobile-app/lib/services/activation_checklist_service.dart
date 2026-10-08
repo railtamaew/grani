@@ -17,12 +17,10 @@ class ActivationChecklistService {
     await prefs.setBool(_firstProofShownKey, true);
     final isRu = LocalizedMessages.currentLanguageCode == 'ru';
     InAppEventBannerService.instance.show(
-      title: isRu
-          ? 'Первое подключение подтверждено'
-          : 'First connection verified',
+      title: isRu ? 'VPN работает' : 'VPN is working',
       body: isRu
-          ? 'Шаг 1 из 2 готов. До конца пробного доступа проверьте GRANI ещё раз — в мобильной сети или на другом Wi‑Fi.'
-          : 'Step 1 of 2 is complete. Before the trial ends, try GRANI again on mobile data or another Wi-Fi network.',
+          ? 'Совет по проверке связи: попробуйте GRANI в мобильной сети или на другом Wi‑Fi. Это поможет проверить работу VPN в ваших сетях.'
+          : 'Connection tip: try GRANI on mobile data or another Wi-Fi network to check VPN in the networks you use.',
       data: const <String, dynamic>{
         'event': 'activation_first_proof',
         'activation_step': 1,

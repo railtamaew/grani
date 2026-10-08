@@ -2,11 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
+import '../../../services/checkout_browser_service.dart';
 
 import '../../../config/subscription_products.dart';
 import '../../../services/analytics_service.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/subscription_service.dart';
+import '../../../services/regional_checkout_service.dart';
+import '../model/regional_checkout.dart';
 import '../model/paywall_ui_state.dart';
 import '../model/tariff_ui_model.dart';
 import '../pricing/google_play_price_math.dart';
@@ -25,17 +28,48 @@ class PaywallController extends ChangeNotifier {
     required this.trialState,
     required this.appLanguage,
     required this.onEntitlementGranted,
+    this.onWebsitePurchaseReturn,
     this.onNotice,
     AnalyticsService? analyticsService,
+    RegionalCheckoutService? regionalCheckoutService,
+    Future<bool> Function(Uri)? openExternalCheckout,
+    Future<bool> Function()? canOpenExternalCheckout,
+    bool Function()? isExternalCheckoutActive,
+    Stream<void>? checkoutBrowserClosed,
     this.experimentVariant = 'control',
   })  : _subscriptionService = subscriptionService,
         _authService = authService,
+        _regional = regionalCheckoutService ??
+            (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows
+                ? RegionalCheckoutService.website(
+                    request: authService.regionalBillingRequest)
+                : RegionalCheckoutService.origin(
+                    request: authService.regionalBillingRequest)),
+        _openExternalCheckout = openExternalCheckout ?? _openBrowser,
+        _canOpenExternalCheckout = canOpenExternalCheckout ??
+            CheckoutBrowserService.instance.canLaunch,
+        _isExternalCheckoutActive = isExternalCheckoutActive ??
+            (() => CheckoutBrowserService.instance.isActive),
         _analytics = analyticsService ?? AnalyticsService(),
-        _state = PaywallUiState(experimentVariant: experimentVariant);
+        _state = PaywallUiState(experimentVariant: experimentVariant) {
+    _browserSubscription =
+        (checkoutBrowserClosed ?? CheckoutBrowserService.instance.closed)
+            .listen((_) {
+      if (!_disposed && _state.externalCheckout) unawaited(onAppResumed());
+    });
+  }
 
   final SubscriptionService _subscriptionService;
   final AuthService _authService;
   final AnalyticsService _analytics;
+  final RegionalCheckoutService _regional;
+  final Future<bool> Function(Uri) _openExternalCheckout;
+  final Future<bool> Function() _canOpenExternalCheckout;
+  final bool Function() _isExternalCheckoutActive;
+  static Future<bool> _openBrowser(Uri uri) =>
+      CheckoutBrowserService.instance.open(uri);
+  StreamSubscription<void>? _browserSubscription;
+  Future<void>? _resumeInFlight;
   final String locale;
   final String defaultPlanId;
   final String paywallSource;
@@ -43,20 +77,40 @@ class PaywallController extends ChangeNotifier {
   final String appLanguage;
   final String experimentVariant;
   final Future<void> Function() onEntitlementGranted;
+  final Future<void> Function()? onWebsitePurchaseReturn;
   final PaywallNoticeCallback? onNotice;
 
   PaywallUiState _state;
   PaywallUiState get state => _state;
+  DateTime? get checkoutLinkExpiresAt => _regional.handoffExpiresAt;
 
   StreamSubscription<BillingPurchaseEvent>? _purchaseSubscription;
   Stopwatch? _ctaStopwatch;
   bool _initialized = false;
   bool _verificationInFlight = false;
   bool _disposed = false;
+  RegionalOrder? _externalOrder;
+  String _externalEnvironment = 'sandbox';
+  String? _checkoutAccountId;
+  final Map<int, String> _externalKeys = {};
+  final Set<String> _reportedExternalOrders = {};
+  Timer? _externalPoll;
+  bool _externalCheckInFlight = false;
+  bool _foreground = true;
+  int _externalPollAttempts = 0;
+  bool _restoreWebsitePlan = true;
 
   Future<void> initialize({bool reconnectStore = false}) async {
     if (_initialized) return;
     _initialized = true;
+    if (_checkoutAccountId != _authService.user?.id) {
+      _externalKeys.clear();
+      _reportedExternalOrders.clear();
+      _externalOrder = null;
+      _externalPoll?.cancel();
+      _restoreWebsitePlan = true;
+    }
+    _checkoutAccountId = _authService.user?.id;
     _purchaseSubscription =
         _subscriptionService.purchaseEvents.listen(_handlePurchaseEvent);
     final loadStopwatch = Stopwatch()..start();
@@ -65,9 +119,42 @@ class PaywallController extends ChangeNotifier {
       billingState: PaywallBillingState.ready,
       clearError: true,
     ));
-    await _subscriptionService.initialize(reconnectStore: reconnectStore);
+    if (_regional.requiresStoreCountry) {
+      await _subscriptionService.initialize(reconnectStore: reconnectStore);
+    }
+    if (_disposed) return;
+    // countryCode uses the same BillingClient connection as product loading.
+    // Wait for its setup/reconnection before resolving the payment method.
+    final options = await _regional.resolve();
     loadStopwatch.stop();
     if (_disposed) return;
+
+    if (options.unavailable) {
+      _applyUnavailableOptions(options);
+      return;
+    }
+
+    if (options.usesWata && _sameCheckoutAccount) {
+      _applyExternalOptions(options);
+      if (_externalEnvironment == 'production') {
+        await recoverPurchases(userInitiated: false);
+      }
+      return;
+    }
+
+    if (!_regional.requiresStoreCountry) {
+      await _subscriptionService.initialize(reconnectStore: reconnectStore);
+      if (_disposed) return;
+    }
+
+    _externalPoll?.cancel();
+    _externalOrder = null;
+    _emit(_state.copyWith(
+        externalCheckout: false,
+        externalSandbox: false,
+        externalPending: false,
+        externalCanResume: false,
+        externalReview: false));
 
     final plans = _buildPlans(_subscriptionService.products);
     if (!_subscriptionService.isAvailable || plans.length != 3) {
@@ -122,6 +209,32 @@ class PaywallController extends ChangeNotifier {
     await recoverPurchases(userInitiated: false, resetIfEmpty: false);
   }
 
+  void _applyUnavailableOptions(RegionalCheckoutOptions options) {
+    _externalPoll?.cancel();
+    _externalOrder = null;
+    final errorKind = switch (options.unavailableReason) {
+      'country_required' => PaywallErrorKind.countryUnavailable,
+      'region_unavailable' ||
+      'region_database_stale' ||
+      'direct_connection_required' =>
+        PaywallErrorKind.countryUnavailable,
+      'active_subscription' => PaywallErrorKind.paymentConflict,
+      'account_unverified' => PaywallErrorKind.accountUnverified,
+      _ => PaywallErrorKind.regionalUnavailable,
+    };
+    _emit(_state.copyWith(
+      productsState: PaywallProductsState.error,
+      plans: const [],
+      billingState: PaywallBillingState.error,
+      errorKind: errorKind,
+      externalCheckout: false,
+      externalSandbox: false,
+      externalPending: false,
+      externalCanResume: false,
+      externalReview: false,
+    ));
+  }
+
   Future<void> retryProducts() async {
     if (_state.isBusy) return;
     _initialized = false;
@@ -138,11 +251,21 @@ class PaywallController extends ChangeNotifier {
         !_state.plans.any((plan) => plan.id == planId)) {
       return;
     }
+    _restoreWebsitePlan = false;
     _emit(_state.copyWith(
       selectedPlanId: planId,
+      externalPending: _state.externalCheckout &&
+          _externalOrder?.isPending == true &&
+          _state.plans.any(
+              (p) => p.id == planId && p.periodDays == _externalOrder?.days),
+      externalCanResume: _state.externalCheckout &&
+          _externalOrder?.canOpen == true &&
+          _state.plans.any(
+              (p) => p.id == planId && p.periodDays == _externalOrder?.days),
       billingState: PaywallBillingState.ready,
       clearError: true,
     ));
+    if (_state.externalCheckout) return;
     unawaited(_analytics.logPaywallEvent(
       'plan_selected',
       parameters: _baseParameters(plan: _state.selectedPlan),
@@ -157,6 +280,32 @@ class PaywallController extends ChangeNotifier {
         _subscriptionService.hasPurchaseInFlight) {
       return;
     }
+
+    if (_state.externalCheckout) {
+      await _purchaseExternal(plan);
+      return;
+    }
+
+    // Re-check the direct connection region before launching a new purchase.
+    // A region change must show the newly selected method/price first.
+    _emit(_state.copyWith(productsState: PaywallProductsState.loading));
+    final options = await _regional.resolve();
+    if (_disposed) return;
+    if (!_sameCheckoutAccount) {
+      _emit(_state.copyWith(productsState: PaywallProductsState.ready));
+      await retryProducts();
+      return;
+    }
+    if (options.unavailable) {
+      _applyUnavailableOptions(options);
+      return;
+    }
+    if (options.usesWata) {
+      _applyExternalOptions(options);
+      return;
+    }
+    _emit(_state.copyWith(productsState: PaywallProductsState.ready));
+    if (_state.isBusy || _subscriptionService.hasPurchaseInFlight) return;
 
     _ctaStopwatch = Stopwatch()..start();
     _emit(_state.copyWith(
@@ -388,6 +537,24 @@ class PaywallController extends ChangeNotifier {
     required bool userInitiated,
     bool resetIfEmpty = true,
   }) async {
+    if (_state.externalCheckout) {
+      if (_state.billingState == PaywallBillingState.success) return;
+      _externalPollAttempts = 0;
+      _emit(_state.copyWith(
+          billingState: PaywallBillingState.verifying, clearError: true));
+      try {
+        if (await _refreshWebsiteEntitlement()) return;
+        await _recoverWebsiteOrder();
+        await _checkExternalOrder();
+      } finally {
+        if (!_disposed &&
+            _state.billingState == PaywallBillingState.verifying) {
+          _emit(_state.copyWith(billingState: PaywallBillingState.ready));
+        }
+      }
+      _scheduleExternalPoll();
+      return;
+    }
     if (_state.productsState != PaywallProductsState.ready ||
         _verificationInFlight ||
         _state.billingState == PaywallBillingState.success) {
@@ -506,7 +673,108 @@ class PaywallController extends ChangeNotifier {
     );
   }
 
+  Future<bool> _refreshWebsiteEntitlement() async {
+    if (_externalEnvironment != 'production') return false;
+    if (_state.billingState == PaywallBillingState.success) return true;
+    // A site purchase can create an order this app has never seen.
+    try {
+      await _authService.refreshUserStatus(force: true);
+    } catch (_) {
+      return false;
+    }
+    if (_disposed) return true;
+    if (!_sameCheckoutAccount) {
+      _invalidateExternalAccount();
+      return true;
+    }
+    // Account access may change due to another payment or a gift.
+    // Success is resolved from the exact persisted checkout intent/order below.
+    return false;
+  }
+
+  Future<void> _recoverWebsiteOrder() async {
+    if (_externalEnvironment != 'production' ||
+        !_sameCheckoutAccount ||
+        _disposed) {
+      return;
+    }
+    try {
+      final hasIntent = await _regional.hasWebsiteIntent();
+      final intent = hasIntent ? await _regional.websiteIntent() : null;
+      final order =
+          hasIntent ? intent?.order : await _regional.latestProductionOrder();
+      if (!_disposed &&
+          _sameCheckoutAccount &&
+          _restoreWebsitePlan &&
+          intent?.days != null) {
+        final choices = _state.plans.where((p) => p.periodDays == intent!.days);
+        if (choices.isNotEmpty)
+          _emit(_state.copyWith(selectedPlanId: choices.first.id));
+        _restoreWebsitePlan = false;
+      }
+      if (_disposed || !_sameCheckoutAccount) return;
+      // A historical paid order is never success of a new purchase.
+      if (hasIntent) {
+        _externalOrder = order;
+      } else if (order != null && !order.paid) {
+        _externalOrder = order;
+      }
+    } catch (_) {
+      // Keep the existing order on a temporary failure. Never create another.
+    }
+  }
+
   Future<void> onAppResumed() async {
+    if (_disposed) return;
+    final pending = _resumeInFlight;
+    if (pending != null) return pending;
+    final task = _resumeFromForeground();
+    _resumeInFlight = task;
+    try {
+      await task;
+    } finally {
+      if (identical(_resumeInFlight, task)) _resumeInFlight = null;
+    }
+  }
+
+  Future<void> _resumeFromForeground() async {
+    _foreground = true;
+    if (_state.externalCheckout && !_sameCheckoutAccount) {
+      _invalidateExternalAccount();
+      await retryProducts();
+      return;
+    }
+    if (_state.externalCheckout) {
+      if (_state.billingState == PaywallBillingState.success) return;
+      _externalPollAttempts = 0;
+      _emit(_state.copyWith(
+          billingState: PaywallBillingState.verifying, clearError: true));
+      try {
+        if (_externalEnvironment == 'production' &&
+            onWebsitePurchaseReturn != null &&
+            await _regional.hasWebsiteIntent()) {
+          await _recoverWebsiteOrder();
+          if (!_disposed && _sameCheckoutAccount && _externalOrder != null) {
+            await onWebsitePurchaseReturn!();
+            return;
+          }
+        }
+        if (await _refreshWebsiteEntitlement()) return;
+        await _recoverWebsiteOrder();
+        await _checkExternalOrder();
+      } finally {
+        if (!_disposed &&
+            _state.billingState == PaywallBillingState.verifying) {
+          _emit(_state.copyWith(billingState: PaywallBillingState.ready));
+        }
+      }
+      if (_disposed || _state.billingState == PaywallBillingState.success) {
+        return;
+      }
+      // Eligibility is not cached across a browser trip or account switch.
+      if (!_state.isBusy) await retryProducts();
+      return;
+    }
     if (_state.productsState != PaywallProductsState.ready ||
         _state.billingState == PaywallBillingState.success ||
         _verificationInFlight) {
@@ -514,6 +782,275 @@ class PaywallController extends ChangeNotifier {
     }
     await Future<void>.delayed(const Duration(milliseconds: 250));
     await recoverPurchases(userInitiated: false);
+    if (!_disposed &&
+        !_state.isBusy &&
+        _state.billingState != PaywallBillingState.success) {
+      final options = await _regional.resolve();
+      if (!_disposed && options.usesWata && _sameCheckoutAccount) {
+        _applyExternalOptions(options);
+      }
+    }
+  }
+
+  void onAppPaused() {
+    _foreground = false;
+    _externalPoll?.cancel();
+  }
+
+  bool get _sameCheckoutAccount =>
+      _checkoutAccountId != null && _checkoutAccountId == _authService.user?.id;
+
+  void _invalidateExternalAccount() {
+    _externalPoll?.cancel();
+    _externalOrder = null;
+    _externalKeys.clear();
+    _externalEnvironment = 'sandbox';
+    _emit(_state.copyWith(
+        productsState: PaywallProductsState.error,
+        billingState: PaywallBillingState.error,
+        errorKind: PaywallErrorKind.launchFailed,
+        externalPending: false,
+        externalCanResume: false,
+        externalReview: false));
+  }
+
+  void _applyExternalOptions(RegionalCheckoutOptions options) {
+    if (_disposed) return;
+    final plans = options.plans.map((p) => p.toTariff(locale)).toList();
+    _externalEnvironment = options.environment ?? 'sandbox';
+    _externalOrder = options.pendingOrder;
+    final previousSelection = _state.selectedPlanId;
+    final selected = plans.firstWhere((p) => p.id == previousSelection,
+        orElse: () => plans.firstWhere((p) => p.id == defaultPlanId,
+            orElse: () => plans.last));
+    _emit(_state.copyWith(
+      productsState: PaywallProductsState.ready,
+      billingState: PaywallBillingState.ready,
+      plans: plans,
+      selectedPlanId: selected.id,
+      clearError: true,
+      externalCheckout: true,
+      externalSandbox: _externalEnvironment == 'sandbox',
+      externalPending: _externalOrder?.isPending ?? false,
+      externalCanResume: _externalOrder?.canOpen ?? false,
+      externalReview: _externalOrder?.needsReview ?? false,
+    ));
+    _scheduleExternalPoll();
+  }
+
+  /// Replaces a short-lived TV login link without opening a browser or creating
+  /// a chargeable order. The website resumes the same pending order, if any.
+  Future<Uri?> refreshWebsiteCheckoutLink() async {
+    final plan = _state.selectedPlan;
+    if (_disposed ||
+        !_sameCheckoutAccount ||
+        plan == null ||
+        _state.isBusy ||
+        !_state.externalCheckout ||
+        _externalEnvironment != 'production' ||
+        _state.billingState == PaywallBillingState.success) return null;
+    _emit(_state.copyWith(
+        billingState: PaywallBillingState.launching, clearError: true));
+    try {
+      final options = await _regional.resolve();
+      if (_disposed ||
+          !_sameCheckoutAccount ||
+          !options.usesWata ||
+          options.environment != 'production') return null;
+      final uri = await _regional.prepareWebsiteCheckout(
+          days: plan.periodDays, amountMinor: plan.priceMicros ~/ 10000);
+      if (_disposed || !_sameCheckoutAccount) return null;
+      _restoreWebsitePlan = true;
+      return uri;
+    } catch (_) {
+      return null;
+    } finally {
+      if (!_disposed) {
+        _emit(_state.copyWith(billingState: PaywallBillingState.ready));
+      }
+    }
+  }
+
+  Future<void> _purchaseExternal(TariffUiModel plan) async {
+    if (_isExternalCheckoutActive()) return;
+    if (!_sameCheckoutAccount) {
+      await retryProducts();
+      return;
+    }
+    _externalPoll?.cancel();
+    _emit(_state.copyWith(
+        billingState: PaywallBillingState.launching, clearError: true));
+    try {
+      if (!await _canOpenExternalCheckout()) {
+        if (!_disposed)
+          _emit(_state.copyWith(billingState: PaywallBillingState.ready));
+        return;
+      }
+      if (_externalEnvironment == 'production') {
+        // WATA approved granilink.com as the payment origin. The website
+        // authenticates the same GRANI account and creates the order there.
+        final options = await _regional.resolve();
+        if (_disposed) return;
+        if (!options.usesWata ||
+            options.environment != 'production' ||
+            !_sameCheckoutAccount) {
+          throw const RegionalCheckoutUnavailable();
+        }
+        final destination = await _regional.prepareWebsiteCheckout(
+            days: plan.periodDays, amountMinor: plan.priceMicros ~/ 10000);
+        if (_disposed || !_sameCheckoutAccount) return;
+        _restoreWebsitePlan = true;
+        final opened = await _openExternalCheckout(destination);
+        if (_disposed) return;
+        if (!_sameCheckoutAccount) {
+          _invalidateExternalAccount();
+          return;
+        }
+        _emit(_state.copyWith(
+          billingState:
+              opened ? PaywallBillingState.ready : PaywallBillingState.error,
+          errorKind: opened ? null : PaywallErrorKind.launchFailed,
+          clearError: opened,
+        ));
+        return;
+      }
+      final key = _externalKeys.putIfAbsent(
+          plan.periodDays, RegionalCheckoutService.newIdempotencyKey);
+      // A fresh country check and server gate run even for a resumed order.
+      final order = await _regional.create(
+          days: plan.periodDays,
+          amountMinor: plan.priceMicros ~/ 10000,
+          idempotencyKey: key,
+          expectedEnvironment: _externalEnvironment);
+      if (_disposed) return;
+      if (!_sameCheckoutAccount) {
+        _invalidateExternalAccount();
+        return;
+      }
+      _externalOrder = order;
+      if (order.paid) {
+        await _checkExternalOrder();
+        return;
+      }
+      if (!order.canOpen) throw const RegionalCheckoutUnavailable();
+      final opened = await _openExternalCheckout(order.checkoutUri!);
+      if (_disposed) return;
+      if (!_sameCheckoutAccount) {
+        _invalidateExternalAccount();
+        return;
+      }
+      _emit(_state.copyWith(
+        billingState:
+            opened ? PaywallBillingState.ready : PaywallBillingState.error,
+        errorKind: opened ? null : PaywallErrorKind.launchFailed,
+        clearError: opened,
+        externalPending: true,
+        externalCanResume: true,
+        externalReview: false,
+      ));
+    } on RegionalCheckoutUnavailable {
+      if (_disposed) return;
+      _emit(_state.copyWith(
+          billingState: PaywallBillingState.error,
+          errorKind: PaywallErrorKind.launchFailed));
+      // Re-resolve on a changed country/disabled method without automatically
+      // launching a Google purchase or losing an existing paid entitlement.
+      await retryProducts();
+    } catch (_) {
+      if (_disposed) return;
+      _emit(_state.copyWith(
+          billingState: PaywallBillingState.error,
+          errorKind: PaywallErrorKind.launchFailed));
+    } finally {
+      _scheduleExternalPoll();
+    }
+  }
+
+  void _scheduleExternalPoll() {
+    _externalPoll?.cancel();
+    if (_disposed ||
+        !_foreground ||
+        _externalPollAttempts >= 24 ||
+        !_sameCheckoutAccount ||
+        !((_externalOrder?.isPending ?? false) ||
+            (_externalOrder?.needsReview ?? false))) {
+      return;
+    }
+    _externalPoll = Timer(const Duration(seconds: 5), () async {
+      _externalPollAttempts++;
+      await _checkExternalOrder();
+      _scheduleExternalPoll();
+    });
+  }
+
+  Future<void> _checkExternalOrder() async {
+    final previous = _externalOrder;
+    if (previous == null ||
+        _externalCheckInFlight ||
+        _disposed ||
+        !_sameCheckoutAccount ||
+        _state.billingState == PaywallBillingState.success) {
+      return;
+    }
+    _externalCheckInFlight = true;
+    try {
+      final hasIntent = _externalEnvironment == 'production' &&
+          await _regional.hasWebsiteIntent();
+      final order = hasIntent
+          ? await _regional.websiteIntentOrder()
+          : await _regional.status(previous.id,
+              expectedEnvironment: _externalEnvironment);
+      if (order == null) return;
+      if (_disposed ||
+          !_sameCheckoutAccount ||
+          _externalOrder?.id != previous.id) {
+        return;
+      }
+      _externalOrder = order;
+      if (order.paid) {
+        _externalPoll?.cancel();
+        _emit(_state.copyWith(billingState: PaywallBillingState.verifying));
+        await _authService.refreshUserStatus(force: true);
+        if (_disposed) return;
+        if (!_sameCheckoutAccount) {
+          _invalidateExternalAccount();
+          return;
+        }
+        if (!_authService.hasActiveSubscription) {
+          _emit(_state.copyWith(
+              billingState: PaywallBillingState.error,
+              errorKind: PaywallErrorKind.verificationFailed));
+          return;
+        }
+        _emit(_state.copyWith(
+            billingState: PaywallBillingState.success,
+            externalPending: false,
+            externalCanResume: false,
+            externalReview: false,
+            clearError: true));
+        if (_reportedExternalOrders.add(order.id)) await onEntitlementGranted();
+      } else {
+        if (!order.isPending) _externalKeys.remove(order.days);
+        final selected = _state.selectedPlan?.periodDays == order.days;
+        _emit(_state.copyWith(
+            billingState: PaywallBillingState.ready,
+            externalPending: selected && order.isPending,
+            externalCanResume: selected && order.canOpen,
+            externalReview: order.needsReview));
+      }
+    } catch (_) {
+      // A transient status failure never grants access, loses the order, or
+      // creates another payment. Retry when foregrounded or on the next poll.
+      if (!_disposed &&
+          (_state.billingState == PaywallBillingState.verifying ||
+              _state.billingState == PaywallBillingState.launching)) {
+        _emit(_state.copyWith(
+            billingState: PaywallBillingState.error,
+            errorKind: PaywallErrorKind.verificationFailed));
+      }
+    } finally {
+      _externalCheckInFlight = false;
+    }
   }
 
   List<TariffUiModel> _buildPlans(List<ProductDetails> products) {
@@ -675,6 +1212,8 @@ class PaywallController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _browserSubscription?.cancel();
+    _externalPoll?.cancel();
     _purchaseSubscription?.cancel();
     super.dispose();
   }

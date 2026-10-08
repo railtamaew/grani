@@ -1441,6 +1441,36 @@ abstract class AppLocalizations {
   /// **'Next payment'**
   String get profileNextPayment;
 
+  /// No description provided for @profileAccessUntil.
+  ///
+  /// In en, this message translates to:
+  /// **'Access until'**
+  String get profileAccessUntil;
+
+  /// No description provided for @profilePaymentMethod.
+  ///
+  /// In en, this message translates to:
+  /// **'Payment'**
+  String get profilePaymentMethod;
+
+  /// No description provided for @profilePaymentSbp.
+  ///
+  /// In en, this message translates to:
+  /// **'SBP'**
+  String get profilePaymentSbp;
+
+  /// No description provided for @paywallCheckPayment.
+  ///
+  /// In en, this message translates to:
+  /// **'Check payment'**
+  String get paywallCheckPayment;
+
+  /// No description provided for @paywallRestorePurchases.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore purchases'**
+  String get paywallRestorePurchases;
+
   /// No description provided for @profileTrialAccess.
   ///
   /// In en, this message translates to:
@@ -2533,6 +2563,66 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Wi-Fi may need a sign-in. Open your browser or switch networks.'**
   String get vpnNoticeSignInBody;
+
+  /// No description provided for @paywallWataSandboxNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'WATA test payment. No real charge.'**
+  String get paywallWataSandboxNotice;
+
+  /// No description provided for @paywallExternalBrowserHint.
+  ///
+  /// In en, this message translates to:
+  /// **'The GRANI website will open. No second sign-in is needed.'**
+  String get paywallExternalBrowserHint;
+
+  /// No description provided for @paywallTrustWata.
+  ///
+  /// In en, this message translates to:
+  /// **'WATA payment'**
+  String get paywallTrustWata;
+
+  /// No description provided for @paywallSameAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'No second sign-in'**
+  String get paywallSameAccount;
+
+  /// No description provided for @paywallOpeningBrowser.
+  ///
+  /// In en, this message translates to:
+  /// **'Opening payment page…'**
+  String get paywallOpeningBrowser;
+
+  /// No description provided for @paywallResumeExternal.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue payment'**
+  String get paywallResumeExternal;
+
+  /// No description provided for @paywallTestWataPayment.
+  ///
+  /// In en, this message translates to:
+  /// **'Test WATA payment'**
+  String get paywallTestWataPayment;
+
+  /// No description provided for @paywallPaySbp.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue to website payment'**
+  String get paywallPaySbp;
+
+  /// No description provided for @paywallPaymentReview.
+  ///
+  /// In en, this message translates to:
+  /// **'We are checking your previous payment to prevent a duplicate charge. If the status does not change, contact support@granilink.com.'**
+  String get paywallPaymentReview;
+
+  /// No description provided for @paywallPaymentReviewShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking payment'**
+  String get paywallPaymentReviewShort;
 }
 
 class _AppLocalizationsDelegate

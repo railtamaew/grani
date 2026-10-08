@@ -10,6 +10,7 @@ import '../widgets/privacy_policy_bottom_sheet.dart';
 import '../widgets/auth_logo.dart';
 import '../widgets/auth_text_block.dart';
 import '../services/auth_service.dart';
+import '../services/install_attribution_service.dart';
 import '../services/vpn_service.dart';
 import '../services/push_notification_service.dart';
 import '../services/analytics_service.dart';
@@ -33,10 +34,38 @@ class StartScreen extends StatefulWidget {
 }
 
 class _StartScreenState extends State<StartScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
+  AuthService? _watchedAuth;
+  bool _redirectScheduled = false;
+  bool _fallbackInFlight = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = context.read<AuthService>();
+    if (!identical(auth, _watchedAuth)) {
+      _watchedAuth?.removeListener(_scheduleAuthFallback);
+      _watchedAuth = auth;
+      auth.addListener(_scheduleAuthFallback);
+    }
+  }
+
+  void _scheduleAuthFallback() {
+    if (!mounted || _redirectScheduled) return;
+    _redirectScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _redirectScheduled = false;
+      if (mounted) _checkAuthAndRedirectFallback();
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _scheduleAuthFallback();
+  }
+
   late AnimationController _fadeController;
   late AnimationController _scaleController;
-  late Animation<double> _fadeAnimation;
   late Animation<double> _scaleAnimation;
 
   bool _isGoogleButtonPressed = false;
@@ -45,14 +74,12 @@ class _StartScreenState extends State<StartScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     // Fade-in анимация при открытии экрана (0.4s)
     _fadeController = AnimationController(
       duration: const Duration(milliseconds: 400),
       vsync: this,
-    );
-    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _fadeController, curve: Curves.easeIn),
     );
     // Запускаем анимацию сразу, не ждем
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -80,30 +107,40 @@ class _StartScreenState extends State<StartScreen>
 
   /// Fallback проверка авторизации (на случай прямого перехода на StartScreen)
   Future<void> _checkAuthAndRedirectFallback() async {
-    if (!mounted) return;
+    if (!mounted || _fallbackInFlight) return;
+    _fallbackInFlight = true;
 
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
 
       // Ждем загрузки токена из хранилища
       await authService.waitForTokenLoad();
+      if (_isGoogleButtonPressed || _isEmailButtonPressed) return;
 
-      if (!mounted) return;
+      // Navigator may keep '/' below a deep-linked initial route. An offstage
+      // welcome screen must not replace the invitation currently on top.
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
 
       // Проверяем, авторизован ли пользователь
       if (authService.isAuthenticated && authService.token != null) {
         debugPrint(
-            'StartScreen: Fallback - пользователь авторизован, определяем правильный экран');
+          'StartScreen: Fallback - пользователь авторизован, определяем правильный экран',
+        );
 
         // Определяем правильный экран на основе статуса пользователя
-        String targetRoute = _determineTargetRoute(authService);
+        final pendingAppLink = await InstallAttributionService.instance
+            .takePendingRouteIfAuthorized(true);
+        if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+        final targetRoute =
+            pendingAppLink ?? _determineTargetRoute(authService);
         debugPrint('StartScreen: Fallback - переход на: $targetRoute');
 
         if (mounted) {
           final currentRoute = ModalRoute.of(context)?.settings.name;
           if (currentRoute == targetRoute) {
             debugPrint(
-                'StartScreen: Fallback - уже на $targetRoute, навигация пропущена');
+              'StartScreen: Fallback - уже на $targetRoute, навигация пропущена',
+            );
             return;
           }
           Navigator.pushNamedAndRemoveUntil(context, targetRoute, (_) => false);
@@ -112,6 +149,8 @@ class _StartScreenState extends State<StartScreen>
     } catch (e) {
       debugPrint('StartScreen: Ошибка при fallback проверке авторизации: $e');
       // Продолжаем показ стартового экрана при ошибке
+    } finally {
+      _fallbackInFlight = false;
     }
   }
 
@@ -130,6 +169,8 @@ class _StartScreenState extends State<StartScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _watchedAuth?.removeListener(_scheduleAuthFallback);
     _fadeController.dispose();
     _scaleController.dispose();
     super.dispose();
@@ -198,7 +239,8 @@ class _StartScreenState extends State<StartScreen>
                   AuthLogo(
                     logoWidth: GraniTheme.logoWidth * scaleX,
                     logoHeight: GraniTheme.logoHeight * scaleY,
-                    topOffset: safeAreaTop +
+                    topOffset:
+                        safeAreaTop +
                         GraniTheme.startScreenLogoTopOffset +
                         14 * scaleY,
                   ),
@@ -207,13 +249,15 @@ class _StartScreenState extends State<StartScreen>
                   Builder(
                     builder: (context) {
                       final l10n = context.l10n;
-                      final textBlockTop = safeAreaTop +
+                      final textBlockTop =
+                          safeAreaTop +
                           GraniTheme.startScreenLogoTopOffset +
                           GraniTheme.logoHeight * scaleY +
                           logoToTitleGap * scaleY;
                       // SafeArea снаружи уже отрезает left/right инсет, поэтому leftOffset
                       // считаем в координатах "внутри" SafeArea (без добавления safeAreaHorizontalPaddingLeft).
-                      final safeWidth = screenWidth -
+                      final safeWidth =
+                          screenWidth -
                           safeAreaHorizontalPaddingLeft -
                           safeAreaHorizontalPaddingRight;
                       final textBlockWidth =
@@ -243,7 +287,8 @@ class _StartScreenState extends State<StartScreen>
                   Builder(
                     builder: (context) {
                       final l10n = context.l10n;
-                      final textBlockTop = safeAreaTop +
+                      final textBlockTop =
+                          safeAreaTop +
                           GraniTheme.startScreenLogoTopOffset +
                           GraniTheme.logoHeight * scaleY +
                           logoToTitleGap * scaleY;
@@ -271,12 +316,14 @@ class _StartScreenState extends State<StartScreen>
                         style: subtitleStyle,
                         maxWidth: textBlockWidth,
                       );
-                      final textBlockHeight = titleHeight +
+                      final textBlockHeight =
+                          titleHeight +
                           (GraniTheme.startScreenTitleSubtitleGap * scaleY) +
                           subtitleHeight;
                       // Увеличиваем отлип от Subtitle до кнопок Google/Email
                       // (раньше использовался множитель 0.82 — делал блок слишком близко).
-                      final buttonsTop = textBlockTop +
+                      final buttonsTop =
+                          textBlockTop +
                           textBlockHeight +
                           (GraniTheme.startScreenGapSubtitleToButtons *
                               1.28 *
@@ -296,8 +343,9 @@ class _StartScreenState extends State<StartScreen>
                               Builder(
                                 builder: (context) {
                                   final authService = Provider.of<AuthService>(
-                                      context,
-                                      listen: false);
+                                    context,
+                                    listen: false,
+                                  );
                                   return _buildStartButton(
                                     context: context,
                                     text: l10n.startContinueGoogle,
@@ -314,10 +362,11 @@ class _StartScreenState extends State<StartScreen>
                                 },
                               ),
                               SizedBox(
-                                  height:
-                                      GraniTheme.startScreenGapBetweenButtons *
-                                          0.85 *
-                                          scaleY),
+                                height:
+                                    GraniTheme.startScreenGapBetweenButtons *
+                                    0.85 *
+                                    scaleY,
+                              ),
                             ],
                             _buildStartButton(
                               context: context,
@@ -330,10 +379,12 @@ class _StartScreenState extends State<StartScreen>
                               useStartScreenStyle: emailPrimary,
                             ),
                             SizedBox(
-                                height: GraniTheme
-                                        .startScreenGapButtonsToAccountLink *
-                                    0.85 *
-                                    scaleY),
+                              height:
+                                  GraniTheme
+                                      .startScreenGapButtonsToAccountLink *
+                                  0.85 *
+                                  scaleY,
+                            ),
                             RichText(
                               textAlign: TextAlign.center,
                               text: TextSpan(
@@ -354,17 +405,21 @@ class _StartScreenState extends State<StartScreen>
                                     recognizer: TapGestureRecognizer()
                                       ..onTap = () {
                                         Navigator.pushNamed(
-                                            context, '/auth-email');
+                                          context,
+                                          '/auth-email',
+                                        );
                                       },
                                   ),
                                 ],
                               ),
                             ),
                             SizedBox(
-                                height: GraniTheme
-                                        .startScreenGapAccountLinkToPrivacy *
-                                    0.72 *
-                                    scaleY),
+                              height:
+                                  GraniTheme
+                                      .startScreenGapAccountLinkToPrivacy *
+                                  0.72 *
+                                  scaleY,
+                            ),
                             GestureDetector(
                               onTap: () =>
                                   PrivacyPolicyBottomSheet.show(context),
@@ -483,7 +538,8 @@ class _StartScreenState extends State<StartScreen>
       debugPrint('StartScreen: Начало авторизации через Google...');
       if (kDebugMode) {
         debugPrint(
-            'StartScreen: Web Client ID: ${AppConfig.googleOAuthWebClientId}');
+          'StartScreen: Web Client ID: ${AppConfig.googleOAuthWebClientId}',
+        );
         debugPrint('StartScreen: API Base URL: ${AppConfig.apiBaseUrl}');
       }
 
@@ -509,7 +565,8 @@ class _StartScreenState extends State<StartScreen>
       debugPrint('StartScreen: errorMessage=${result.errorMessage}');
       debugPrint('StartScreen: user=${result.user?.email}');
       debugPrint(
-          'StartScreen: token=${result.token != null ? "получен" : "не получен"}');
+        'StartScreen: token=${result.token != null ? "получен" : "не получен"}',
+      );
 
       if (!context.mounted) {
         debugPrint('StartScreen: Context не mounted, выход');
@@ -555,8 +612,10 @@ class _StartScreenState extends State<StartScreen>
         unawaited(() async {
           final sw = Stopwatch()..start();
           try {
-            await vpnService.refreshControlPlaneSnapshot(authService,
-                force: true);
+            await vpnService.refreshControlPlaneSnapshot(
+              authService,
+              force: true,
+            );
             sw.stop();
             _logStartAuthTiming('control_plane_snapshot_bg_done', {
               'elapsed_ms': sw.elapsedMilliseconds,
@@ -570,7 +629,8 @@ class _StartScreenState extends State<StartScreen>
               'error': e.toString(),
             });
             debugPrint(
-                'StartScreen: control-plane snapshot after Google failed: $e');
+              'StartScreen: control-plane snapshot after Google failed: $e',
+            );
           }
         }());
         unawaited(() async {
@@ -598,19 +658,22 @@ class _StartScreenState extends State<StartScreen>
           Navigator.pushNamedAndRemoveUntil(context, route, (_) => false);
           stopAndLogNavigation(route, 'google_success');
           debugPrint(
-              'StartScreen: Navigator.pushNamedAndRemoveUntil done -> $route');
+            'StartScreen: Navigator.pushNamedAndRemoveUntil done -> $route',
+          );
         });
       } else if (result.isCanceled) {
         // Статус canceled - пользователь нажал "Отмена"
         debugPrint(
-            'StartScreen: ⚠️ Пользователь отменил авторизацию через Google');
+          'StartScreen: ⚠️ Пользователь отменил авторизацию через Google',
+        );
         // Окно Google сворачивается автоматически
         // Не показываем уведомления - их нет в макете Figma
         // Просто возвращаемся на экран без действий
       } else if (result.isError) {
         // Статус error - внутренняя ошибка
         debugPrint(
-            'StartScreen: ❌ Ошибка Google OAuth: ${result.errorMessage}');
+          'StartScreen: ❌ Ошибка Google OAuth: ${result.errorMessage}',
+        );
         debugPrint('StartScreen: Проверьте:');
         debugPrint('  1. SHA-1 fingerprint в Google Cloud Console');
         debugPrint('  2. Client ID соответствует package name');
@@ -625,7 +688,8 @@ class _StartScreenState extends State<StartScreen>
         }
       } else {
         debugPrint(
-            'StartScreen: ⚠️ Неизвестный статус результата: ${result.status}');
+          'StartScreen: ⚠️ Неизвестный статус результата: ${result.status}',
+        );
       }
 
       debugPrint('=== КОНЕЦ GOOGLE OAUTH ===');
@@ -682,11 +746,15 @@ class _StartScreenState extends State<StartScreen>
         // Переход на экран ввода email
         debugPrint('StartScreen: переход на /auth-email');
         try {
-          Navigator.pushNamed(context, '/auth-email').then((_) {
-            debugPrint('StartScreen: возврат с /auth-email');
-          }).catchError((error) {
-            debugPrint('StartScreen: ошибка навигации на /auth-email: $error');
-          });
+          Navigator.pushNamed(context, '/auth-email')
+              .then((_) {
+                debugPrint('StartScreen: возврат с /auth-email');
+              })
+              .catchError((error) {
+                debugPrint(
+                  'StartScreen: ошибка навигации на /auth-email: $error',
+                );
+              });
         } catch (e, stackTrace) {
           debugPrint('StartScreen: исключение при навигации: $e');
           debugPrint('Stack trace: $stackTrace');
@@ -713,7 +781,8 @@ class _StartScreenState extends State<StartScreen>
     final textStyle = useStartScreenStyle
         ? GraniTheme.buttonTextStartScreen.copyWith(
             fontSize: GraniTheme.buttonTextStartScreen.fontSize! * typeScale,
-            letterSpacing: 0.06 *
+            letterSpacing:
+                0.06 *
                 (GraniTheme.buttonTextStartScreen.fontSize ?? 22) *
                 typeScale,
           )

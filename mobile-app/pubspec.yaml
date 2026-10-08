@@ -2,7 +2,7 @@ name: mobile_app
 description: GRANI Mobile App
 publish_to: 'none'
 # versionName.versionCode — code must match AppConfig fallbacks until PackageInfo.init().
-version: 1.0.44+44
+version: 1.0.61+61
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -59,6 +59,7 @@ dependencies:
   # which migrates Google Play Billing Library 7.1.1 -> 8.0.0.
   in_app_purchase: ^3.3.0  # Google Play / App Store подписки (пока только Android)
   in_app_purchase_android: 0.5.0
+  in_app_purchase_platform_interface: 1.4.0
   in_app_update: ^4.2.5  # Google Play In-App Updates
   
   # VPN - mobile AmneziaWG is embedded under android/third_party/amneziawg-android.
@@ -105,6 +106,8 @@ flutter:
   uses-material-design: true
   
   assets:
+    - assets/grani_avatars/
+    - assets/images/gift/
     - assets/images/grani_button_bowl_base_v3.png
     - assets/images/grani_button_center_source_v3.png
     - assets/images/tariffs/
@@ -114,6 +117,14 @@ flutter:
 
   # Montserrat — по макету Figma; файлы в assets/fonts/ (см. assets/fonts/README.md)
   fonts:
+    - family: GraniGiftMontserrat
+      fonts:
+        - asset: assets/fonts/GraniGiftMontserrat-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/GraniGiftMontserrat-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/GraniGiftMontserrat-Bold.ttf
+          weight: 700
     - family: Montserrat
       fonts:
         - asset: assets/fonts/Montserrat-Light.ttf

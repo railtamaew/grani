@@ -282,11 +282,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
                   centerTitle: true,
                   title: Text(
                     context.l10n.devicesScreenTitle,
-                    style: GraniTheme.bodyMedium.copyWith(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w600,
-                      color: GraniTheme.primaryText,
-                    ),
+                    style: GraniTheme.detailPageTitle,
                   ),
                 ),
                 Expanded(child: _buildContent()),

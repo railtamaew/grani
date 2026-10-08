@@ -1,7 +1,8 @@
-import 'dart:async';
-import 'dart:io';
 import 'widgets/desktop_app_frame.dart';
 import 'services/desktop_integration.dart';
+import 'dart:async';
+import 'screens/referrals_screen.dart';
+import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -16,6 +17,7 @@ import 'screens/auth_code_screen.dart';
 import 'screens/main_content_screen.dart';
 import 'screens/bottom_sheet_profile.dart';
 import 'screens/trial_ended_screen.dart';
+import 'screens/website_payment_result_screen.dart';
 import 'screens/devices_screen.dart' deferred as devices_screen;
 import 'screens/device_limit_screen.dart';
 import 'screens/payment_screen.dart' deferred as payment_screen;
@@ -24,6 +26,7 @@ import 'screens/split_tunnel_screen.dart';
 // PlanSelectionScreen удалён — маршрут /subscription теперь ведёт на TrialEndedScreen
 import 'services/vpn_service.dart';
 import 'services/auth_service.dart';
+import 'services/regional_checkout_service.dart';
 import 'services/native_vpn_service.dart';
 import 'services/subscription_service.dart';
 import 'config/page_transitions.dart';
@@ -49,10 +52,14 @@ import 'services/push_notification_service.dart';
 import 'services/in_app_event_banner_service.dart';
 import 'services/entitlement_native_sync.dart';
 import 'services/notification_journal_service.dart';
+import 'services/notification_inbox_sync.dart';
 import 'services/install_attribution_service.dart';
 import 'services/analytics_service.dart';
 import 'screens/notification_journal_screen.dart';
 import 'widgets/pending_device_limit_listener.dart';
+import 'tv/tv_platform.dart';
+import 'tv/tv_routes.dart';
+import 'tv/tv_ui.dart';
 
 const String _simpleVpnActiveSessionCacheKey =
     'simple_vpn_active_session_id_v1';
@@ -329,6 +336,7 @@ VpnService _createVpnServiceInternal(AuthService auth) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await TvPlatform.initialize();
   DesktopIntegration.initialize();
 
   FlutterError.onError = (FlutterErrorDetails details) {
@@ -428,9 +436,12 @@ void main() async {
       );
 
       // Только портрет: вёрстка рассчитана на книжную ориентацию (см. Home/Trial).
-      await SystemChrome.setPreferredOrientations([
-        DeviceOrientation.portraitUp,
-      ]);
+      await SystemChrome.setPreferredOrientations(TvPlatform.isTv
+          ? [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
+          : [DeviceOrientation.portraitUp]);
+      if (TvPlatform.isTv) {
+        await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      }
     }
 
     // Предзагрузка изображений в фоне (не блокирует запуск).
@@ -534,6 +545,7 @@ class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
     with WidgetsBindingObserver {
   Timer? _inactiveVpnSyncDebounce;
   bool _resumeRefreshInFlight = false;
+  bool _paymentRecoveryInFlight = false;
   bool _wasPausedOrDetached = false;
 
   @override
@@ -542,6 +554,7 @@ class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scheduleResumeRefresh();
+      unawaited(_recoverCompletedWebsitePurchase());
       unawaited(
         Future<void>.delayed(const Duration(seconds: 2), () {
           return AppUpdateService.instance.checkForPlayUpdate(
@@ -576,6 +589,7 @@ class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
       _wasPausedOrDetached = false;
       ConnectionLogger().flushPendingAfterResumeIfAny();
       _scheduleResumeRefresh();
+      unawaited(_recoverCompletedWebsitePurchase());
       if (_isMobileTarget) {
         unawaited(
           PushNotificationService().syncAnalyticsIdentityWithCurrentSession(),
@@ -595,6 +609,40 @@ class _AppLifecycleHandlerState extends State<_AppLifecycleHandler>
       _inactiveVpnSyncDebounce?.cancel();
       _inactiveVpnSyncDebounce = null;
       // Do not touch VPN state on pause; Android VPN must keep running independently.
+    }
+  }
+
+  Future<void> _recoverCompletedWebsitePurchase() async {
+    // Do not block startup, intercept gifts/login, or turn existing access into
+    // payment proof. Only an unacknowledged owned completed order can navigate.
+    if (_paymentRecoveryInFlight ||
+        !mounted ||
+        !_kRoutesToMainContentShell.contains(appRouteObserver.currentRouteName))
+      return;
+    final auth = context.read<AuthService>();
+    if (!auth.isAuthenticated) return;
+    final account = auth.user?.id;
+    _paymentRecoveryInFlight = true;
+    try {
+      final service = RegionalCheckoutService(
+          readCountry: () async => null, request: auth.regionalBillingRequest);
+      final result = await service
+          .websiteCheckoutContext()
+          .timeout(const Duration(seconds: 12));
+      if (!mounted ||
+          auth.user?.id != account ||
+          !auth.isAuthenticated ||
+          !_kRoutesToMainContentShell
+              .contains(appRouteObserver.currentRouteName)) return;
+      if (result?['state'] == 'completed' &&
+          (result?['order'] as Map?)?['status'] == 'paid') {
+        appNavigatorKey.currentState
+            ?.pushNamedAndRemoveUntil('/payment-result', (_) => false);
+      }
+    } catch (_) {
+      // Keep the intent for the next return, without changing access or login.
+    } finally {
+      _paymentRecoveryInFlight = false;
     }
   }
 
@@ -729,6 +777,7 @@ class GraniApp extends StatefulWidget {
 }
 
 class _GraniAppState extends State<GraniApp> {
+  late final NotificationInboxSync _notificationInbox;
   String? _initialRoute;
   bool _isDeterminingRoute = true;
   bool _initialRouteError = false;
@@ -739,6 +788,7 @@ class _GraniAppState extends State<GraniApp> {
   void initState() {
     super.initState();
     EntitlementNativeSync.registerDartSideHandler();
+    _notificationInbox = NotificationInboxSync(widget.authService)..start();
     _appLinkSubscription = InstallAttributionService.instance.links.listen(
       _handleAppLink,
     );
@@ -748,23 +798,36 @@ class _GraniAppState extends State<GraniApp> {
   void _handleAppLink(String route) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (!widget.authService.isAuthenticated) {
+      if (!widget.authService.isAuthenticated &&
+          route != '/referrals' &&
+          route != '/gift/receive') {
         appNavigatorKey.currentState?.pushNamedAndRemoveUntil(
           '/',
           (_) => false,
         );
         return;
       }
-      appNavigatorKey.currentState?.pushNamedAndRemoveUntil(
+      final navigator = appNavigatorKey.currentState;
+      if (navigator == null) return;
+      navigator.pushNamedAndRemoveUntil(
         route,
         (_) => false,
       );
+      if (widget.authService.isAuthenticated) {
+        unawaited(
+          InstallAttributionService.instance.acknowledgeHandledRoute(route),
+        );
+      }
     });
+    // Platform messages can arrive while the resumed screen is idle.
+    // A post-frame callback alone does not request a frame.
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   @override
   void dispose() {
     _appLinkSubscription?.cancel();
+    _notificationInbox.dispose();
     super.dispose();
   }
 
@@ -846,13 +909,18 @@ class _GraniAppState extends State<GraniApp> {
       // Обычный маршрут выбираем сразу по локальному auth/trial-кэшу, а редкий
       // маршрут Quick Tile применяем сразу после первого кадра.
       _initialRoute = appLinkRoute ?? _getTargetRoute(authService);
-      Logger().debug('Начальный маршрут: $_initialRoute', 'GraniApp');
+      Logger().debug(
+        'Начальный маршрут: $_initialRoute',
+        'GraniApp',
+      );
       if (appLinkRoute == null) {
         _schedulePlatformLaunchRoute();
       }
       _scheduleControlPlaneRefresh(authService);
     } else {
-      _initialRoute = '/';
+      _initialRoute = await InstallAttributionService.instance
+              .takePendingRouteIfAuthorized(false) ??
+          '/';
       Logger().debug(
         'Пользователь не авторизован, начальный маршрут: /',
         'GraniApp',
@@ -943,38 +1011,34 @@ class _GraniAppState extends State<GraniApp> {
       );
       return;
     }
-    vpnService
-        .refreshControlPlaneSnapshot(authService)
-        .timeout(
-          const Duration(seconds: 3),
-          onTimeout: () {
-            Logger().debug(
-              'Таймаут snapshot при старте, используем кеш',
-              'GraniApp',
-            );
-          },
-        )
-        .then((_) {
+    vpnService.refreshControlPlaneSnapshot(authService).timeout(
+      const Duration(seconds: 3),
+      onTimeout: () {
+        Logger().debug(
+          'Таймаут snapshot при старте, используем кеш',
+          'GraniApp',
+        );
+      },
+    ).then((_) {
+      if (!mounted) return;
+      final newRoute = _getTargetRoute(authService);
+      if (newRoute == '/trial-ended' && _initialRoute == '/main') {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
-          final newRoute = _getTargetRoute(authService);
-          if (newRoute == '/trial-ended' && _initialRoute == '/main') {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              final ctx = appNavigatorKey.currentContext;
-              if (ctx != null) {
-                Navigator.maybeOf(
-                  ctx,
-                )?.pushNamedAndRemoveUntil('/trial-ended', (_) => false);
-              }
-            });
+          final ctx = appNavigatorKey.currentContext;
+          if (ctx != null) {
+            Navigator.maybeOf(
+              ctx,
+            )?.pushNamedAndRemoveUntil('/trial-ended', (_) => false);
           }
-        })
-        .catchError((e) {
-          Logger().debug(
-            'Ошибка snapshot при старте: $e, используем кеш',
-            'GraniApp',
-          );
         });
+      }
+    }).catchError((e) {
+      Logger().debug(
+        'Ошибка snapshot при старте: $e, используем кеш',
+        'GraniApp',
+      );
+    });
   }
 
   /// Определяет целевой маршрут на основе статуса пользователя
@@ -990,11 +1054,11 @@ class _GraniAppState extends State<GraniApp> {
   }
 
   List<LocalizationsDelegate<dynamic>> get _localizationDelegates => const [
-    AppLocalizations.delegate,
-    GlobalMaterialLocalizations.delegate,
-    GlobalWidgetsLocalizations.delegate,
-    GlobalCupertinoLocalizations.delegate,
-  ];
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ];
 
   List<Locale> get _supportedLocales => const [Locale('en'), Locale('ru')];
 
@@ -1087,11 +1151,14 @@ class _GraniAppState extends State<GraniApp> {
           navigatorKey: appNavigatorKey,
           navigatorObservers: [appRouteObserver],
           title: 'GRANI',
-          theme: GraniTheme.theme,
+          theme: TvPlatform.isTv ? tvTheme() : GraniTheme.theme,
           locale: context.watch<LocaleController>().locale,
           supportedLocales: _supportedLocales,
           localizationsDelegates: _localizationDelegates,
           initialRoute: _initialRoute ?? '/',
+          onGenerateInitialRoutes: TvPlatform.isTv
+              ? (name) => [TvRoutes.create(RouteSettings(name: name))]
+              : null,
           builder: (context, child) {
             // Оборачиваем в lifecycle handler и auth redirect (logout → экран входа)
             return DesktopAppFrame(
@@ -1110,6 +1177,7 @@ class _GraniAppState extends State<GraniApp> {
             );
           },
           onGenerateRoute: (settings) {
+            if (TvPlatform.isTv) return TvRoutes.create(settings);
             Logger().debug('onGenerateRoute: ${settings.name}', 'GraniApp');
             final routeName = settings.name;
             // Канонический shell — /main; остальные имена — совместимость (см. docs/MOBILE_APP_ROUTES_INVENTORY.md).
@@ -1124,6 +1192,20 @@ class _GraniAppState extends State<GraniApp> {
               );
             }
             switch (settings.name) {
+              case '/gift/receive':
+                return MaterialPageRoute(
+                    builder: (_) =>
+                        const ReferralsScreen(mode: GiftScreenMode.receive),
+                    settings: settings);
+              case '/gift/bonuses':
+                return MaterialPageRoute(
+                    builder: (_) =>
+                        const ReferralsScreen(mode: GiftScreenMode.bonuses),
+                    settings: settings);
+              case '/referrals':
+                return MaterialPageRoute(
+                    builder: (_) => const ReferralsScreen(),
+                    settings: settings);
               case '/':
                 return SlideFadePageRoute(
                   child: const StartScreen(),
@@ -1212,8 +1294,8 @@ class _GraniAppState extends State<GraniApp> {
                 return SlideFadePageRoute(
                   child: FutureBuilder<void>(
                     future: devices_screen.loadLibrary(),
-                    builder: (_, snap) =>
-                        snap.connectionState == ConnectionState.done
+                    builder: (_, snap) => snap.connectionState ==
+                            ConnectionState.done
                         ? devices_screen.DevicesScreen()
                         : const Scaffold(
                             body: Center(child: CircularProgressIndicator()),
@@ -1226,8 +1308,8 @@ class _GraniAppState extends State<GraniApp> {
                 return SlideFadePageRoute(
                   child: FutureBuilder<void>(
                     future: payment_screen.loadLibrary(),
-                    builder: (_, snap) =>
-                        snap.connectionState == ConnectionState.done
+                    builder: (_, snap) => snap.connectionState ==
+                            ConnectionState.done
                         ? payment_screen.PaymentScreen()
                         : const Scaffold(
                             body: Center(child: CircularProgressIndicator()),
@@ -1240,13 +1322,19 @@ class _GraniAppState extends State<GraniApp> {
                 return SlideFadePageRoute(
                   child: FutureBuilder<void>(
                     future: privacy_policy_screen.loadLibrary(),
-                    builder: (_, snap) =>
-                        snap.connectionState == ConnectionState.done
+                    builder: (_, snap) => snap.connectionState ==
+                            ConnectionState.done
                         ? privacy_policy_screen.PrivacyPolicyScreen()
                         : const Scaffold(
                             body: Center(child: CircularProgressIndicator()),
                           ),
                   ),
+                  slideFromRight: true,
+                  settings: settings,
+                );
+              case '/payment-result':
+                return SlideFadePageRoute(
+                  child: const WebsitePaymentResultScreen(),
                   slideFromRight: true,
                   settings: settings,
                 );

@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_app/core/cache/cache_service.dart';
 import 'package:mobile_app/simple_vpn/simple_vpn_api.dart';
 import 'package:mobile_app/simple_vpn/simple_vpn_controller.dart';
+import 'package:mobile_app/simple_vpn/simple_vpn_options_cache.dart';
 import 'package:mobile_app/simple_vpn/server_latency_catalog.dart';
 import 'package:mobile_app/simple_vpn/simple_vpn_server_preferences.dart';
 import 'package:mobile_app/simple_vpn/vpn_network_notice.dart';
@@ -24,6 +26,7 @@ void main() {
   var runtimeDiagnosticsClosing = false;
   var runtimeDiagnosticsStatus = '';
   var runtimeDiagnosticsProtocol = 'vless_ws';
+  var runtimeDiagnosticsSession = 'session-1';
 
   setUp(() async {
     await SimpleVpnServerPreferences.waitForPendingWrites();
@@ -37,6 +40,7 @@ void main() {
     runtimeDiagnosticsClosing = false;
     runtimeDiagnosticsStatus = '';
     runtimeDiagnosticsProtocol = 'vless_ws';
+    runtimeDiagnosticsSession = 'session-1';
     binding.defaultBinaryMessenger.setMockMethodCallHandler(_vpnChannel, (
       call,
     ) async {
@@ -54,7 +58,7 @@ void main() {
           return <String, dynamic>{
             'runtime_state': 'test',
             'runtime_status': runtimeDiagnosticsStatus,
-            'runtime_session_id': 'session-1',
+            'runtime_session_id': runtimeDiagnosticsSession,
             'runtime_protocol': runtimeDiagnosticsProtocol,
             'grani_likely_active': runtimeDiagnosticsShowActive,
             'native_active_or_closing': runtimeDiagnosticsClosing,
@@ -159,6 +163,13 @@ void main() {
     expect(api.logs.where((log) => log.event == 'vpn_unexpected_disconnect'),
         isEmpty);
     expect(controller.state, SimpleVpnState.disconnected);
+    final disconnectedUi = api.logs.lastWhere((log) =>
+        log.event == 'ui_state_transition' &&
+        log.details['to'] == 'disconnected');
+    expect(disconnectedUi.sessionId, 'session-1');
+    expect(disconnectedUi.deviceId, 'device-1');
+    expect(disconnectedUi.details['runtime_session_id'],
+        runtime.startCalls.single.sessionId);
   });
 
   for (final legacyConnected in <bool>[false, true]) {
@@ -369,6 +380,51 @@ void main() {
     expect(controller.selectedProtocol.id, 'graniwg');
   });
 
+  test('cold config hydration preserves a saved protocol without its profile',
+      () async {
+    await controller.connect(source: 'cache_vless_profile');
+    await controller.disconnect(source: 'test', reason: 'prepare_restart');
+    await CacheService().remove('simple_vpn_options_v3_user_anonymous');
+    await CacheService()
+        .setString('simple_vpn_selected_protocol_id_v1', 'graniwg');
+    controller.dispose();
+    controller = SimpleVpnController(
+      api: api,
+      runtime: runtime,
+      deviceIdProvider: () async => 'device-1',
+    );
+    await controller.restoreInitialNativeState();
+    await controller.loadOptions();
+    expect(controller.selectedProtocol.id, 'graniwg');
+    expect(await CacheService().getString('simple_vpn_selected_protocol_id_v1'),
+        'graniwg');
+  });
+
+  for (final stillAvailable in [true, false]) {
+    test('partial startup snapshot preserves saved protocol until catalog '
+        '(available=$stillAvailable)', () async {
+      await CacheService().setString(
+        'simple_vpn_options_v3_user_anonymous',
+        jsonEncode(buildSimpleVpnOptionsCachePayload(servers: [api.server])),
+      );
+      await CacheService()
+          .setString('simple_vpn_selected_protocol_id_v1', 'graniwg');
+      api.catalogGate = Completer<List<SimpleVpnServer>>();
+      if (!stillAvailable) api.protocols.removeWhere((p) => p.id == 'graniwg');
+      final loading = controller.loadOptions();
+      await _waitUntil(() => api.fetchServersCalls == 1);
+      expect(controller.selectedProtocol.id, 'graniwg');
+      expect(await CacheService().getString('simple_vpn_selected_protocol_id_v1'),
+          'graniwg');
+      api.catalogGate!.complete([api.server]);
+      await loading;
+      expect(controller.selectedProtocol.id,
+          stillAvailable ? 'graniwg' : 'vless_ws');
+      expect(await CacheService().getString('simple_vpn_selected_protocol_id_v1'),
+          stillAvailable ? 'graniwg' : 'vless_ws');
+    });
+  }
+
   test('refresh replaces retired locations without restarting the controller',
       () async {
     await controller.restoreInitialNativeState();
@@ -460,6 +516,14 @@ void main() {
     expect(controller.isBusy, isFalse);
     expect(controller.networkNotice, VpnNetworkNotice.noNetwork);
     expect(controller.connectionProgressText, isNull);
+    final offlineFailure =
+        api.logs.lastWhere((e) => e.event == 'connect_failed');
+    expect(offlineFailure.details['reason_code'], 'no_underlying_network');
+    expect(offlineFailure.details['failure_stage'], 'network_preflight');
+    final offlineUi =
+        api.logs.lastWhere((e) => e.event == 'ui_state_transition');
+    expect(offlineUi.details['reason_code'], 'no_underlying_network');
+    expect(offlineUi.details['failure_stage'], 'network_preflight');
     expect(runtime.startCalls, isEmpty);
     expect(runtime.disconnectCalls, isEmpty);
     expect(api.fetchConfigCalls, 0);
@@ -640,6 +704,25 @@ void main() {
     );
   });
 
+  test(
+      'referral identity follows the native tunnel after backend session arrives',
+      () async {
+    await controller.connect();
+    await _waitUntil(() => controller.sessionId == 'session-1');
+    final firstRuntime = runtime.startCalls.single.sessionId;
+    expect(firstRuntime, isNotNull);
+    expect(controller.nativeRuntimeSessionId, firstRuntime);
+    expect(controller.nativeRuntimeSessionId, isNot(controller.sessionId));
+
+    await controller.disconnect();
+    expect(controller.nativeRuntimeSessionId, isNull);
+    await controller.connect();
+    await _waitUntil(() => controller.sessionId == 'session-1');
+    expect(
+        controller.nativeRuntimeSessionId, runtime.startCalls.last.sessionId);
+    expect(controller.nativeRuntimeSessionId, isNot(firstRuntime));
+  });
+
   test('terminal usage retains latest counters after first traffic proof',
       () async {
     await controller.connect(source: 'home_button');
@@ -810,6 +893,63 @@ void main() {
     },
   );
 
+  for (final throws in [true, false]) {
+    test('cached native failure ($throws) retries with an isolated proof gate',
+        () async {
+      await controller.connect(source: 'seed_cached_profile');
+      await controller.disconnect(source: 'test', reason: 'prepare_retry');
+      controller.dispose();
+      controller = SimpleVpnController(
+        api: api,
+        runtime: runtime,
+        deviceIdProvider: () async => 'device-1',
+        requireVerifiedDataPlane: true,
+        nativeStartResultVerifiesDataPlane: true,
+      );
+      String? failedSession;
+      runtime.onStart = (call) async {
+        if (failedSession == null) {
+          failedSession = call.sessionId;
+          controller.handleNativeStateForTesting({
+            'emit_type': 'state',
+            'service_state': 'error',
+            'runtime_session_id': failedSession,
+            'runtime_error': 'cached_handshake_timeout',
+          });
+          controller.handleNativeStateForTesting({
+            'emit_type': 'state',
+            'service_state': 'disconnecting',
+            'runtime_session_id': failedSession,
+          });
+          expect(controller.state, SimpleVpnState.connecting);
+          if (throws) throw StateError('cached_handshake_timeout');
+          return false;
+        }
+        expect(call.sessionId, isNot(failedSession));
+        controller.handleNativeStateForTesting({
+          'emit_type': 'state',
+          'service_state': 'error',
+          'runtime_session_id': failedSession,
+          'runtime_error': 'late_old_error',
+        });
+        controller.handleNativeStateForTesting({
+          'emit_type': 'state',
+          'service_state': 'committed',
+          'runtime_session_id': call.sessionId,
+          'connected': true,
+        });
+        return true;
+      };
+      final stopsBefore = runtime.disconnectCalls.length;
+      await controller.connect(source: 'cached_retry');
+      expect(controller.state, SimpleVpnState.connected);
+      expect(controller.error, isNull);
+      expect(runtime.startCalls, hasLength(3));
+      expect(api.fetchConfigCalls, 2);
+      expect(runtime.disconnectCalls, hasLength(stopsBefore));
+    });
+  }
+
   test(
     'traffic proof waits for backend id instead of logging local runtime id',
     () async {
@@ -854,6 +994,47 @@ void main() {
       expect(proofLog.details['backend_session_id'], 'session-1');
     },
   );
+
+  test('failed native start stays terminal through late events and polling',
+      () async {
+    runtime.startException = TimeoutException('native gate timed out');
+    await controller.connect(source: 'timeout_regression');
+    final failedSession = runtime.startCalls.single.sessionId!;
+    expect(controller.state, SimpleVpnState.error);
+    expect(
+        runtime.disconnectCalls.any((c) =>
+            c.reason == 'connect_failed' && c.sessionId == failedSession),
+        isTrue);
+    for (final lateState in [
+      'prepare',
+      'local_up',
+      'dataplane_verified',
+      'committed'
+    ]) {
+      controller.handleNativeStateForTesting(<String, dynamic>{
+        'emit_type': 'state',
+        'service_state': lateState,
+        'connected': true,
+        'runtime_session_id': failedSession,
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.state, SimpleVpnState.error);
+    }
+    runtimeDiagnosticsSession = failedSession;
+    runtime.nativeConnected = true;
+    for (final status in ['local_up', 'verified']) {
+      runtimeDiagnosticsStatus = status;
+      await controller.syncNativeUiState(source: 'late_failed_poll');
+      expect(controller.state, SimpleVpnState.error);
+      expect(controller.sessionId, isNull);
+    }
+    runtime.nativeConnected = false;
+    runtimeDiagnosticsStatus = 'off';
+    runtime.startException = null;
+    await controller.connect(source: 'explicit_retry');
+    expect(controller.state, SimpleVpnState.connected);
+    expect(runtime.startCalls.last.sessionId, isNot(failedSession));
+  });
 
   test('native runtime error closes backend session only once', () async {
     await controller.connect(source: 'home_button');
@@ -1249,6 +1430,79 @@ void main() {
     expect(runtime.disconnectCalls, isEmpty);
   });
 
+  test('selected profile is usable while optional AWG preparation is blocked',
+      () async {
+    api.includeSecondServer = true;
+    api.optionalConfigGate = Completer<void>();
+    await useRankedController(restore: false);
+    await controller.loadOptions();
+    await controller.prewarmSelectedConfigForPostAuth();
+    expect(api.fetchConfigRequests, hasLength(1));
+    expect(api.fetchConfigRequests.single['server_id'], 102);
+    expect(api.fetchConfigRequests.single['protocol'], 'vless_ws');
+    expect(runtime.startCalls, isEmpty);
+
+    final background = controller.prewarmAvailableConfigsForPostAuth();
+    await _waitUntil(() => api.fetchConfigRequests.length >= 3);
+    // Optional protocols remain blocked, but the exact selected profile is
+    // already cached and a normal home controller can start it immediately.
+    final foreground = SimpleVpnController(
+      api: api,
+      runtime: runtime,
+      latencyCatalog: _rankedLatency(api),
+      deviceIdProvider: () async => 'device-1',
+      subscribeNativeState: false,
+      nativeStartResultVerifiesDataPlane: true,
+    );
+    try {
+      await foreground.restoreInitialNativeState();
+      await foreground.loadOptions();
+      await foreground.refreshServerLatencies();
+      await foreground.connect();
+      expect(runtime.startCalls.single.config.server?.id, 102);
+      expect(runtime.startCalls.single.config.protocol, 'vless_ws');
+      expect(api.fetchConfigRequests.where((r) => r['protocol'] == 'vless_ws'),
+          hasLength(1));
+      api.optionalConfigGate!.complete();
+      await background;
+      expect(api.fetchConfigCalls, 6);
+    } finally {
+      if (!api.optionalConfigGate!.isCompleted)
+        api.optionalConfigGate!.complete();
+      foreground.dispose();
+    }
+  });
+
+  test('selected preparation rejects a profile for the wrong server', () async {
+    await useRankedController(restore: false);
+    api.configServerOverride = api.secondServer;
+    await expectLater(
+        controller.prewarmSelectedConfigForPostAuth(), throwsStateError);
+    expect(runtime.startCalls, isEmpty);
+    expect(api.fetchConfigCalls, 1);
+  });
+
+  test('cancelled selected preparation never reports ready or caches response',
+      () async {
+    api.configFetchGate = Completer<void>();
+    final preparation = controller.prewarmSelectedConfigForPostAuth();
+    final failed = expectLater(preparation, throwsStateError);
+    await _waitUntil(() => api.fetchConfigCalls == 1);
+    controller.dispose();
+    api.configFetchGate!.complete();
+    await failed;
+    controller = SimpleVpnController(
+      api: api,
+      runtime: runtime,
+      deviceIdProvider: () async => 'device-1',
+      subscribeNativeState: false,
+    );
+    api.configFetchGate = null;
+    await controller.prewarmSelectedConfigForPostAuth();
+    expect(api.fetchConfigCalls, 2);
+    expect(runtime.startCalls, isEmpty);
+  });
+
   test('post-auth prewarm caches every protocol without starting VPN',
       () async {
     api.includeSecondServer = true;
@@ -1360,6 +1614,7 @@ class _FakeSimpleVpnApi extends SimpleVpnApi {
   bool includeSecondServer = false;
   Object? startSessionError;
   Completer<void>? configFetchGate;
+  Completer<void>? optionalConfigGate;
 
   final server = SimpleVpnServer(
     id: 101,
@@ -1444,6 +1699,9 @@ class _FakeSimpleVpnApi extends SimpleVpnApi {
       'client_capabilities': clientCapabilities,
     });
     if (configFetchGate != null) await configFetchGate!.future;
+    if (optionalConfigGate != null && protocol != 'vless_ws') {
+      await optionalConfigGate!.future;
+    }
     final requestedServer = serverId == secondServer.id ? secondServer : server;
     return SimpleVpnConfig(
       protocol: protocol ?? 'vless_ws',
@@ -1532,6 +1790,7 @@ class _FakeSimpleVpnApi extends SimpleVpnApi {
 }
 
 class _FakeSimpleVpnRuntime implements SimpleVpnRuntime {
+  Future<bool> Function(_StartCall)? onStart;
   bool permissionOk = true;
   bool startResult = true;
   bool nativeConnected = false;
@@ -1558,6 +1817,11 @@ class _FakeSimpleVpnRuntime implements SimpleVpnRuntime {
     startCalls.add(
       _StartCall(config: config, sessionId: sessionId, source: source),
     );
+    if (onStart != null) {
+      final result = await onStart!(startCalls.last);
+      nativeConnected = result;
+      return result;
+    }
     final error = startException;
     if (error != null) throw error;
     final result =

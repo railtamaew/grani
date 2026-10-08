@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../l10n/l10n.dart';
 import '../services/notification_journal_service.dart';
+import '../services/gift_notification_copy.dart';
 import '../theme.dart';
 
 enum _JournalTone { success, info, warning, critical, update, neutral }
@@ -79,6 +80,12 @@ class NotificationJournalScreen extends StatelessWidget {
   String _sourceSubtitle(BuildContext context, String source) {
     final l10n = context.l10n;
     switch (source) {
+      case 'server':
+        return context.l10n.localeName.startsWith('ru')
+            ? 'Уведомление GRANI'
+            : 'GRANI notification';
+      case 'in_app':
+        return l10n.notificationJournalSourceForeground;
       case 'fcm_foreground':
         return l10n.notificationJournalSourceForeground;
       case 'fcm_opened_app':
@@ -215,6 +222,8 @@ class NotificationJournalScreen extends StatelessWidget {
   }
 
   String _localizedTitle(BuildContext context, NotificationJournalEntry entry) {
+    final gift = giftNotificationCopy(_data(entry), russian: _isRu(context));
+    if (gift != null) return gift.title;
     final l10n = context.l10n;
     final event = _data(entry)['event']?.toString().trim();
     switch (event) {
@@ -291,6 +300,8 @@ class NotificationJournalScreen extends StatelessWidget {
 
   String _localizedBody(BuildContext context, NotificationJournalEntry entry) {
     final data = _data(entry);
+    final gift = giftNotificationCopy(data, russian: _isRu(context));
+    if (gift != null) return gift.body;
     final event = data['event']?.toString().trim();
     final l10n = context.l10n;
     final locale = Localizations.localeOf(context).languageCode;
@@ -590,7 +601,7 @@ class NotificationJournalScreen extends StatelessWidget {
                                         ],
                                         const SizedBox(height: 10),
                                         Text(
-                                          '${dateFmt.format(e.receivedAt)} · ${_sourceSubtitle(context, e.source)}',
+                                          '${dateFmt.format(e.receivedAt.toLocal())} · ${_sourceSubtitle(context, e.source)}',
                                           style: GraniTheme.bodySmall.copyWith(
                                             color: GraniTheme.secondaryText,
                                             fontSize: 12,

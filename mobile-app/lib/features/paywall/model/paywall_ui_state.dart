@@ -20,6 +20,10 @@ enum PaywallErrorKind {
   verificationFailed,
   billingError,
   restoreFailed,
+  regionalUnavailable,
+  paymentConflict,
+  accountUnverified,
+  countryUnavailable,
 }
 
 class PaywallUiState {
@@ -31,6 +35,11 @@ class PaywallUiState {
     this.errorKind,
     this.experimentVariant = 'control',
     this.timeToLoadProductsMs,
+    this.externalCheckout = false,
+    this.externalSandbox = false,
+    this.externalPending = false,
+    this.externalCanResume = false,
+    this.externalReview = false,
   });
 
   final PaywallProductsState productsState;
@@ -40,6 +49,11 @@ class PaywallUiState {
   final PaywallErrorKind? errorKind;
   final String experimentVariant;
   final int? timeToLoadProductsMs;
+  final bool externalCheckout;
+  final bool externalSandbox;
+  final bool externalPending;
+  final bool externalCanResume;
+  final bool externalReview;
 
   TariffUiModel? get selectedPlan {
     for (final plan in plans) {
@@ -67,6 +81,11 @@ class PaywallUiState {
     bool clearError = false,
     String? experimentVariant,
     int? timeToLoadProductsMs,
+    bool? externalCheckout,
+    bool? externalSandbox,
+    bool? externalPending,
+    bool? externalCanResume,
+    bool? externalReview,
   }) {
     return PaywallUiState(
       productsState: productsState ?? this.productsState,
@@ -76,6 +95,11 @@ class PaywallUiState {
       errorKind: clearError ? null : (errorKind ?? this.errorKind),
       experimentVariant: experimentVariant ?? this.experimentVariant,
       timeToLoadProductsMs: timeToLoadProductsMs ?? this.timeToLoadProductsMs,
+      externalCheckout: externalCheckout ?? this.externalCheckout,
+      externalSandbox: externalSandbox ?? this.externalSandbox,
+      externalPending: externalPending ?? this.externalPending,
+      externalCanResume: externalCanResume ?? this.externalCanResume,
+      externalReview: externalReview ?? this.externalReview,
     );
   }
 }
